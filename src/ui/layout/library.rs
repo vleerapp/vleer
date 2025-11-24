@@ -1,8 +1,12 @@
 use gpui::*;
-use gpui_component::*;
 
 use crate::ui::{
-    components::{icons::icons, nav_button::NavButton, title::Title},
+    components::{
+        div::{flex_col, flex_row},
+        icons::icons,
+        navbutton::NavButton,
+        title::Title,
+    },
     variables::Variables,
     views::AppView,
 };
@@ -30,11 +34,13 @@ impl Render for Library {
             .relative()
             .size_full()
             .child(
-                v_flex()
+                flex_col()
+                    .id("library")
                     .border(px(1.0))
                     .border_color(border_color)
                     .h_full()
-                    .paddings(px(variables.padding_16))
+                    .overflow_y_scroll()
+                    .p(px(variables.padding_16))
                     .gap(px(8.0))
                     .child(NavButton::new(icons::SONGS, "Songs", AppView::Songs)),
             )

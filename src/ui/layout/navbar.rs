@@ -1,8 +1,7 @@
 use gpui::*;
-use gpui_component::*;
 
 use crate::ui::{
-    components::{icons::icons::HOME, nav_button::NavButton, title::Title},
+    components::{div::{flex_col, flex_row}, icons::icons::HOME, navbutton::NavButton, title::Title},
     variables::Variables,
     views::AppView,
 };
@@ -30,11 +29,11 @@ impl Render for Navbar {
             .relative()
             .size_full()
             .child(
-                h_flex()
+                flex_row()
                     .border(px(1.0))
                     .border_color(border_color)
                     .h_full()
-                    .paddings(px(variables.padding_16))
+                    .p(px(variables.padding_16))
                     .child(NavButton::new(HOME, "Home", AppView::Home)),
             )
             .child(Title::new("NavBar", self.hovered))

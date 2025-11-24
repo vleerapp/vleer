@@ -1,5 +1,4 @@
 use gpui::*;
-use gpui_component::{StyledExt, h_flex, v_flex};
 
 use crate::{
     data::config::Config,
@@ -10,6 +9,7 @@ use crate::{
     ui::{
         components::{
             button::Button,
+            div::{flex_col, flex_row},
             icons::{icon::icon, icons::*},
             slider::slider,
             title::Title,
@@ -149,7 +149,7 @@ impl Render for Player {
                 cx.notify();
             }));
 
-        let controls = h_flex()
+        let controls = flex_row()
             .gap(px(variables.padding_8))
             .items_center()
             .child(shuffle_button)
@@ -159,12 +159,12 @@ impl Render for Player {
             .child(repeat_button);
 
         let track_info = if let Some((title, artist)) = current_track {
-            v_flex()
+            flex_col()
                 .gap(px(4.0))
                 .child(div().text_sm().font_weight(FontWeight::BOLD).child(title))
                 .child(div().text_xs().text_color(rgb(0x999999)).child(artist))
         } else {
-            v_flex().gap(px(4.0)).child(
+            flex_col().gap(px(4.0)).child(
                 div()
                     .text_sm()
                     .text_color(rgb(0x666666))
@@ -181,7 +181,7 @@ impl Render for Player {
             _ => VOLUME_1,
         };
 
-        let volume_display = h_flex()
+        let volume_display = flex_row()
             .gap(px(variables.padding_8))
             .items_center()
             .child(icon(volume_icon))
@@ -203,14 +203,14 @@ impl Render for Player {
             .relative()
             .size_full()
             .child(
-                v_flex()
+                flex_col()
                     .border(px(1.0))
                     .border_color(border_color)
                     .h_full()
-                    .paddings(px(variables.padding_16))
+                    .p(px(variables.padding_16))
                     .gap(px(variables.padding_8))
                     .child(
-                        h_flex()
+                        flex_row()
                             .h(px(36.0))
                             .w_full()
                             .items_center()
