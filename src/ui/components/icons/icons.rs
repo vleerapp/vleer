@@ -1,7 +1,10 @@
 pub const ALBUM: &str = "!bundled:icons/album.svg";
 pub const ARROW_LEFT: &str = "!bundled:icons/arrow-left.svg";
 pub const ARROW_RIGHT: &str = "!bundled:icons/arrow-right.svg";
+pub const ARROW_DOWN: &str = "!bundled:icons/arrow-down.svg";
+pub const ARROW_UP: &str = "!bundled:icons/arrow-up.svg";
 pub const ARTIST: &str = "!bundled:icons/artist.svg";
+pub const DURATION: &str = "!bundled:icons/duration.svg";
 pub const FAVORITE: &str = "!bundled:icons/favorite.svg";
 pub const HOME: &str = "!bundled:icons/home.svg";
 pub const NEXT: &str = "!bundled:icons/next.svg";
