@@ -50,14 +50,15 @@ impl Database {
         track_number: Option<i32>,
         year: Option<i32>,
         genre: Option<&str>,
+        cover: Option<&str>,
         replaygain_track_gain: Option<f32>,
         replaygain_track_peak: Option<f32>,
     ) -> Result<Cuid, sqlx::Error> {
         let id = Cuid::new();
         let year_str = year.map(|y| y.to_string());
         sqlx::query(
-                "INSERT INTO songs (id, title, artist_id, album_id, file_path, duration, track_number, date, genre, replaygain_track_gain, replaygain_track_peak)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                "INSERT INTO songs (id, title, artist_id, album_id, file_path, duration, track_number, date, genre, cover, replaygain_track_gain, replaygain_track_peak)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             )
             .bind(&id)
             .bind(title)
@@ -68,6 +69,7 @@ impl Database {
             .bind(track_number)
             .bind(year_str)
             .bind(genre)
+            .bind(cover)
             .bind(replaygain_track_gain)
             .bind(replaygain_track_peak)
             .execute(&self.pool)
@@ -127,12 +129,13 @@ impl Database {
         track_number: Option<i32>,
         year: Option<i32>,
         genre: Option<&str>,
+        cover: Option<&str>,
         replaygain_track_gain: Option<f32>,
         replaygain_track_peak: Option<f32>,
     ) -> Result<(), sqlx::Error> {
         let year_str = year.map(|y| y.to_string());
         sqlx::query(
-            "UPDATE songs SET title = ?, artist_id = ?, album_id = ?, duration = ?, track_number = ?, date = ?, genre = ?, replaygain_track_gain = ?, replaygain_track_peak = ?
+            "UPDATE songs SET title = ?, artist_id = ?, album_id = ?, duration = ?, track_number = ?, date = ?, genre = ?, cover = ?, replaygain_track_gain = ?, replaygain_track_peak = ?
              WHERE id = ?"
         )
         .bind(title)
@@ -142,6 +145,7 @@ impl Database {
         .bind(track_number)
         .bind(year_str)
         .bind(genre)
+        .bind(cover)
         .bind(replaygain_track_gain)
         .bind(replaygain_track_peak)
         .bind(id)
@@ -161,6 +165,26 @@ impl Database {
         )
         .fetch_all(&self.pool)
         .await
+    }
+
+    pub async fn get_recently_added_songs(&self, limit: i32) -> Result<Vec<Song>, sqlx::Error> {
+        sqlx::query_as::<_, Song>(
+            "SELECT id, title, artist_id, album_id, file_path, genre, date, date_added, duration, cover, track_number, favorite, replaygain_track_gain, replaygain_track_peak
+             FROM songs
+             ORDER BY date_added DESC
+             LIMIT ?"
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    pub async fn get_artist_name(&self, id: &Cuid) -> Result<Option<String>, sqlx::Error> {
+        let result: Option<(String,)> = sqlx::query_as("SELECT name FROM artists WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(result.map(|(name,)| name))
     }
 
     pub async fn insert_artist(
@@ -207,6 +231,7 @@ impl Database {
         artist: Option<&Cuid>,
         _year: Option<i32>,
         _genre: Option<&str>,
+        cover: Option<&str>,
     ) -> Result<Cuid, sqlx::Error> {
         let existing: Option<(Cuid,)> = sqlx::query_as(
             "SELECT id FROM albums WHERE title = ? AND (artist = ? OR (artist IS NULL AND ? IS NULL))"
@@ -218,14 +243,23 @@ impl Database {
         .await?;
 
         if let Some((id,)) = existing {
+            // Update cover if provided and album exists
+            if let Some(cover_path) = cover {
+                sqlx::query("UPDATE albums SET cover = ? WHERE id = ?")
+                    .bind(cover_path)
+                    .bind(&id)
+                    .execute(&self.pool)
+                    .await?;
+            }
             return Ok(id);
         }
 
         let id = Cuid::new();
-        sqlx::query("INSERT INTO albums (id, title, artist) VALUES (?, ?, ?)")
+        sqlx::query("INSERT INTO albums (id, title, artist, cover) VALUES (?, ?, ?, ?)")
             .bind(&id)
             .bind(title)
             .bind(artist)
+            .bind(cover)
             .execute(&self.pool)
             .await?;
         Ok(id)

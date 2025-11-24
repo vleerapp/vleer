@@ -11,7 +11,7 @@ use tracing::{debug, error, info, warn};
 use walkdir::WalkDir;
 
 use crate::data::db::Database;
-use crate::data::metadata::AudioMetadata;
+use crate::data::metadata::{AudioMetadata, extract_and_save_cover};
 
 const SUPPORTED_EXTENSIONS: &[&str] = &["mp3", "flac", "ogg", "m4a", "aac", "wav", "mp1", "mp2"];
 const MAX_CONCURRENT_SCANS: usize = 16;
@@ -35,15 +35,17 @@ enum SaveAction {
 pub struct ScannedTrack {
     pub path: PathBuf,
     pub metadata: AudioMetadata,
+    pub cover_path: Option<PathBuf>,
 }
 
 pub struct MusicScanner {
     scan_paths: Vec<PathBuf>,
+    covers_dir: PathBuf,
 }
 
 impl MusicScanner {
-    pub fn new(scan_paths: Vec<PathBuf>) -> Self {
-        Self { scan_paths }
+    pub fn new(scan_paths: Vec<PathBuf>, covers_dir: PathBuf) -> Self {
+        Self { scan_paths, covers_dir }
     }
 
     pub async fn scan(&self) -> Result<Vec<ScannedTrack>> {
@@ -99,20 +101,24 @@ impl MusicScanner {
 
         info!("Found {} audio files to scan", audio_files.len());
 
+        let covers_dir = self.covers_dir.clone();
         let tracks: Vec<ScannedTrack> = stream::iter(audio_files)
-            .map(|path| async move {
-                let path_clone = path.clone();
-                tokio::task::spawn_blocking(move || Self::read_metadata(&path))
-                    .await
-                    .ok()
-                    .and_then(|result| {
-                        result
-                            .map_err(|e| {
-                                warn!("Failed to read metadata from {:?}: {}", path_clone, e);
-                                e
-                            })
-                            .ok()
-                    })
+            .map(|path| {
+                let covers_dir = covers_dir.clone();
+                async move {
+                    let path_clone = path.clone();
+                    tokio::task::spawn_blocking(move || Self::read_metadata(&path, &covers_dir))
+                        .await
+                        .ok()
+                        .and_then(|result| {
+                            result
+                                .map_err(|e| {
+                                    warn!("Failed to read metadata from {:?}: {}", path_clone, e);
+                                    e
+                                })
+                                .ok()
+                        })
+                }
             })
             .buffer_unordered(MAX_CONCURRENT_SCANS)
             .filter_map(|track| async move { track })
@@ -130,11 +136,22 @@ impl MusicScanner {
             .unwrap_or(false)
     }
 
-    fn read_metadata(path: &Path) -> Result<ScannedTrack> {
+    fn read_metadata(path: &Path, covers_dir: &Path) -> Result<ScannedTrack> {
         let metadata = AudioMetadata::from_path(path)?;
+
+        // Extract cover art
+        let cover_path = match extract_and_save_cover(path, covers_dir) {
+            Ok(path) => path,
+            Err(e) => {
+                debug!("Failed to extract cover from {:?}: {}", path, e);
+                None
+            }
+        };
+
         Ok(ScannedTrack {
             path: path.to_path_buf(),
             metadata,
+            cover_path,
         })
     }
 
@@ -218,6 +235,10 @@ impl MusicScanner {
             None
         };
 
+        let cover_hash = track.cover_path.as_ref().and_then(|p| {
+            p.file_name().map(|f| f.to_string_lossy().to_string())
+        });
+
         let album_id = if let Some(album_name) = &meta.album {
             Some(
                 db.insert_album(
@@ -225,6 +246,7 @@ impl MusicScanner {
                     artist_id.as_ref(),
                     meta.year,
                     meta.genre.as_deref(),
+                    cover_hash.as_deref(),
                 )
                 .await?,
             )
@@ -244,6 +266,7 @@ impl MusicScanner {
                 || existing.track_number != track_number
                 || existing.date != meta.year.map(|y| y.to_string())
                 || existing.genre.as_deref() != meta.genre.as_deref()
+                || existing.cover.as_deref() != cover_hash.as_deref()
                 || existing.replaygain_track_gain != meta.replaygain_track_gain
                 || existing.replaygain_track_peak != meta.replaygain_track_peak;
 
@@ -257,6 +280,7 @@ impl MusicScanner {
                     track_number,
                     meta.year,
                     meta.genre.as_deref(),
+                    cover_hash.as_deref(),
                     meta.replaygain_track_gain,
                     meta.replaygain_track_peak,
                 )
@@ -276,6 +300,7 @@ impl MusicScanner {
                 track_number,
                 meta.year,
                 meta.genre.as_deref(),
+                cover_hash.as_deref(),
                 meta.replaygain_track_gain,
                 meta.replaygain_track_peak,
             )
