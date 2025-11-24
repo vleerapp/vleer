@@ -4,7 +4,7 @@ use crate::ui::variables::Variables;
 
 #[derive(IntoElement)]
 pub struct Icon {
-    svg: Svg,
+    svg: Stateful<Svg>,
     icon: SharedString,
 }
 
@@ -13,6 +13,14 @@ impl Styled for Icon {
         self.svg.style()
     }
 }
+
+impl InteractiveElement for Icon {
+    fn interactivity(&mut self) -> &mut Interactivity {
+        self.svg.interactivity()
+    }
+}
+
+impl StatefulInteractiveElement for Icon {}
 
 impl RenderOnce for Icon {
     fn render(mut self, _: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
@@ -23,7 +31,6 @@ impl RenderOnce for Icon {
         }
 
         self.svg
-            .path(self.icon)
             .w(px(16.0))
             .h(px(16.0))
             .flex_shrink_0()
@@ -31,8 +38,9 @@ impl RenderOnce for Icon {
 }
 
 pub fn icon(icon: impl Into<SharedString>) -> Icon {
+    let icon_str: SharedString = icon.into();
     Icon {
-        svg: svg(),
-        icon: icon.into(),
+        svg: svg().path(icon_str.clone()).id(icon_str.clone()),
+        icon: icon_str,
     }
 }
