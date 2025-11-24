@@ -1,6 +1,7 @@
 pub mod bundled;
 
 use std::borrow::Cow;
+use std::fs;
 use gpui::AssetSource;
 use url::Url;
 
@@ -20,7 +21,16 @@ impl AssetSource for VleerAssetSource {
 
         match url.scheme() {
             "bundled" => BundledAssets::load(url),
-            _ => panic!("invalid url scheme for resource"),
+            "file" => {
+                let file_path = url.to_file_path().map_err(|_| {
+                    anyhow::anyhow!("Invalid file path: {}", path)
+                })?;
+                match fs::read(&file_path) {
+                    Ok(data) => Ok(Some(Cow::Owned(data))),
+                    Err(_) => Ok(None),
+                }
+            }
+            _ => panic!("invalid url scheme for resource: {}", url.scheme()),
         }
     }
 
