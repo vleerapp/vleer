@@ -1,7 +1,9 @@
 use gpui::*;
-
 use crate::ui::{
-    app::ViewState, components::icons::icon::icon, variables::Variables, views::AppView,
+    components::{icons::icon::icon, div::flex_row},
+    state::State,
+    variables::Variables,
+    views::AppView,
 };
 
 #[derive(IntoElement)]
@@ -28,7 +30,8 @@ impl NavButton {
 impl RenderOnce for NavButton {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let variables = cx.global::<Variables>();
-        let current_view = cx.global::<ViewState>().current();
+        let state = cx.global::<State>();
+        let current_view = state.get_current_view_sync();
         let is_active = current_view == self.target_view;
         let target_view = self.target_view;
         let icon_path = self.icon;
@@ -40,18 +43,21 @@ impl RenderOnce for NavButton {
             variables.text_secondary
         };
 
-        div()
-            .flex()
+        flex_row()
             .items_center()
             .gap(px(variables.padding_8))
             .text_color(text_color)
+            .cursor_pointer()
             .child(icon(icon_path).text_color(text_color))
-            .child(label)
-            .hover(|s| s.text_color(variables.text).cursor_pointer())
+            .child(
+                div()
+                    .child(label)
+                    .hover(|s| s.underline())
+            )
+            .hover(|s| s.text_color(variables.text))
             .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
-                cx.update_global::<ViewState, _>(|state, _cx| {
-                    state.set(target_view);
-                });
+                let state = cx.global::<State>().clone();
+                state.set_current_view_sync(target_view);
                 window.refresh();
             })
     }
