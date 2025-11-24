@@ -49,6 +49,55 @@ struct MainWindow {
     songs_view: Entity<SongsView>,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum HoverTarget {
+    Library,
+    Navbar,
+    Content,
+    Player,
+}
+
+impl MainWindow {
+    fn set_hover(&mut self, target: HoverTarget, cx: &mut Context<Self>) {
+        self.library.update(cx, |library, cx| {
+            library.hovered = target == HoverTarget::Library;
+            cx.notify();
+        });
+        self.navbar.update(cx, |navbar, cx| {
+            navbar.hovered = target == HoverTarget::Navbar;
+            cx.notify();
+        });
+        self.player.update(cx, |player, cx| {
+            player.hovered = target == HoverTarget::Player;
+            cx.notify();
+        });
+
+        let current_view = cx.global::<ViewState>().current();
+        match current_view {
+            AppView::Home => {
+                self.home_view.update(cx, |home, cx| {
+                    home.hovered = target == HoverTarget::Content;
+                    cx.notify();
+                });
+                self.songs_view.update(cx, |songs, cx| {
+                    songs.hovered = false;
+                    cx.notify();
+                });
+            }
+            AppView::Songs => {
+                self.home_view.update(cx, |home, cx| {
+                    home.hovered = false;
+                    cx.notify();
+                });
+                self.songs_view.update(cx, |songs, cx| {
+                    songs.hovered = target == HoverTarget::Content;
+                    cx.notify();
+                });
+            }
+        }
+    }
+}
+
 impl Render for MainWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
@@ -60,40 +109,22 @@ impl Render for MainWindow {
         };
 
         let mut element = v_flex()
-            .gap(px(variables.default_padding))
+            .gap(px(variables.padding_16))
             .paddings(16.0)
             .size_full()
             .bg(variables.background)
             .child(
                 h_flex()
                     .flex_1()
-                    .gap(px(variables.default_padding))
+                    .gap(px(variables.padding_16))
                     .child(
                         div()
                             .w(px(300.0))
+                            .flex_shrink_0()
                             .h_full()
                             .on_mouse_move(cx.listener(
                                 |this, _event: &MouseMoveEvent, _window: &mut Window, cx| {
-                                    this.library.update(cx, |library, cx| {
-                                        library.hovered = true;
-                                        cx.notify();
-                                    });
-                                    this.navbar.update(cx, |navbar, cx| {
-                                        navbar.hovered = false;
-                                        cx.notify();
-                                    });
-                                    this.home_view.update(cx, |home, cx| {
-                                        home.hovered = false;
-                                        cx.notify();
-                                    });
-                                    this.songs_view.update(cx, |songs, cx| {
-                                        songs.hovered = false;
-                                        cx.notify();
-                                    });
-                                    this.player.update(cx, |player, cx| {
-                                        player.hovered = false;
-                                        cx.notify();
-                                    });
+                                    this.set_hover(HoverTarget::Library, cx);
                                 },
                             ))
                             .child(self.library.clone()),
@@ -102,7 +133,7 @@ impl Render for MainWindow {
                         v_flex()
                             .flex_1()
                             .h_full()
-                            .gap(px(variables.default_padding))
+                            .gap(px(variables.padding_16))
                             .child(
                                 div()
                                     .h(px(48.0))
@@ -112,26 +143,7 @@ impl Render for MainWindow {
                                          _event: &MouseMoveEvent,
                                          _window: &mut Window,
                                          cx| {
-                                            this.library.update(cx, |library, cx| {
-                                                library.hovered = false;
-                                                cx.notify();
-                                            });
-                                            this.navbar.update(cx, |navbar, cx| {
-                                                navbar.hovered = true;
-                                                cx.notify();
-                                            });
-                                            this.home_view.update(cx, |home, cx| {
-                                                home.hovered = false;
-                                                cx.notify();
-                                            });
-                                            this.songs_view.update(cx, |songs, cx| {
-                                                songs.hovered = false;
-                                                cx.notify();
-                                            });
-                                            this.player.update(cx, |player, cx| {
-                                                player.hovered = false;
-                                                cx.notify();
-                                            });
+                                            this.set_hover(HoverTarget::Navbar, cx);
                                         },
                                     ))
                                     .child(self.navbar.clone()),
@@ -145,41 +157,7 @@ impl Render for MainWindow {
                                          _event: &MouseMoveEvent,
                                          _window: &mut Window,
                                          cx| {
-                                            this.library.update(cx, |library, cx| {
-                                                library.hovered = false;
-                                                cx.notify();
-                                            });
-                                            this.navbar.update(cx, |navbar, cx| {
-                                                navbar.hovered = false;
-                                                cx.notify();
-                                            });
-                                            let current_view = cx.global::<ViewState>().current();
-                                            match current_view {
-                                                AppView::Home => {
-                                                    this.home_view.update(cx, |home, cx| {
-                                                        home.hovered = true;
-                                                        cx.notify();
-                                                    });
-                                                    this.songs_view.update(cx, |songs, cx| {
-                                                        songs.hovered = false;
-                                                        cx.notify();
-                                                    });
-                                                }
-                                                AppView::Songs => {
-                                                    this.home_view.update(cx, |home, cx| {
-                                                        home.hovered = false;
-                                                        cx.notify();
-                                                    });
-                                                    this.songs_view.update(cx, |songs, cx| {
-                                                        songs.hovered = true;
-                                                        cx.notify();
-                                                    });
-                                                }
-                                            }
-                                            this.player.update(cx, |player, cx| {
-                                                player.hovered = false;
-                                                cx.notify();
-                                            });
+                                            this.set_hover(HoverTarget::Content, cx);
                                         },
                                     ))
                                     .child(content),
@@ -192,26 +170,7 @@ impl Render for MainWindow {
                     .w_full()
                     .on_mouse_move(cx.listener(
                         |this, _event: &MouseMoveEvent, _window: &mut Window, cx| {
-                            this.library.update(cx, |library, cx| {
-                                library.hovered = false;
-                                cx.notify();
-                            });
-                            this.navbar.update(cx, |navbar, cx| {
-                                navbar.hovered = false;
-                                cx.notify();
-                            });
-                            this.home_view.update(cx, |home, cx| {
-                                home.hovered = false;
-                                cx.notify();
-                            });
-                            this.songs_view.update(cx, |songs, cx| {
-                                songs.hovered = false;
-                                cx.notify();
-                            });
-                            this.player.update(cx, |player, cx| {
-                                player.hovered = true;
-                                cx.notify();
-                            });
+                            this.set_hover(HoverTarget::Player, cx);
                         },
                     ))
                     .child(self.player.clone()),
@@ -222,7 +181,7 @@ impl Render for MainWindow {
             color: Some(Hsla::from(variables.text)),
             font_family: Some(SharedString::new("Feature Mono")),
             font_size: Some(AbsoluteLength::Pixels(px(14.0))),
-            line_height: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(13.0)))),
+            line_height: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(14.0)))),
             ..Default::default()
         });
 
@@ -311,8 +270,9 @@ pub async fn run() -> anyhow::Result<()> {
             let config = cx.global::<Config>();
             let scan_paths = expand_scan_paths(&config.get().scan.paths);
             let db = cx.global::<Database>().clone();
+            let covers_dir = data_dir.join("covers");
 
-            let scanner = std::sync::Arc::new(MusicScanner::new(scan_paths));
+            let scanner = std::sync::Arc::new(MusicScanner::new(scan_paths, covers_dir));
             let scanner_clone = scanner.clone();
 
             match MusicWatcher::new(scanner.clone(), std::sync::Arc::new(db.clone())) {
@@ -371,8 +331,8 @@ pub async fn run() -> anyhow::Result<()> {
                     let library = cx.new(|_| Library::new());
                     let navbar = cx.new(|_| Navbar::new());
                     let player = cx.new(|_| Player::new());
-                    let home_view = cx.new(|_| HomeView::new());
-                    let songs_view = cx.new(|_| SongsView::new());
+                    let home_view = cx.new(|cx| HomeView::new(window, cx));
+                    let songs_view = cx.new(|cx| SongsView::new(window, cx));
 
                     let view = cx.new(|cx| {
                         PlaybackContext::start_playback_monitor(window, cx);
