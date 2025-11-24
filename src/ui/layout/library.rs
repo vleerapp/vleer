@@ -34,7 +34,7 @@ impl Render for Library {
                     .border(px(1.0))
                     .border_color(border_color)
                     .h_full()
-                    .paddings(px(variables.default_padding))
+                    .paddings(px(variables.padding_16))
                     .gap(px(8.0))
                     .child(NavButton::new(icons::SONGS, "Songs", AppView::Songs)),
             )

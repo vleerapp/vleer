@@ -10,9 +10,9 @@ pub struct Variables {
     pub text_secondary: Rgba,
     pub text_muted: Rgba,
 
-    pub default_padding: f32,
-    pub small_padding: f32,
-    pub large_padding: f32,
+    pub padding_8: f32,
+    pub padding_16: f32,
+    pub padding_24: f32,
 }
 
 impl Default for Variables {
@@ -27,9 +27,9 @@ impl Default for Variables {
             text_secondary: rgb(0xABABAB),
             text_muted: rgb(0x303030),
 
-            default_padding: 16.0,
-            small_padding: 8.0,
-            large_padding: 24.0,
+            padding_8: 8.0,
+            padding_16: 16.0,
+            padding_24: 24.0,
         }
     }
 }

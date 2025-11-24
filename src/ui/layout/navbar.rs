@@ -34,7 +34,7 @@ impl Render for Navbar {
                     .border(px(1.0))
                     .border_color(border_color)
                     .h_full()
-                    .paddings(px(variables.default_padding))
+                    .paddings(px(variables.padding_16))
                     .child(NavButton::new(HOME, "Home", AppView::Home)),
             )
             .child(Title::new("NavBar", self.hovered))

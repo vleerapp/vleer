@@ -73,13 +73,21 @@ impl Render for Player {
             .child(icon(PREVIOUS))
             .on_click(cx.listener(|_this, _event, _window, cx| {
                 let next_item = cx.update_global::<Queue, _>(|queue, _cx| {
-                    queue.previous().map(|item| (item.path.clone(), item.replaygain_track_gain, item.replaygain_track_peak))
+                    queue.previous().map(|item| {
+                        (
+                            item.path.clone(),
+                            item.replaygain_track_gain,
+                            item.replaygain_track_peak,
+                        )
+                    })
                 });
 
                 if let Some((path, rg_gain, rg_peak)) = next_item {
                     let config = cx.global::<Config>().clone();
                     cx.update_global::<PlaybackContext, _>(|playback, _cx| {
-                        if let Err(e) = playback.load_file_with_replaygain(&path, &config, rg_gain, rg_peak) {
+                        if let Err(e) =
+                            playback.load_file_with_replaygain(&path, &config, rg_gain, rg_peak)
+                        {
                             tracing::error!("Failed to load previous track: {}", e);
                         } else {
                             playback.play();
@@ -92,13 +100,21 @@ impl Render for Player {
         let next_button = Button::new("next").child(icon(NEXT)).on_click(cx.listener(
             |_this, _event, _window, cx| {
                 let next_item = cx.update_global::<Queue, _>(|queue, _cx| {
-                    queue.next().map(|item| (item.path.clone(), item.replaygain_track_gain, item.replaygain_track_peak))
+                    queue.next().map(|item| {
+                        (
+                            item.path.clone(),
+                            item.replaygain_track_gain,
+                            item.replaygain_track_peak,
+                        )
+                    })
                 });
 
                 if let Some((path, rg_gain, rg_peak)) = next_item {
                     let config = cx.global::<Config>().clone();
                     cx.update_global::<PlaybackContext, _>(|playback, _cx| {
-                        if let Err(e) = playback.load_file_with_replaygain(&path, &config, rg_gain, rg_peak) {
+                        if let Err(e) =
+                            playback.load_file_with_replaygain(&path, &config, rg_gain, rg_peak)
+                        {
                             tracing::error!("Failed to load next track: {}", e);
                         } else {
                             playback.play();
@@ -134,7 +150,7 @@ impl Render for Player {
             }));
 
         let controls = h_flex()
-            .gap(px(variables.small_padding))
+            .gap(px(variables.padding_8))
             .items_center()
             .child(shuffle_button)
             .child(prev_button)
@@ -157,15 +173,16 @@ impl Render for Player {
         };
 
         let volume_icon = match volume {
-            v if v == 0.0 => MUTE,
-            v if v <= 0.33 => VOLUME_1,
-            v if v <= 0.66 => VOLUME_2,
-            v if v <= 1.0 => VOLUME_3,
-            _ => VOLUME,
+            v if v == 0.0 => VOLUME_MUTE,
+            v if v <= 0.25 => VOLUME_1,
+            v if v <= 0.50 => VOLUME_2,
+            v if v <= 0.75 => VOLUME_3,
+            v if v <= 1.0 => VOLUME_4,
+            _ => VOLUME_1,
         };
 
         let volume_display = h_flex()
-            .gap(px(variables.small_padding))
+            .gap(px(variables.padding_8))
             .items_center()
             .child(icon(volume_icon))
             .child(
@@ -190,8 +207,8 @@ impl Render for Player {
                     .border(px(1.0))
                     .border_color(border_color)
                     .h_full()
-                    .paddings(px(variables.default_padding))
-                    .gap(px(variables.small_padding))
+                    .paddings(px(variables.padding_16))
+                    .gap(px(variables.padding_8))
                     .child(
                         h_flex()
                             .h(px(36.0))
