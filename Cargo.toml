@@ -6,7 +6,6 @@ edition = "2024"
 [dependencies]
 gpui = "0.2.2"
 gpui-macros = "0.2.2"
-gpui-component = "0.4.1"
 anyhow = "1.0.100"
 dirs = "6.0.0"
 tracing = "0.1.41"
@@ -26,6 +25,8 @@ notify = "8.2.0"
 notify-debouncer-full = "0.6.0"
 image = "0.25.9"
 sha2 = "0.10.9"
+indexmap = "2.7"
+rustc-hash = "2.1"
 
 [package.metadata.packager]
 before_packaging_command = "cargo build --release"

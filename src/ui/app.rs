@@ -1,45 +1,19 @@
 use anyhow::Ok;
 use gpui::*;
-use gpui_component::*;
 use std::fs;
 use tracing::debug;
 
 use crate::{
     data::{
+        config::{Config, ConfigWatcher},
         db::{Database, create_pool},
         scan::{MusicScanner, MusicWatcher, expand_scan_paths},
-        config::{Config, ConfigWatcher},
     },
     media::{playback::PlaybackContext, queue::Queue},
     ui::{
-        assets::VleerAssetSource,
-        layout::{library::Library, navbar::Navbar, player::Player},
-        variables::Variables,
-        views::{AppView, HomeView, SongsView},
+        assets::VleerAssetSource, components::div::{flex_col, flex_row}, layout::{library::Library, navbar::Navbar, player::Player}, state::State, variables::Variables, views::{AppView, HomeView, SongsView}
     },
 };
-
-pub struct ViewState {
-    current_view: AppView,
-}
-
-impl Global for ViewState {}
-
-impl ViewState {
-    pub fn new() -> Self {
-        Self {
-            current_view: AppView::default(),
-        }
-    }
-
-    pub fn current(&self) -> AppView {
-        self.current_view
-    }
-
-    pub fn set(&mut self, view: AppView) {
-        self.current_view = view;
-    }
-}
 
 struct MainWindow {
     library: Entity<Library>,
@@ -72,7 +46,8 @@ impl MainWindow {
             cx.notify();
         });
 
-        let current_view = cx.global::<ViewState>().current();
+        let state = cx.global::<State>();
+        let current_view = state.get_current_view_sync();
         match current_view {
             AppView::Home => {
                 self.home_view.update(cx, |home, cx| {
@@ -101,24 +76,27 @@ impl MainWindow {
 impl Render for MainWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
-        let current_view = cx.global::<ViewState>().current();
+        let state = cx.global::<State>();
+        let current_view = state.get_current_view_sync();
 
         let content: AnyElement = match current_view {
             AppView::Home => self.home_view.clone().into_any_element(),
             AppView::Songs => self.songs_view.clone().into_any_element(),
         };
 
-        let mut element = v_flex()
+        let mut element = flex_col()
             .gap(px(variables.padding_16))
-            .paddings(16.0)
+            .p(px(variables.padding_16))
             .size_full()
             .bg(variables.background)
             .child(
-                h_flex()
+                flex_row()
                     .flex_1()
+                    .size_full()
                     .gap(px(variables.padding_16))
                     .child(
                         div()
+                            .id("library")
                             .w(px(300.0))
                             .flex_shrink_0()
                             .h_full()
@@ -130,12 +108,13 @@ impl Render for MainWindow {
                             .child(self.library.clone()),
                     )
                     .child(
-                        v_flex()
+                        flex_col()
                             .flex_1()
                             .h_full()
                             .gap(px(variables.padding_16))
                             .child(
                                 div()
+                                    .id("navbar")
                                     .h(px(48.0))
                                     .w_full()
                                     .on_mouse_move(cx.listener(
@@ -150,6 +129,7 @@ impl Render for MainWindow {
                             )
                             .child(
                                 div()
+                                    .id("current-view")
                                     .flex_1()
                                     .w_full()
                                     .on_mouse_move(cx.listener(
@@ -166,6 +146,7 @@ impl Render for MainWindow {
             )
             .child(
                 div()
+                    .id("player")
                     .h(px(100.0))
                     .w_full()
                     .on_mouse_move(cx.listener(
@@ -227,13 +208,18 @@ pub async fn run() -> anyhow::Result<()> {
     Application::new()
         .with_assets(VleerAssetSource::new())
         .run(move |cx| {
-            gpui_component::init(cx);
             Database::init(cx, pool).expect("unable to initizalize database");
             Config::init(cx, &config_dir).expect("unable to initizalize settings");
             PlaybackContext::init(cx).expect("unable to initizalize playback context");
             Queue::init(cx);
             Variables::init(cx);
-            cx.set_global(ViewState::new());
+            State::init(cx);
+
+            let config = cx.global::<Config>().clone();
+            let state = cx.global::<State>().clone();
+            tokio::spawn(async move {
+                state.set_config(config.get().clone()).await;
+            });
 
             let config_path = config_dir.join("config.toml");
             match ConfigWatcher::new(config_path) {
@@ -253,14 +239,23 @@ pub async fn run() -> anyhow::Result<()> {
                                     });
 
                                     let config = cx.global::<Config>().clone();
+                                    let config_for_state = config.clone();
+                                    let state = cx.global::<State>().clone();
+
+                                    tokio::spawn(async move {
+                                        state.set_config(config_for_state.get().clone()).await;
+                                    });
+
                                     cx.update_global::<PlaybackContext, _>(|playback, _cx| {
                                         playback.apply_settings(&config);
                                         tracing::debug!("Applied reloaded settings to playback");
                                     });
-                                }).ok();
+                                })
+                                .ok();
                             }
                         }
-                    }).detach();
+                    })
+                    .detach();
                 }
                 Err(e) => {
                     tracing::error!("Failed to initialize config watcher: {}", e);
@@ -320,31 +315,27 @@ pub async fn run() -> anyhow::Result<()> {
                 WindowOptions {
                     titlebar: Some(TitlebarOptions {
                         title: Some(SharedString::new("Vleer")),
-                        appears_transparent: true,
+                        appears_transparent: false,
                         traffic_light_position: None,
                     }),
-                    app_id: Some("app.vleerapp.vleer".to_string()),
+                    app_id: Some("vleer".to_string()),
                     kind: gpui::WindowKind::Normal,
                     ..Default::default()
                 },
                 |window, cx| {
-                    let library = cx.new(|_| Library::new());
-                    let navbar = cx.new(|_| Navbar::new());
-                    let player = cx.new(|_| Player::new());
-                    let home_view = cx.new(|cx| HomeView::new(window, cx));
-                    let songs_view = cx.new(|cx| SongsView::new(window, cx));
+                    window.set_window_title("Vleer");
 
-                    let view = cx.new(|cx| {
+                    cx.new(|cx| {
                         PlaybackContext::start_playback_monitor(window, cx);
+
                         MainWindow {
-                            library,
-                            navbar,
-                            player,
-                            home_view,
-                            songs_view,
+                            library: cx.new(|_cx| Library::new()),
+                            navbar: cx.new(|_cx| Navbar::new()),
+                            player: cx.new(|_cx| Player::new()),
+                            home_view: cx.new(|cx| HomeView::new(window, cx)),
+                            songs_view: cx.new(|cx| SongsView::new(window, cx)),
                         }
-                    });
-                    cx.new(|cx| Root::new(view, window, cx))
+                    })
                 },
             )
             .unwrap();
