@@ -43,15 +43,16 @@ impl RenderOnce for NavButton {
         div()
             .flex()
             .items_center()
-            .gap(px(variables.small_padding))
+            .gap(px(variables.padding_8))
             .text_color(text_color)
             .child(icon(icon_path).text_color(text_color))
             .child(label)
             .hover(|s| s.text_color(variables.text).cursor_pointer())
-            .on_mouse_down(MouseButton::Left, move |_event, _window, cx| {
+            .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
                 cx.update_global::<ViewState, _>(|state, _cx| {
                     state.set(target_view);
                 });
+                window.refresh();
             })
     }
 }
