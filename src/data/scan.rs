@@ -45,7 +45,10 @@ pub struct MusicScanner {
 
 impl MusicScanner {
     pub fn new(scan_paths: Vec<PathBuf>, covers_dir: PathBuf) -> Self {
-        Self { scan_paths, covers_dir }
+        Self {
+            scan_paths,
+            covers_dir,
+        }
     }
 
     pub async fn scan(&self) -> Result<Vec<ScannedTrack>> {
@@ -139,7 +142,6 @@ impl MusicScanner {
     fn read_metadata(path: &Path, covers_dir: &Path) -> Result<ScannedTrack> {
         let metadata = AudioMetadata::from_path(path)?;
 
-        // Extract cover art
         let cover_path = match extract_and_save_cover(path, covers_dir) {
             Ok(path) => path,
             Err(e) => {
@@ -235,9 +237,10 @@ impl MusicScanner {
             None
         };
 
-        let cover_hash = track.cover_path.as_ref().and_then(|p| {
-            p.file_name().map(|f| f.to_string_lossy().to_string())
-        });
+        let cover_hash = track
+            .cover_path
+            .as_ref()
+            .and_then(|p| p.file_name().map(|f| f.to_string_lossy().to_string()));
 
         let album_id = if let Some(album_name) = &meta.album {
             Some(
@@ -255,7 +258,7 @@ impl MusicScanner {
         };
 
         let title = meta.title.as_deref().unwrap_or("Unknown");
-        let duration = meta.duration.map(|d| d.as_secs() as i32);
+        let duration = meta.duration.as_secs() as i32;
         let track_number = meta.track_number.map(|n| n as i32);
 
         if let Some(existing) = existing_song {

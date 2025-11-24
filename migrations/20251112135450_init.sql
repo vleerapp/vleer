@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS songs (
     file_path TEXT NOT NULL,
     genre TEXT,
     date TEXT,
-    duration INTEGER,
+    duration INTEGER NOT NULL,
     cover TEXT,
     track_number INTEGER,
     favorite BOOLEAN DEFAULT FALSE,
