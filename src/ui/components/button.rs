@@ -1,6 +1,8 @@
 use gpui::{prelude::FluentBuilder as _, *};
 use std::rc::Rc;
 
+use crate::ui::components::div::flex_row;
+
 #[derive(IntoElement)]
 pub struct Button {
     id: ElementId,
@@ -15,7 +17,7 @@ impl Button {
 
         Self {
             id: id.clone(),
-            base: div().id(id),
+            base: flex_row().id(id),
             children: Vec::new(),
             on_click: None,
         }
@@ -57,9 +59,6 @@ impl RenderOnce for Button {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         self.base
             .cursor_pointer()
-            .flex()
-            .items_center()
-            .justify_center()
             .p(px(8.0))
             .when_some(self.on_click, |this, on_click| {
                 this.on_click(move |event, window, cx| {
