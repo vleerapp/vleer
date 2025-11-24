@@ -46,7 +46,7 @@ impl Database {
         artist_id: Option<&Cuid>,
         album_id: Option<&Cuid>,
         file_path: &str,
-        duration: Option<i32>,
+        duration: i32,
         track_number: Option<i32>,
         year: Option<i32>,
         genre: Option<&str>,
@@ -125,7 +125,7 @@ impl Database {
         title: &str,
         artist_id: Option<&Cuid>,
         album_id: Option<&Cuid>,
-        duration: Option<i32>,
+        duration: i32,
         track_number: Option<i32>,
         year: Option<i32>,
         genre: Option<&str>,
@@ -211,11 +211,9 @@ impl Database {
     }
 
     pub async fn get_all_artists(&self) -> Result<Vec<Artist>, sqlx::Error> {
-        sqlx::query_as::<_, Artist>(
-            "SELECT id, name, image, favorite FROM all_artists"
-        )
-        .fetch_all(&self.pool)
-        .await
+        sqlx::query_as::<_, Artist>("SELECT id, name, image, favorite FROM artists")
+            .fetch_all(&self.pool)
+            .await
     }
 
     pub async fn get_artist(&self, id: &Cuid) -> Result<Artist, sqlx::Error> {
@@ -243,7 +241,6 @@ impl Database {
         .await?;
 
         if let Some((id,)) = existing {
-            // Update cover if provided and album exists
             if let Some(cover_path) = cover {
                 sqlx::query("UPDATE albums SET cover = ? WHERE id = ?")
                     .bind(cover_path)
@@ -266,11 +263,9 @@ impl Database {
     }
 
     pub async fn get_all_albums(&self) -> Result<Vec<Album>, sqlx::Error> {
-        sqlx::query_as::<_, Album>(
-            "SELECT id, title, artist, cover, favorite FROM all_albums"
-        )
-        .fetch_all(&self.pool)
-        .await
+        sqlx::query_as::<_, Album>("SELECT id, title, artist, cover, favorite FROM albums")
+            .fetch_all(&self.pool)
+            .await
     }
 
     pub async fn get_album(&self, id: &Cuid) -> Result<Album, sqlx::Error> {
@@ -299,7 +294,7 @@ impl Database {
 
     pub async fn get_all_playlists(&self) -> Result<Vec<Playlist>, sqlx::Error> {
         sqlx::query_as::<_, Playlist>(
-            "SELECT id, name, description, image, date_created, date_updated FROM all_playlists"
+            "SELECT id, name, description, image, date_created, date_updated FROM playlists",
         )
         .fetch_all(&self.pool)
         .await
