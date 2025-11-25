@@ -14,7 +14,9 @@ use crate::{
                 icons::{ARROW_LEFT, ARROW_RIGHT},
             },
             title::Title,
-        }, state::State, variables::Variables
+        },
+        state::State,
+        variables::Variables,
     },
 };
 
@@ -431,7 +433,6 @@ impl Render for HomeView {
                             .child(
                                 icon(ARROW_LEFT)
                                     .when(can_scroll_left, |this| this.cursor_pointer())
-                                    .when(!can_scroll_left, |this| this.cursor_not_allowed())
                                     .on_mouse_down(
                                         MouseButton::Left,
                                         cx.listener(|this, _event, _window, cx| {
@@ -449,7 +450,7 @@ impl Render for HomeView {
                             )
                             .child(
                                 icon(ARROW_RIGHT)
-                                    .cursor_pointer()
+                                    .when(can_scroll_right, |this| this.cursor_pointer())
                                     .on_mouse_down(
                                         MouseButton::Left,
                                         cx.listener(|this, _event, _window, cx| {
