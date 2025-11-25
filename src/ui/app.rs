@@ -1,5 +1,5 @@
 use anyhow::Ok;
-use gpui::*;
+use gpui::{prelude::FluentBuilder, *};
 use std::fs;
 use tracing::debug;
 
@@ -11,7 +11,12 @@ use crate::{
     },
     media::{playback::PlaybackContext, queue::Queue},
     ui::{
-        assets::VleerAssetSource, components::div::{flex_col, flex_row}, layout::{library::Library, navbar::Navbar, player::Player}, state::State, variables::Variables, views::{AppView, HomeView, SongsView}
+        assets::VleerAssetSource,
+        components::div::{flex_col, flex_row},
+        layout::{library::Library, navbar::Navbar, player::Player},
+        state::State,
+        variables::Variables,
+        views::{AppView, HomeView, SongsView},
     },
 };
 
@@ -89,6 +94,10 @@ impl Render for MainWindow {
             .p(px(variables.padding_16))
             .size_full()
             .bg(variables.background)
+            .child(div().h(px(0.0)).when(
+                !(cfg!(target_os = "macos") || cfg!(target_os = "windows")),
+                |s| s.hidden(),
+            ))
             .child(
                 flex_row()
                     .flex_1()
@@ -315,7 +324,7 @@ pub async fn run() -> anyhow::Result<()> {
                 WindowOptions {
                     titlebar: Some(TitlebarOptions {
                         title: Some(SharedString::new("Vleer")),
-                        appears_transparent: false,
+                        appears_transparent: true,
                         traffic_light_position: None,
                     }),
                     app_id: Some("vleer".to_string()),
