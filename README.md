@@ -11,3 +11,5 @@ A free, open-source music app powered by the OpenMusic API Spec—the open stand
 <br>
 
 ###### This project is in active developement. 4th rewrite btw ._.
+
+![hero](https://github.com/user-attachments/assets/c86a1abf-12bb-4537-8144-8c8e0c0afdea)
