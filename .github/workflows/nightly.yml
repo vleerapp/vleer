@@ -211,32 +211,3 @@ jobs:
           vc_branch: ${{ github.ref_name }}
           vc_commit_sha: ${{ github.sha }}
           vc_commit_url: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
-
-      - name: Upload PKGBUILD to Buildstash
-        if: runner.os == 'Linux'
-        uses: Buildstash/upload-to-buildstash@v1.3.0
-        with:
-          api_key: ${{ secrets.BUILDSTASH_API_KEY }}
-          structure: "file"
-          primary_file_path: target/release/bundles/archlinux/PKGBUILD
-
-          version_component_1_major: ${{ steps.version.outputs.major }}
-          version_component_2_minor: ${{ steps.version.outputs.minor }}
-          version_component_3_patch: ${{ steps.version.outputs.patch }}
-
-          custom_build_number: ${{ github.run_number }}
-          platform: "archlinux"
-          stream: "nightly"
-          architectures: x86_64
-
-          ci_pipeline: ${{ github.workflow }}
-          ci_run_id: ${{ github.run_id }}
-          ci_run_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
-          vc_host_type: "git"
-          vc_host: "github"
-          vc_repo_name: ${{ github.repository }}
-          vc_repo_url: ${{ github.server_url }}/${{ github.repository }}
-          vc_branch: ${{ github.ref_name }}
-          vc_commit_sha: ${{ github.sha }}
-          vc_commit_url: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
