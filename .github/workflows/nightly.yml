@@ -73,7 +73,7 @@ jobs:
         with:
           api_key: ${{ secrets.BUILDSTASH_API_KEY }}
           structure: "file"
-          primary_file_path: target/release/bundles/dmg/Vleer_${{ steps.version.outputs.full }}_aarch64.dmg
+          primary_file_path: target/release/bundles/Vleer_${{ steps.version.outputs.full }}_aarch64.dmg
 
           version_component_1_major: ${{ steps.version.outputs.major }}
           version_component_2_minor: ${{ steps.version.outputs.minor }}
@@ -102,7 +102,7 @@ jobs:
         with:
           api_key: ${{ secrets.BUILDSTASH_API_KEY }}
           structure: "file"
-          primary_file_path: target/release/bundles/nsis/vleer_${{ steps.version.outputs.full }}_x64-setup.exe
+          primary_file_path: target/release/bundles/vleer_${{ steps.version.outputs.full }}_x64-setup.exe
 
           version_component_1_major: ${{ steps.version.outputs.major }}
           version_component_2_minor: ${{ steps.version.outputs.minor }}
@@ -131,7 +131,7 @@ jobs:
         with:
           api_key: ${{ secrets.BUILDSTASH_API_KEY }}
           structure: "file"
-          primary_file_path: target/release/bundles/deb/vleer_${{ steps.version.outputs.full }}_amd64.deb
+          primary_file_path: target/release/bundles/vleer_${{ steps.version.outputs.full }}_amd64.deb
 
           version_component_1_major: ${{ steps.version.outputs.major }}
           version_component_2_minor: ${{ steps.version.outputs.minor }}
@@ -160,7 +160,7 @@ jobs:
         with:
           api_key: ${{ secrets.BUILDSTASH_API_KEY }}
           structure: "file"
-          primary_file_path: target/release/bundles/appimage/vleer_${{ steps.version.outputs.full }}_x86_64.AppImage
+          primary_file_path: target/release/bundles/vleer_${{ steps.version.outputs.full }}_x86_64.AppImage
 
           version_component_1_major: ${{ steps.version.outputs.major }}
           version_component_2_minor: ${{ steps.version.outputs.minor }}
@@ -189,7 +189,7 @@ jobs:
         with:
           api_key: ${{ secrets.BUILDSTASH_API_KEY }}
           structure: "file"
-          primary_file_path: target/release/bundles/tar/vleer_${{ steps.version.outputs.full }}_x86_64.tar.gz
+          primary_file_path: target/release/bundles/vleer_${{ steps.version.outputs.full }}_x86_64.tar.gz
 
           version_component_1_major: ${{ steps.version.outputs.major }}
           version_component_2_minor: ${{ steps.version.outputs.minor }}
