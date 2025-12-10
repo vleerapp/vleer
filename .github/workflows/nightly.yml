@@ -82,7 +82,7 @@ jobs:
           custom_build_number: ${{ github.run_number }}
           platform: "macos"
           stream: "nightly"
-          architectures: arm64
+          architectures: apple
 
           ci_pipeline: ${{ github.workflow }}
           ci_run_id: ${{ github.run_id }}
@@ -111,7 +111,7 @@ jobs:
           custom_build_number: ${{ github.run_number }}
           platform: "windows"
           stream: "nightly"
-          architectures: x86_64
+          architectures: x64
 
           ci_pipeline: ${{ github.workflow }}
           ci_run_id: ${{ github.run_id }}
@@ -140,7 +140,7 @@ jobs:
           custom_build_number: ${{ github.run_number }}
           platform: "debian"
           stream: "nightly"
-          architectures: x86_64
+          architectures: x64
 
           ci_pipeline: ${{ github.workflow }}
           ci_run_id: ${{ github.run_id }}
@@ -169,7 +169,7 @@ jobs:
           custom_build_number: ${{ github.run_number }}
           platform: "linux"
           stream: "nightly"
-          architectures: x86_64
+          architectures: x64
 
           ci_pipeline: ${{ github.workflow }}
           ci_run_id: ${{ github.run_id }}
@@ -198,7 +198,7 @@ jobs:
           custom_build_number: ${{ github.run_number }}
           platform: "linux"
           stream: "nightly"
-          architectures: x86_64
+          architectures: x64
 
           ci_pipeline: ${{ github.workflow }}
           ci_run_id: ${{ github.run_id }}
