@@ -54,24 +54,14 @@ fn get_rows(cx: &mut App, sort: Option<TableSort>) -> Vec<Cuid> {
         SongColumn::Album => {
             songs.sort_by(|a, b| {
                 let album_a = a
-                    .album_id
+                    .album
                     .as_ref()
-                    .and_then(|aid| {
-                        tokio::task::block_in_place(|| {
-                            tokio::runtime::Handle::current().block_on(state.get_album(aid))
-                        })
-                        .map(|album| album.title.clone())
-                    })
+                    .map(|a| a.title.clone())
                     .unwrap_or_default();
                 let album_b = b
-                    .album_id
+                    .album
                     .as_ref()
-                    .and_then(|aid| {
-                        tokio::task::block_in_place(|| {
-                            tokio::runtime::Handle::current().block_on(state.get_album(aid))
-                        })
-                        .map(|album| album.title.clone())
-                    })
+                    .map(|a| a.title.clone())
                     .unwrap_or_default();
 
                 if sort.ascending {
@@ -82,6 +72,7 @@ fn get_rows(cx: &mut App, sort: Option<TableSort>) -> Vec<Cuid> {
             });
             song_ids = songs.iter().map(|s| s.id.clone()).collect();
         }
+
         SongColumn::Duration => {
             songs.sort_by(|a, b| {
                 if sort.ascending {
@@ -106,13 +97,16 @@ fn get_row(cx: &mut App, id: Cuid) -> Option<Arc<SongEntry>> {
     });
 
     if let Some(song) = song {
-        let artist = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(state.get_artist_name_for_song(&song))
-        });
-
-        let album = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(state.get_album_title_for_song(&song))
-        });
+        let artist = song
+            .artist
+            .as_ref()
+            .map(|a| a.name.clone())
+            .unwrap_or_else(|| "Unknown".to_string());
+        let album = song
+            .album
+            .as_ref()
+            .map(|a| a.title.clone())
+            .unwrap_or_else(|| "Unknown".to_string());
 
         let cover_uri = song.cover.as_ref().and_then(|cover_hash| {
             let cover_path = covers_dir.join(cover_hash);
@@ -164,22 +158,12 @@ impl SongsView {
         cx.spawn_in(window, move |_, cx: &mut AsyncWindowContext| {
             let mut cx = cx.clone();
             async move {
-                let (songs_result, artists_result, albums_result) = tokio::join!(
-                    db.get_all_songs(),
-                    db.get_all_artists(),
-                    db.get_all_albums()
-                );
+                let songs_result = db.get_all_songs().await;
 
-                if let Ok(songs) = songs_result {
-                    state.set_songs(songs).await;
-                }
-
-                if let Ok(artists) = artists_result {
-                    state.set_artists(artists).await;
-                }
-
-                if let Ok(albums) = albums_result {
-                    state.set_albums(albums).await;
+                if let Ok(db_songs) = songs_result {
+                    if let Ok(hydrated_songs) = db.hydrate(db_songs).await {
+                        state.set_songs(hydrated_songs).await;
+                    }
                 }
 
                 cx.update(|_, cx| {
