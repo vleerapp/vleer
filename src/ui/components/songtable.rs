@@ -3,11 +3,14 @@ use rustc_hash::FxHashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::data::types::Cuid;
+use crate::data::types::{Cuid, Song};
+use crate::media::playback::Playback;
+use crate::media::queue::Queue;
 use crate::ui::components::div::{flex_col, flex_row};
-use crate::ui::components::icons::icon::{self, icon};
+use crate::ui::components::icons::icon::icon;
 use crate::ui::components::icons::icons::{ARROW_DOWN, ARROW_UP, DURATION};
-use crate::ui::components::scrollbar::WithScrollbar;
+use crate::ui::components::scrollbar::{Scrollbar, ScrollbarAxis};
+use crate::ui::state::State;
 use crate::ui::variables::Variables;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -121,6 +124,7 @@ pub struct SongTableItem {
     number_width: f32,
     duration_width: f32,
     row_number: usize,
+    items: Option<Arc<Vec<Cuid>>>,
 }
 
 impl SongTableItem {
@@ -132,6 +136,7 @@ impl SongTableItem {
         number_width: f32,
         duration_width: f32,
         row_number: usize,
+        items: Option<Arc<Vec<Cuid>>>,
     ) -> Entity<Self> {
         let data = get_row(cx, id);
 
@@ -141,6 +146,7 @@ impl SongTableItem {
             number_width,
             duration_width,
             row_number,
+            items,
         })
     }
 }
@@ -150,6 +156,7 @@ impl Render for SongTableItem {
         let variables = cx.global::<Variables>();
         let row_data = self.data.clone();
         let on_select = self.on_select.clone();
+        let items = self.items.clone();
 
         let element_id = self
             .data
@@ -198,6 +205,7 @@ impl Render for SongTableItem {
                         .items_center()
                         .child(
                             div()
+                                .id("cover")
                                 .size(px(image_size))
                                 .flex_shrink_0()
                                 .bg(variables.element)
@@ -207,10 +215,61 @@ impl Render for SongTableItem {
                                             .size(px(image_size))
                                             .object_fit(ObjectFit::Cover),
                                     )
+                                })
+                                .cursor_pointer()
+                                .on_mouse_down(MouseButton::Left, {
+                                    let items = items.clone();
+                                    let row_number = self.row_number;
+                                    move |_event, _window, cx| {
+                                        if let Some(all_items) = &items {
+                                            let items_clone = all_items.clone();
+                                            let state = cx.global::<State>().clone();
+                                            let start_index = row_number - 1;
+
+                                            cx.spawn(move |cx: &mut gpui::AsyncApp| {
+                                                let cx = cx.clone();
+                                                async move {
+                                                    let songs: Vec<Arc<Song>> = {
+                                                        let mut result = Vec::new();
+                                                        for cuid in
+                                                            items_clone.iter().skip(start_index)
+                                                        {
+                                                            if let Some(song) =
+                                                                state.get_song(cuid).await
+                                                            {
+                                                                result.push(song);
+                                                            }
+                                                        }
+                                                        result
+                                                    };
+
+                                                    cx.update(|cx| {
+                                                        cx.update_global::<Queue, _>(
+                                                            |queue, _cx| {
+                                                                queue.clear_and_queue_songs(&songs);
+                                                            },
+                                                        );
+
+                                                        if let Err(e) =
+                                                            Playback::play_queue(cx)
+                                                        {
+                                                            tracing::error!(
+                                                                "Failed to start playback: {}",
+                                                                e
+                                                            );
+                                                        }
+                                                    })
+                                                    .ok();
+                                                }
+                                            })
+                                            .detach();
+                                        }
+                                    }
                                 }),
                         )
                         .child(
                             flex_col()
+                                .id("title-and-artist")
                                 .flex_1()
                                 .min_w_0()
                                 .gap(px(2.0))
@@ -220,6 +279,7 @@ impl Render for SongTableItem {
                                         .overflow_hidden()
                                         .text_ellipsis()
                                         .font_weight(FontWeight(500.0))
+                                        .hover(|this| this.underline())
                                         .child(data.title.clone()),
                                 )
                                 .child(
@@ -266,6 +326,7 @@ pub struct SongTable {
     get_row: GetRowHandler,
     number_width: f32,
     duration_width: f32,
+    scroll_handle: UniformListScrollHandle,
 }
 
 impl EventEmitter<SongTableEvent> for SongTable {}
@@ -347,13 +408,14 @@ impl SongTable {
                 get_row,
                 number_width,
                 duration_width,
+                scroll_handle: UniformListScrollHandle::default(),
             }
         })
     }
 }
 
 impl Render for SongTable {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
         let sort_method = self.sort_method.read(cx).clone();
         let items = self.items.clone();
@@ -452,47 +514,56 @@ impl Render for SongTable {
                 .flex_1()
                 .size_full()
                 .min_h_0()
-                .id("song-table-scroll-view")
+                .id("song-table-view")
                 .gap(px(variables.padding_16))
-                .mt(px(variables.padding_16))
-                .vertical_scroll_with_custom_bar(px(4.0), variables.accent.into(), None, window, cx)
+                .pt(px(variables.padding_16))
                 .when_some(items, |this, items| {
                     this.child(
-                        uniform_list(
-                            ElementId::Name("song-table-list".into()),
-                            items.len(),
-                            move |range, _, cx| {
-                                let start = range.start;
-                                items[range]
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(idx, item)| {
-                                        let idx = idx + start;
-                                        prune_views(&views_model, &render_counter, idx, cx);
-
-                                        let get_row_clone = get_row.clone();
-                                        create_or_retrieve_view(
-                                            &views_model,
-                                            idx,
-                                            |cx| {
-                                                SongTableItem::new(
+                        div()
+                            .relative()
+                            .size_full()
+                            .child(
+                                uniform_list(
+                                    ElementId::Name("song-table-list".into()),
+                                    items.len(),
+                                    move |range, _, cx| {
+                                        let start = range.start;
+                                        items[range]
+                                            .iter()
+                                            .enumerate()
+                                            .map(|(idx, item)| {
+                                                let idx = idx + start;
+                                                prune_views(&views_model, &render_counter, idx, cx);
+                                                let get_row_clone = get_row.clone();
+                                                let items_clone = items.clone();
+                                                create_or_retrieve_view(
+                                                    &views_model,
+                                                    idx,
+                                                    |cx| {
+                                                        SongTableItem::new(
+                                                            cx,
+                                                            item.clone(),
+                                                            &get_row_clone,
+                                                            handler.clone(),
+                                                            number_width,
+                                                            duration_width,
+                                                            idx + 1,
+                                                            Some(items_clone),
+                                                        )
+                                                    },
                                                     cx,
-                                                    item.clone(),
-                                                    &get_row_clone,
-                                                    handler.clone(),
-                                                    number_width,
-                                                    duration_width,
-                                                    idx + 1,
                                                 )
-                                            },
-                                            cx,
-                                        )
-                                        .into_any_element()
-                                    })
-                                    .collect()
-                            },
-                        )
-                        .size_full(),
+                                                .into_any_element()
+                                            })
+                                            .collect()
+                                    },
+                                )
+                                .track_scroll(self.scroll_handle.clone())
+                                .size_full(),
+                            )
+                            .child(
+                                Scrollbar::new(&self.scroll_handle).axis(ScrollbarAxis::Vertical),
+                            ),
                     )
                 }),
         )
