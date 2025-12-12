@@ -1,61 +1,15 @@
-use std::path::PathBuf;
+use std::sync::Arc;
 
-use gpui::{App, Global};
+use anyhow::Result;
+use gpui::{App, BorrowAppContext, Global};
 use tracing::debug;
 
-use crate::data::types::Cuid;
-
-#[derive(Clone, Debug)]
-pub struct QueueItem {
-    pub song_id: Option<Cuid>,
-    pub path: PathBuf,
-    pub title: Option<String>,
-    pub artist_name: Option<String>,
-    pub album_name: Option<String>,
-    pub duration: Option<i32>,
-    pub replaygain_track_gain: Option<f32>,
-    pub replaygain_track_peak: Option<f32>,
-}
-
-impl QueueItem {
-    pub fn new(path: PathBuf) -> Self {
-        Self {
-            song_id: None,
-            path,
-            title: None,
-            artist_name: None,
-            album_name: None,
-            duration: None,
-            replaygain_track_gain: None,
-            replaygain_track_peak: None,
-        }
-    }
-
-    pub fn with_metadata(
-        path: PathBuf,
-        song_id: Option<Cuid>,
-        title: Option<String>,
-        artist_name: Option<String>,
-        album_name: Option<String>,
-        duration: Option<i32>,
-        replaygain_track_gain: Option<f32>,
-        replaygain_track_peak: Option<f32>,
-    ) -> Self {
-        Self {
-            song_id,
-            path,
-            title,
-            artist_name,
-            album_name,
-            duration,
-            replaygain_track_gain,
-            replaygain_track_peak,
-        }
-    }
-}
+use crate::data::types::Song;
+use crate::data::config::Config;
+use crate::media::playback::Playback;
 
 pub struct Queue {
-    items: Vec<QueueItem>,
+    items: Vec<Arc<Song>>,
     current_index: Option<usize>,
     shuffle: bool,
     repeat: RepeatMode,
@@ -84,28 +38,30 @@ impl Queue {
         cx.set_global(Queue::new());
     }
 
-    pub fn add(&mut self, item: QueueItem) {
-        self.items.push(item);
+    pub fn add(&mut self, song: Arc<Song>) {
+        self.items.push(song);
         if self.current_index.is_none() && !self.items.is_empty() {
             self.current_index = Some(0);
         }
         debug!("Added item to queue. Queue size: {}", self.items.len());
     }
 
-    pub fn add_many(&mut self, items: Vec<QueueItem>) {
+    pub fn add_many(&mut self, songs: Vec<Arc<Song>>) {
         let was_empty = self.items.is_empty();
-        self.items.extend(items);
+        let count = songs.len();
+        self.items.extend(songs);
         if was_empty && !self.items.is_empty() {
             self.current_index = Some(0);
         }
-        debug!(
-            "Added {} items to queue. Queue size: {}",
-            self.items.len(),
-            self.items.len()
-        );
+        debug!("Added {} items to queue. Queue size: {}", count, self.items.len());
     }
 
-    pub fn current(&self) -> Option<&QueueItem> {
+    pub fn clear_and_queue_songs(&mut self, songs: &[Arc<Song>]) {
+        self.clear();
+        self.add_many(songs.to_vec());
+    }
+
+    pub fn current(&self) -> Option<&Arc<Song>> {
         self.current_index.and_then(|idx| self.items.get(idx))
     }
 
@@ -113,77 +69,117 @@ impl Queue {
         self.current_index
     }
 
-    pub fn next(&mut self) -> Option<&QueueItem> {
-        if self.items.is_empty() {
-            return None;
-        }
+    pub fn next(cx: &mut App) -> Result<()> {
+        let next_song = cx.update_global::<Queue, _>(|queue, _cx| {
+            if queue.items.is_empty() {
+                return None;
+            }
 
-        match self.repeat {
-            RepeatMode::One => {
-                return self.current();
-            }
-            RepeatMode::All => {
-                if let Some(idx) = self.current_index {
-                    self.current_index = Some((idx + 1) % self.items.len());
-                } else {
-                    self.current_index = Some(0);
+            match queue.repeat {
+                RepeatMode::One => {
+                    return queue.current().cloned();
                 }
-            }
-            RepeatMode::Off => {
-                if let Some(idx) = self.current_index {
-                    if idx + 1 < self.items.len() {
-                        self.current_index = Some(idx + 1);
+                RepeatMode::All => {
+                    if let Some(idx) = queue.current_index {
+                        queue.current_index = Some((idx + 1) % queue.items.len());
                     } else {
-                        return None;
+                        queue.current_index = Some(0);
                     }
-                } else {
-                    self.current_index = Some(0);
+                }
+                RepeatMode::Off => {
+                    if let Some(idx) = queue.current_index {
+                        if idx + 1 < queue.items.len() {
+                            queue.current_index = Some(idx + 1);
+                        } else {
+                            return None;
+                        }
+                    } else {
+                        queue.current_index = Some(0);
+                    }
                 }
             }
-        }
 
-        debug!("Moved to next track. Index: {:?}", self.current_index);
-        self.current()
+            debug!("Moved to next track. Index: {:?}", queue.current_index);
+            queue.current().cloned()
+        });
+
+        if let Some(song) = next_song {
+            let config = cx.global::<Config>().clone();
+            cx.update_global::<Playback, _>(|playback, _cx| {
+                playback.load_file_with_replaygain(
+                    &song.file_path,
+                    &config,
+                    song.replaygain_track_gain,
+                    song.replaygain_track_peak,
+                )?;
+                playback.play();
+                debug!("Playing next track");
+                Ok(())
+            })
+        } else {
+            debug!("No next track");
+            Ok(())
+        }
     }
 
-    pub fn previous(&mut self) -> Option<&QueueItem> {
-        if self.items.is_empty() {
-            return None;
-        }
-
-        match self.repeat {
-            RepeatMode::One => {
-                return self.current();
+    pub fn previous(cx: &mut App) -> Result<()> {
+        let prev_song = cx.update_global::<Queue, _>(|queue, _cx| {
+            if queue.items.is_empty() {
+                return None;
             }
-            RepeatMode::All => {
-                if let Some(idx) = self.current_index {
-                    if idx == 0 {
-                        self.current_index = Some(self.items.len() - 1);
+
+            match queue.repeat {
+                RepeatMode::One => {
+                    return queue.current().cloned();
+                }
+                RepeatMode::All => {
+                    if let Some(idx) = queue.current_index {
+                        if idx == 0 {
+                            queue.current_index = Some(queue.items.len() - 1);
+                        } else {
+                            queue.current_index = Some(idx - 1);
+                        }
                     } else {
-                        self.current_index = Some(idx - 1);
+                        queue.current_index = Some(0);
                     }
-                } else {
-                    self.current_index = Some(0);
+                }
+                RepeatMode::Off => {
+                    if let Some(idx) = queue.current_index {
+                        if idx > 0 {
+                            queue.current_index = Some(idx - 1);
+                        } else {
+                            return None;
+                        }
+                    } else {
+                        queue.current_index = Some(0);
+                    }
                 }
             }
-            RepeatMode::Off => {
-                if let Some(idx) = self.current_index {
-                    if idx > 0 {
-                        self.current_index = Some(idx - 1);
-                    } else {
-                        return None;
-                    }
-                } else {
-                    self.current_index = Some(0);
-                }
-            }
-        }
 
-        debug!("Moved to previous track. Index: {:?}", self.current_index);
-        self.current()
+            debug!("Moved to previous track. Index: {:?}", queue.current_index);
+            queue.current().cloned()
+        });
+
+        if let Some(song) = prev_song {
+            let config = cx.global::<Config>().clone();
+            cx.update_global::<Playback, _>(|playback, _cx| {
+                playback.load_file_with_replaygain(
+                    &song.file_path,
+                    &config,
+                    song.replaygain_track_gain,
+                    song.replaygain_track_peak,
+                )?;
+                playback.play();
+                debug!("Playing previous track");
+                Ok(())
+            })
+        } else {
+            debug!("No previous track");
+            Ok(())
+        }
     }
 
-    pub fn jump_to(&mut self, index: usize) -> Option<&QueueItem> {
+    pub fn jump_to(&mut self, index: usize) -> Option<&Arc<Song>> {
         if index < self.items.len() {
             self.current_index = Some(index);
             debug!("Jumped to index {}", index);
@@ -199,7 +195,7 @@ impl Queue {
         debug!("Queue cleared");
     }
 
-    pub fn remove(&mut self, index: usize) -> Option<QueueItem> {
+    pub fn remove(&mut self, index: usize) -> Option<Arc<Song>> {
         if index < self.items.len() {
             let item = self.items.remove(index);
 
@@ -226,7 +222,7 @@ impl Queue {
         }
     }
 
-    pub fn items(&self) -> &[QueueItem] {
+    pub fn items(&self) -> &[Arc<Song>] {
         &self.items
     }
 
