@@ -56,6 +56,7 @@ impl IntoElement for ProgressSlider {
         self
     }
 }
+
 impl Element for ProgressSlider {
     type RequestLayoutState = ();
 
@@ -167,8 +168,13 @@ impl Element for ProgressSlider {
             ));
         }
 
-        if is_hovered {
-            window.set_cursor_style(CursorStyle::PointingHand, self.hitbox.as_ref().unwrap());
+        let is_dragging = *dragging.borrow();
+        if is_hovered || is_dragging {
+            if is_dragging {
+                window.set_cursor_style(CursorStyle::PointingHand, self.hitbox.as_ref().unwrap());
+            } else if is_hovered {
+                window.set_cursor_style(CursorStyle::PointingHand, self.hitbox.as_ref().unwrap());
+            }
 
             let thumb_width = px(10.0);
             let thumb_height = px(16.0);
@@ -292,10 +298,6 @@ impl Element for ProgressSlider {
                 }
 
                 *dragging_up.borrow_mut() = false;
-
-                if !bounds_up.contains(&ev.position) {
-                    return;
-                }
 
                 let v = compute_value(ev.position, bounds_up);
                 *drag_value_up.borrow_mut() = v;
