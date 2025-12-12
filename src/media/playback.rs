@@ -1,21 +1,20 @@
+use anyhow::{Context, Result};
+use gpui::{App, AsyncWindowContext, BorrowAppContext, Global, Window};
+use rodio::{Decoder, OutputStream, OutputStreamBuilder, Sink, Source};
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-
-use anyhow::{Context, Result};
-use gpui::{App, AsyncWindowContext, BorrowAppContext, Global, Window};
-use rodio::{Decoder, OutputStream, OutputStreamBuilder, Sink, Source};
 use tracing::debug;
 
 use super::queue::Queue;
 
 use super::equalizer::{Equalizer, EqualizerSource};
 use super::normalization::{NormalizationSource, NormalizationState};
-use crate::data::config::{self, Config};
+use crate::data::config::Config;
 
-pub struct PlaybackContext {
+pub struct Playback {
     _stream: Arc<OutputStream>,
     sink: Arc<Sink>,
     equalizer: Arc<Mutex<Equalizer>>,
@@ -23,11 +22,12 @@ pub struct PlaybackContext {
     volume: f32,
     is_paused: bool,
     current_file: Option<String>,
+    position: f32,
 }
 
-impl Global for PlaybackContext {}
+impl Global for Playback {}
 
-impl PlaybackContext {
+impl Playback {
     const LOG_VOLUME_GROWTH_RATE: f32 = 6.908;
     const LOG_VOLUME_SCALE_FACTOR: f32 = 1000.0;
     const UNITY_GAIN: f32 = 1.0;
@@ -51,6 +51,7 @@ impl PlaybackContext {
             volume: 0.5,
             is_paused: true,
             current_file: None,
+            position: 0.0,
         })
     }
 
@@ -63,10 +64,6 @@ impl PlaybackContext {
 
         cx.set_global(context);
         Ok(())
-    }
-
-    pub fn load_file(&mut self, path: impl AsRef<Path>, settings: &Config) -> Result<()> {
-        self.load_file_with_replaygain(path, settings, None, None)
     }
 
     pub fn load_file_with_replaygain(
@@ -115,11 +112,35 @@ impl PlaybackContext {
         self.sink.append(norm_source);
         self.sink.set_volume(Self::log_volume(self.volume));
 
+        self.position = 0.0;
+
         self.current_file = Some(path.to_string_lossy().to_string());
         self.is_paused = true;
 
         debug!("Successfully loaded audio file");
         Ok(())
+    }
+
+    pub fn play_queue(cx: &mut App) -> Result<()> {
+        let first_song = cx.update_global::<Queue, _>(|queue, _cx| queue.current().cloned());
+
+        if let Some(song) = first_song {
+            let config = cx.global::<Config>().clone();
+            cx.update_global::<Playback, _>(|playback, _cx| {
+                playback.load_file_with_replaygain(
+                    &song.file_path,
+                    &config,
+                    song.replaygain_track_gain,
+                    song.replaygain_track_peak,
+                )?;
+                playback.play();
+                debug!("Started playback from queue");
+                Ok(())
+            })
+        } else {
+            debug!("Queue is empty, nothing to play");
+            Ok(())
+        }
     }
 
     pub fn play(&mut self) {
@@ -294,10 +315,35 @@ impl PlaybackContext {
         amplitude
     }
 
-    pub fn seek(&mut self, position: Duration) -> Result<()> {
-        self.sink
-            .try_seek(position)
-            .map_err(|e| anyhow::anyhow!("Failed to seek to position: {:?}", e))
+    pub fn seek(&mut self, position: f32) -> anyhow::Result<()> {
+        if let Some(file_path) = &self.current_file {
+            let was_playing = !self.is_paused;
+
+            let file = File::open(file_path)?;
+            let mut source: Decoder<BufReader<File>> = Decoder::try_from(file)?;
+            source.try_seek(Duration::from_secs_f32(position)).ok();
+            let eq_source = EqualizerSource::new(source, self.equalizer.clone());
+            let norm_source = NormalizationSource::new(eq_source, self.normalization.clone());
+
+            self.sink.stop();
+            self.sink.append(norm_source);
+            self.sink.set_volume(Self::log_volume(self.volume));
+
+            self.position = position;
+
+            if was_playing {
+                self.sink.play();
+                self.is_paused = false;
+            } else {
+                self.sink.pause();
+                self.is_paused = true;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn get_position(&self) -> f32 {
+        self.position + self.sink.get_pos().as_secs_f32()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -309,11 +355,11 @@ impl PlaybackContext {
             let mut cx = cx.clone();
             async move {
                 loop {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
                     let should_advance = cx
                         .update(|_window, cx| {
-                            if let Some(playback) = cx.try_global::<PlaybackContext>() {
+                            if let Some(playback) = cx.try_global::<Playback>() {
                                 playback.is_empty() && playback.is_playing()
                             } else {
                                 false
@@ -323,37 +369,17 @@ impl PlaybackContext {
 
                     if should_advance {
                         cx.update(|_window, cx| {
-                            let next_item = cx.update_global::<Queue, _>(|queue, _cx| {
-                                queue.next().map(|item| {
-                                    (
-                                        item.path.clone(),
-                                        item.replaygain_track_gain,
-                                        item.replaygain_track_peak,
-                                    )
-                                })
-                            });
-
-                            if let Some((path, rg_gain, rg_peak)) = next_item {
-                                let config = cx.global::<Config>().clone();
-                                cx.update_global::<PlaybackContext, _>(|playback, _cx| {
-                                    if let Err(e) = playback
-                                        .load_file_with_replaygain(&path, &config, rg_gain, rg_peak)
-                                    {
-                                        tracing::error!("Failed to auto-advance: {}", e);
-                                    } else {
-                                        playback.play();
-                                        debug!("Auto-advanced to next track");
-                                    }
-                                });
-                            } else {
-                                cx.update_global::<PlaybackContext, _>(|playback, _cx| {
-                                    playback.pause();
-                                });
-                                debug!("Queue finished");
+                            if let Err(e) = Queue::next(cx) {
+                                tracing::error!("Failed to auto-advance: {}", e);
                             }
                         })
                         .ok();
                     }
+
+                    cx.update(|window, _cx| {
+                        window.refresh();
+                    })
+                    .ok();
                 }
             }
         })
