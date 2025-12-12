@@ -6,3 +6,4 @@ pub mod scrollbar;
 pub mod slider;
 pub mod songtable;
 pub mod title;
+pub mod progressbar;

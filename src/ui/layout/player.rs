@@ -3,7 +3,7 @@ use gpui::*;
 use crate::{
     data::config::Config,
     media::{
-        playback::PlaybackContext,
+        playback::Playback,
         queue::{Queue, RepeatMode},
     },
     ui::{
@@ -11,6 +11,7 @@ use crate::{
             button::Button,
             div::{flex_col, flex_row},
             icons::{icon::icon, icons::*},
+            progressbar::progress_slider,
             slider::slider,
             title::Title,
         },
@@ -44,26 +45,38 @@ impl Render for Player {
             variables.border
         };
 
-        let current_track = cx.global::<Queue>().current().map(|item| {
-            (
-                item.title
-                    .clone()
-                    .unwrap_or_else(|| "Unknown Track".to_string()),
-                item.artist_name
-                    .clone()
-                    .unwrap_or_else(|| "Unknown Artist".to_string()),
-            )
+        let current_track = cx.global::<Queue>().current().map(|song| {
+            let artist_name = song
+                .artist
+                .as_ref()
+                .map(|a| a.name.clone())
+                .unwrap_or_else(|| "Unknown Artist".to_string());
+
+            let cover_uri = song.cover.as_ref().and_then(|cover_hash| {
+                let covers_dir = dirs::data_dir()
+                    .expect("couldn't get data directory")
+                    .join("vleer")
+                    .join("covers");
+                let cover_path = covers_dir.join(cover_hash);
+                if cover_path.exists() {
+                    Some(format!("!file://{}", cover_path.to_string_lossy()))
+                } else {
+                    None
+                }
+            });
+
+            (song.title.clone(), artist_name, cover_uri)
         });
 
-        let is_playing = cx.global::<PlaybackContext>().is_playing();
-        let volume = cx.global::<PlaybackContext>().get_volume();
+        let is_playing = cx.global::<Playback>().is_playing();
+        let volume = cx.global::<Playback>().get_volume();
         let repeat_mode = cx.global::<Queue>().repeat_mode();
         let _is_shuffle = cx.global::<Queue>().is_shuffle();
 
         let play_button = Button::new("play_pause")
             .child(if is_playing { icon(PAUSE) } else { icon(PLAY) })
             .on_click(cx.listener(|_this, _event, _window, cx| {
-                cx.update_global::<PlaybackContext, _>(|playback, _cx| {
+                cx.update_global::<Playback, _>(|playback, _cx| {
                     playback.toggle_play_pause();
                 });
                 cx.notify();
@@ -72,54 +85,16 @@ impl Render for Player {
         let prev_button = Button::new("previous")
             .child(icon(PREVIOUS))
             .on_click(cx.listener(|_this, _event, _window, cx| {
-                let next_item = cx.update_global::<Queue, _>(|queue, _cx| {
-                    queue.previous().map(|item| {
-                        (
-                            item.path.clone(),
-                            item.replaygain_track_gain,
-                            item.replaygain_track_peak,
-                        )
-                    })
-                });
-
-                if let Some((path, rg_gain, rg_peak)) = next_item {
-                    let config = cx.global::<Config>().clone();
-                    cx.update_global::<PlaybackContext, _>(|playback, _cx| {
-                        if let Err(e) =
-                            playback.load_file_with_replaygain(&path, &config, rg_gain, rg_peak)
-                        {
-                            tracing::error!("Failed to load previous track: {}", e);
-                        } else {
-                            playback.play();
-                        }
-                    });
+                if let Err(e) = Queue::previous(cx) {
+                    tracing::error!("Failed to play previous: {}", e);
                 }
                 cx.notify();
             }));
 
         let next_button = Button::new("next").child(icon(NEXT)).on_click(cx.listener(
             |_this, _event, _window, cx| {
-                let next_item = cx.update_global::<Queue, _>(|queue, _cx| {
-                    queue.next().map(|item| {
-                        (
-                            item.path.clone(),
-                            item.replaygain_track_gain,
-                            item.replaygain_track_peak,
-                        )
-                    })
-                });
-
-                if let Some((path, rg_gain, rg_peak)) = next_item {
-                    let config = cx.global::<Config>().clone();
-                    cx.update_global::<PlaybackContext, _>(|playback, _cx| {
-                        if let Err(e) =
-                            playback.load_file_with_replaygain(&path, &config, rg_gain, rg_peak)
-                        {
-                            tracing::error!("Failed to load next track: {}", e);
-                        } else {
-                            playback.play();
-                        }
-                    });
+                if let Err(e) = Queue::next(cx) {
+                    tracing::error!("Failed to play next: {}", e);
                 }
                 cx.notify();
             },
@@ -152,24 +127,54 @@ impl Render for Player {
         let controls = flex_row()
             .gap(px(variables.padding_8))
             .items_center()
+            .justify_center()
             .child(shuffle_button)
             .child(prev_button)
             .child(play_button)
             .child(next_button)
             .child(repeat_button);
 
-        let track_info = if let Some((title, artist)) = current_track {
-            flex_col()
-                .gap(px(4.0))
-                .child(div().text_sm().font_weight(FontWeight::BOLD).child(title))
-                .child(div().text_xs().text_color(rgb(0x999999)).child(artist))
+        let track_info = if let Some((title, artist, cover_uri)) = current_track {
+            flex_row()
+                .gap(px(variables.padding_8))
+                .items_center()
+                .child(if let Some(uri) = cover_uri {
+                    img(uri)
+                        .size(px(36.0))
+                        .object_fit(ObjectFit::Cover)
+                        .into_any_element()
+                } else {
+                    div().size(px(36.0)).bg(variables.border).into_any_element()
+                })
+                .child(
+                    flex_col()
+                        .gap(px(2.0))
+                        .child(div().font_weight(FontWeight(500.0)).child(title))
+                        .child(div().text_color(variables.text_secondary).child(artist)),
+                )
+                .into_any_element()
         } else {
-            flex_col().gap(px(4.0)).child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(0x666666))
-                    .child("No track loaded"),
-            )
+            flex_row()
+                .gap(px(variables.padding_8))
+                .items_center()
+                .child(
+                    div()
+                        .size(px(36.0))
+                        .bg(variables.element)
+                        .into_any_element(),
+                )
+                .child(
+                    flex_col()
+                        .gap(px(2.0))
+                        .child(
+                            div()
+                                .font_weight(FontWeight(500.0))
+                                .text_color(variables.text_secondary)
+                                .child("No Song Playing"),
+                        )
+                        .child(div().text_color(variables.text_muted).child("")),
+                )
+                .into_any_element()
         };
 
         let volume_icon = match volume {
@@ -184,6 +189,7 @@ impl Render for Player {
         let volume_display = flex_row()
             .gap(px(variables.padding_8))
             .items_center()
+            .justify_end()
             .child(icon(volume_icon))
             .child(
                 slider()
@@ -193,7 +199,7 @@ impl Render for Player {
                     .value(volume)
                     .on_change(|value, _window, cx| {
                         let mut config = cx.global::<Config>().clone();
-                        cx.update_global::<PlaybackContext, _>(|playback, _cx| {
+                        cx.update_global::<Playback, _>(|playback, _cx| {
                             playback.set_volume_and_save(value, &mut config);
                         });
                     }),
@@ -208,16 +214,53 @@ impl Render for Player {
                     .border_color(border_color)
                     .h_full()
                     .p(px(variables.padding_16))
-                    .gap(px(variables.padding_8))
+                    .gap(px(variables.padding_16))
                     .child(
                         flex_row()
                             .h(px(36.0))
                             .w_full()
                             .items_center()
-                            .justify_between()
-                            .child(track_info)
-                            .child(controls)
-                            .child(volume_display),
+                            .gap(px(variables.padding_16))
+                            .child(div().flex_1().min_w_0().child(track_info))
+                            .child(div().flex_1().child(controls))
+                            .child(div().flex_1().min_w_0().child(volume_display)),
+                    )
+                    .child(
+                        progress_slider()
+                            .id("playback-progress")
+                            .w_full()
+                            .h(px(16.0))
+                            .current_time(cx.global::<Playback>().get_position())
+                            .duration(
+                                cx.global::<Queue>()
+                                    .current()
+                                    .map(|s| s.duration as f32)
+                                    .unwrap_or(0.0),
+                            )
+                            .on_seek(|value, window, cx| {
+                                let duration = cx
+                                    .global::<Queue>()
+                                    .current()
+                                    .map(|s| s.duration as f32)
+                                    .unwrap_or(0.0);
+
+                                if duration > 0.0 {
+                                    let seek_time = value * duration;
+                                    tracing::info!(
+                                        "Seeking to {} seconds ({}%)",
+                                        seek_time,
+                                        value * 100.0
+                                    );
+
+                                    cx.update_global::<Playback, _>(|playback, _cx| {
+                                        if let Err(e) = playback.seek(seek_time) {
+                                            tracing::error!("Failed to seek: {}", e);
+                                        }
+                                    });
+
+                                    window.refresh();
+                                }
+                            }),
                     ),
             )
             .child(Title::new("Player", self.hovered))
