@@ -1,7 +1,7 @@
 use gpui::*;
 
 use crate::ui::{
-    components::{div::{flex_col, flex_row}, icons::icons::HOME, navbutton::NavButton, title::Title},
+    components::{div::flex_row, icons::icons::HOME, navbutton::NavButton, title::Title},
     variables::Variables,
     views::AppView,
 };
