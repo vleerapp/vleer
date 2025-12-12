@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use sqlx::prelude::FromRow;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(transparent)]
@@ -17,12 +18,51 @@ impl Default for Cuid {
     }
 }
 
-#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub mod db {
+    use super::*;
+
+    #[derive(Debug, Clone, FromRow)]
+    pub struct Song {
+        pub id: Cuid,
+        pub title: String,
+        pub artist_id: Option<Cuid>,
+        pub album_id: Option<Cuid>,
+        pub file_path: String,
+        pub genre: Option<String>,
+        pub date: Option<String>,
+        pub date_added: String,
+        pub duration: i32,
+        pub cover: Option<String>,
+        pub track_number: Option<i32>,
+        pub favorite: bool,
+        pub replaygain_track_gain: Option<f32>,
+        pub replaygain_track_peak: Option<f32>,
+    }
+
+    #[derive(Debug, Clone, FromRow)]
+    pub struct Artist {
+        pub id: Cuid,
+        pub name: String,
+        pub image: Option<String>,
+        pub favorite: bool,
+    }
+
+    #[derive(Debug, Clone, FromRow)]
+    pub struct Album {
+        pub id: Cuid,
+        pub title: String,
+        pub artist: Option<Cuid>,
+        pub cover: Option<String>,
+        pub favorite: bool,
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Song {
     pub id: Cuid,
     pub title: String,
-    pub artist_id: Option<Cuid>,
-    pub album_id: Option<Cuid>,
+    pub artist: Option<Arc<Artist>>,
+    pub album: Option<Arc<Album>>,
     pub file_path: String,
     pub genre: Option<String>,
     pub date: Option<String>,
@@ -35,7 +75,7 @@ pub struct Song {
     pub replaygain_track_peak: Option<f32>,
 }
 
-#[derive(Debug, FromRow, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Artist {
     pub id: Cuid,
     pub name: String,
@@ -43,16 +83,16 @@ pub struct Artist {
     pub favorite: bool,
 }
 
-#[derive(Debug, FromRow, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Album {
     pub id: Cuid,
     pub title: String,
-    pub artist: Option<Cuid>,
+    pub artist: Option<Arc<Artist>>,
     pub cover: Option<String>,
     pub favorite: bool,
 }
 
-#[derive(Debug, FromRow, Serialize, Deserialize)]
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct Playlist {
     pub id: Cuid,
     pub name: String,

@@ -1,4 +1,6 @@
 use std::path::Path;
+use std::sync::Arc;
+use std::collections::HashMap;
 
 use gpui::{App, Global};
 use sqlx::{
@@ -7,7 +9,7 @@ use sqlx::{
 };
 use tracing::debug;
 
-use crate::data::types::{Album, Artist, Cuid, EventContext, Playlist, Song};
+use crate::data::types::{self, Cuid, EventContext, Playlist, Song, Artist, Album};
 
 pub async fn create_pool(path: impl AsRef<Path>) -> Result<SqlitePool, sqlx::Error> {
     debug!("Creating database pool at {:?}", path.as_ref());
@@ -77,8 +79,8 @@ impl Database {
         Ok(id)
     }
 
-    pub async fn get_all_songs(&self) -> Result<Vec<Song>, sqlx::Error> {
-        sqlx::query_as::<_, Song>(
+    pub async fn get_all_songs(&self) -> Result<Vec<types::db::Song>, sqlx::Error> {
+        sqlx::query_as::<_, types::db::Song>(
             "SELECT id, title, artist_id, album_id, file_path, genre, date, date_added, duration, cover, track_number, favorite, replaygain_track_gain, replaygain_track_peak
              FROM songs"
         )
@@ -86,15 +88,15 @@ impl Database {
         .await
     }
 
-    pub async fn get_song(&self, id: &Cuid) -> Result<Song, sqlx::Error> {
-        sqlx::query_as::<_, Song>("SELECT * FROM songs WHERE id = ?")
+    pub async fn get_song(&self, id: &Cuid) -> Result<types::db::Song, sqlx::Error> {
+        sqlx::query_as::<_, types::db::Song>("SELECT * FROM songs WHERE id = ?")
             .bind(id)
             .fetch_one(&self.pool)
             .await
     }
 
-    pub async fn get_song_by_path(&self, file_path: &str) -> Result<Option<Song>, sqlx::Error> {
-        sqlx::query_as::<_, Song>(
+    pub async fn get_song_by_path(&self, file_path: &str) -> Result<Option<types::db::Song>, sqlx::Error> {
+        sqlx::query_as::<_, types::db::Song>(
             "SELECT id, title, artist_id, album_id, file_path, genre, date, date_added, duration, cover, track_number, favorite, replaygain_track_gain, replaygain_track_peak
              FROM songs WHERE file_path = ?"
         )
@@ -154,8 +156,8 @@ impl Database {
         Ok(())
     }
 
-    pub async fn get_recently_played_songs(&self) -> Result<Vec<Song>, sqlx::Error> {
-        sqlx::query_as::<_, Song>(
+    pub async fn get_recently_played_songs(&self) -> Result<Vec<types::db::Song>, sqlx::Error> {
+        sqlx::query_as::<_, types::db::Song>(
             "SELECT DISTINCT s.id, s.title, s.artist_id, s.album_id, s.file_path, s.genre, s.date, s.date_added,
                     s.duration, s.cover, s.track_number, s.favorite, s.replaygain_track_gain, s.replaygain_track_peak
              FROM playback_history ph
@@ -167,8 +169,8 @@ impl Database {
         .await
     }
 
-    pub async fn get_recently_added_songs(&self, limit: i32) -> Result<Vec<Song>, sqlx::Error> {
-        sqlx::query_as::<_, Song>(
+    pub async fn get_recently_added_songs(&self, limit: i32) -> Result<Vec<types::db::Song>, sqlx::Error> {
+        sqlx::query_as::<_, types::db::Song>(
             "SELECT id, title, artist_id, album_id, file_path, genre, date, date_added, duration, cover, track_number, favorite, replaygain_track_gain, replaygain_track_peak
              FROM songs
              ORDER BY date_added DESC
@@ -210,14 +212,14 @@ impl Database {
         Ok(id)
     }
 
-    pub async fn get_all_artists(&self) -> Result<Vec<Artist>, sqlx::Error> {
-        sqlx::query_as::<_, Artist>("SELECT id, name, image, favorite FROM artists")
+    pub async fn get_all_artists(&self) -> Result<Vec<types::db::Artist>, sqlx::Error> {
+        sqlx::query_as::<_, types::db::Artist>("SELECT id, name, image, favorite FROM artists")
             .fetch_all(&self.pool)
             .await
     }
 
-    pub async fn get_artist(&self, id: &Cuid) -> Result<Artist, sqlx::Error> {
-        sqlx::query_as::<_, Artist>("SELECT * FROM artists WHERE id = ?")
+    pub async fn get_artist(&self, id: &Cuid) -> Result<types::db::Artist, sqlx::Error> {
+        sqlx::query_as::<_, types::db::Artist>("SELECT * FROM artists WHERE id = ?")
             .bind(id)
             .fetch_one(&self.pool)
             .await
@@ -262,14 +264,14 @@ impl Database {
         Ok(id)
     }
 
-    pub async fn get_all_albums(&self) -> Result<Vec<Album>, sqlx::Error> {
-        sqlx::query_as::<_, Album>("SELECT id, title, artist, cover, favorite FROM albums")
+    pub async fn get_all_albums(&self) -> Result<Vec<types::db::Album>, sqlx::Error> {
+        sqlx::query_as::<_, types::db::Album>("SELECT id, title, artist, cover, favorite FROM albums")
             .fetch_all(&self.pool)
             .await
     }
 
-    pub async fn get_album(&self, id: &Cuid) -> Result<Album, sqlx::Error> {
-        sqlx::query_as::<_, Album>("SELECT * FROM albums WHERE id = ?")
+    pub async fn get_album(&self, id: &Cuid) -> Result<types::db::Album, sqlx::Error> {
+        sqlx::query_as::<_, types::db::Album>("SELECT * FROM albums WHERE id = ?")
             .bind(id)
             .fetch_one(&self.pool)
             .await
@@ -360,5 +362,62 @@ impl Database {
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected())
+    }
+
+    pub async fn hydrate(&self, db_songs: Vec<types::db::Song>) -> Result<Vec<Song>, sqlx::Error> {
+        let db_artists = self.get_all_artists().await?;
+        let db_albums = self.get_all_albums().await?;
+
+        let mut artists: HashMap<Cuid, Arc<Artist>> = HashMap::new();
+        let mut albums: HashMap<Cuid, Arc<Album>> = HashMap::new();
+
+        for db_artist in db_artists {
+            let artist = Artist {
+                id: db_artist.id.clone(),
+                name: db_artist.name,
+                image: db_artist.image,
+                favorite: db_artist.favorite,
+            };
+            artists.insert(db_artist.id, Arc::new(artist));
+        }
+
+        for db_album in db_albums {
+            let artist = db_album.artist.as_ref().and_then(|id| artists.get(id).cloned());
+            let album = Album {
+                id: db_album.id.clone(),
+                title: db_album.title,
+                artist,
+                cover: db_album.cover,
+                favorite: db_album.favorite,
+            };
+            albums.insert(db_album.id, Arc::new(album));
+        }
+
+        let songs: Vec<Song> = db_songs
+            .into_iter()
+            .map(|db_song| {
+                let artist = db_song.artist_id.as_ref().and_then(|id| artists.get(id).cloned());
+                let album = db_song.album_id.as_ref().and_then(|id| albums.get(id).cloned());
+
+                Song {
+                    id: db_song.id,
+                    title: db_song.title,
+                    artist,
+                    album,
+                    file_path: db_song.file_path,
+                    genre: db_song.genre,
+                    date: db_song.date,
+                    date_added: db_song.date_added,
+                    duration: db_song.duration,
+                    cover: db_song.cover,
+                    track_number: db_song.track_number,
+                    favorite: db_song.favorite,
+                    replaygain_track_gain: db_song.replaygain_track_gain,
+                    replaygain_track_peak: db_song.replaygain_track_peak,
+                }
+            })
+            .collect();
+
+        Ok(songs)
     }
 }

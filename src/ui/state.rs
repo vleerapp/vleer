@@ -208,24 +208,6 @@ impl State {
         inner.playlist_ids.push(id.clone());
         inner.playlists.insert(id, Arc::new(playlist));
     }
-
-    pub async fn get_artist_name_for_song(&self, song: &Song) -> String {
-        if let Some(artist_id) = &song.artist_id {
-            if let Some(artist) = self.get_artist(artist_id).await {
-                return artist.name.clone();
-            }
-        }
-        "Unknown".to_string()
-    }
-
-    pub async fn get_album_title_for_song(&self, song: &Song) -> String {
-        if let Some(album_id) = &song.album_id {
-            if let Some(album) = self.get_album(album_id).await {
-                return album.title.clone();
-            }
-        }
-        "Unknown".to_string()
-    }
 }
 
 impl Default for State {

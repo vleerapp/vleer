@@ -9,7 +9,7 @@ use crate::{
         db::{Database, create_pool},
         scan::{MusicScanner, MusicWatcher, expand_scan_paths},
     },
-    media::{playback::PlaybackContext, queue::Queue},
+    media::{playback::Playback, queue::Queue},
     ui::{
         assets::VleerAssetSource,
         components::div::{flex_col, flex_row},
@@ -219,7 +219,7 @@ pub async fn run() -> anyhow::Result<()> {
         .run(move |cx| {
             Database::init(cx, pool).expect("unable to initizalize database");
             Config::init(cx, &config_dir).expect("unable to initizalize settings");
-            PlaybackContext::init(cx).expect("unable to initizalize playback context");
+            Playback::init(cx).expect("unable to initizalize playback context");
             Queue::init(cx);
             Variables::init(cx);
             State::init(cx);
@@ -228,6 +228,35 @@ pub async fn run() -> anyhow::Result<()> {
             let state = cx.global::<State>().clone();
             tokio::spawn(async move {
                 state.set_config(config.get().clone()).await;
+            });
+
+            let db = cx.global::<Database>().clone();
+            let state = cx.global::<State>().clone();
+            tokio::spawn(async move {
+                tracing::info!("Loading library data into state...");
+
+                match db.get_all_songs().await {
+                    std::result::Result::Ok(db_songs) => {
+                        tracing::info!("Fetched {} songs from database", db_songs.len());
+
+                        match db.hydrate(db_songs).await {
+                            std::result::Result::Ok(hydrated_songs) => {
+                                tracing::info!(
+                                    "Hydrated {} songs with metadata",
+                                    hydrated_songs.len()
+                                );
+                                state.set_songs(hydrated_songs).await;
+                                tracing::info!("Library data loaded successfully!");
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to hydrate songs: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to load songs from database: {}", e);
+                    }
+                }
             });
 
             let config_path = config_dir.join("config.toml");
@@ -255,7 +284,7 @@ pub async fn run() -> anyhow::Result<()> {
                                         state.set_config(config_for_state.get().clone()).await;
                                     });
 
-                                    cx.update_global::<PlaybackContext, _>(|playback, _cx| {
+                                    cx.update_global::<Playback, _>(|playback, _cx| {
                                         playback.apply_settings(&config);
                                         tracing::debug!("Applied reloaded settings to playback");
                                     });
@@ -274,6 +303,7 @@ pub async fn run() -> anyhow::Result<()> {
             let config = cx.global::<Config>();
             let scan_paths = expand_scan_paths(&config.get().scan.paths);
             let db = cx.global::<Database>().clone();
+            let state = cx.global::<State>().clone();
             let covers_dir = data_dir.join("covers");
 
             let scanner = std::sync::Arc::new(MusicScanner::new(scan_paths, covers_dir));
@@ -281,6 +311,9 @@ pub async fn run() -> anyhow::Result<()> {
 
             match MusicWatcher::new(scanner.clone(), std::sync::Arc::new(db.clone())) {
                 std::result::Result::Ok((watcher, mut rx)) => {
+                    let state_clone = state.clone();
+                    let db_clone = db.clone();
+
                     tokio::spawn(async move {
                         let _watcher = watcher;
                         while let Some(stats) = rx.recv().await {
@@ -290,6 +323,26 @@ pub async fn run() -> anyhow::Result<()> {
                                 stats.updated,
                                 stats.removed
                             );
+
+                            match db_clone.get_all_songs().await {
+                                std::result::Result::Ok(db_songs) => {
+                                    match db_clone.hydrate(db_songs).await {
+                                        std::result::Result::Ok(hydrated_songs) => {
+                                            state_clone.set_songs(hydrated_songs).await;
+                                            tracing::info!("State updated after scan");
+                                        }
+                                        Err(e) => {
+                                            tracing::error!(
+                                                "Failed to hydrate songs after scan: {}",
+                                                e
+                                            );
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to reload songs after scan: {}", e);
+                                }
+                            }
                         }
                     });
 
@@ -335,7 +388,7 @@ pub async fn run() -> anyhow::Result<()> {
                     window.set_window_title("Vleer");
 
                     cx.new(|cx| {
-                        PlaybackContext::start_playback_monitor(window, cx);
+                        Playback::start_playback_monitor(window, cx);
 
                         MainWindow {
                             library: cx.new(|_cx| Library::new()),
