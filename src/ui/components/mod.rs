@@ -1,9 +1,9 @@
 pub mod button;
 pub mod div;
 pub mod icons;
-pub mod navbutton;
+pub mod nav_button;
 pub mod scrollbar;
 pub mod slider;
-pub mod songtable;
+pub mod song_table;
 pub mod title;
-pub mod progressbar;
+pub mod progress_bar;

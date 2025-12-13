@@ -1,27 +1,24 @@
-use gpui::*;
 use crate::ui::{
-    components::{icons::icon::icon, div::flex_row},
+    components::{div::flex_row, icons::icon::icon},
     state::State,
     variables::Variables,
     views::AppView,
 };
+use gpui::prelude::FluentBuilder;
+use gpui::*;
 
 #[derive(IntoElement)]
 pub struct NavButton {
     icon: SharedString,
-    label: SharedString,
+    label: Option<SharedString>,
     target_view: AppView,
 }
 
 impl NavButton {
-    pub fn new(
-        icon: impl Into<SharedString>,
-        label: impl Into<SharedString>,
-        target_view: AppView,
-    ) -> Self {
+    pub fn new(icon: impl Into<SharedString>, label: Option<&str>, target_view: AppView) -> Self {
         Self {
             icon: icon.into(),
-            label: label.into(),
+            label: label.map(|s| SharedString::from(s.to_string())),
             target_view,
         }
     }
@@ -49,11 +46,9 @@ impl RenderOnce for NavButton {
             .text_color(text_color)
             .cursor_pointer()
             .child(icon(icon_path).text_color(text_color))
-            .child(
-                div()
-                    .child(label)
-                    .hover(|s| s.underline())
-            )
+            .when_some(label, |this, label_text| {
+                this.child(div().child(label_text).hover(|s| s.underline()))
+            })
             .hover(|s| s.text_color(variables.text))
             .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
                 let state = cx.global::<State>().clone();

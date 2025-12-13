@@ -558,7 +558,7 @@ impl Render for SongTable {
                                             .collect()
                                     },
                                 )
-                                .track_scroll(self.scroll_handle.clone())
+                                .track_scroll(&self.scroll_handle.clone())
                                 .size_full(),
                             )
                             .child(
