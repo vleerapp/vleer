@@ -11,7 +11,7 @@ use crate::{
             button::Button,
             div::{flex_col, flex_row},
             icons::{icon::icon, icons::*},
-            progressbar::progress_slider,
+            progress_bar::progress_slider,
             slider::slider,
             title::Title,
         },
@@ -26,12 +26,6 @@ pub struct Player {
 impl Player {
     pub fn new() -> Self {
         Self { hovered: false }
-    }
-
-    fn format_time(seconds: f32) -> String {
-        let mins = (seconds / 60.0).floor() as i32;
-        let secs = (seconds % 60.0).floor() as i32;
-        format!("{:02}:{:02}", mins, secs)
     }
 }
 
@@ -77,7 +71,7 @@ impl Render for Player {
             .child(if is_playing { icon(PAUSE) } else { icon(PLAY) })
             .on_click(cx.listener(|_this, _event, _window, cx| {
                 cx.update_global::<Playback, _>(|playback, _cx| {
-                    playback.toggle_play_pause();
+                    playback.play_pause();
                 });
                 cx.notify();
             }));
@@ -198,9 +192,12 @@ impl Render for Player {
                     .h(px(16.0))
                     .value(volume)
                     .on_change(|value, _window, cx| {
-                        let mut config = cx.global::<Config>().clone();
                         cx.update_global::<Playback, _>(|playback, _cx| {
-                            playback.set_volume_and_save(value, &mut config);
+                            playback.set_volume(value);
+                        });
+
+                        cx.update_global::<Config, _>(|config, _cx| {
+                            config.set_volume(value);
                         });
                     }),
             );
@@ -246,11 +243,6 @@ impl Render for Player {
 
                                 if duration > 0.0 {
                                     let seek_time = value * duration;
-                                    tracing::info!(
-                                        "Seeking to {} seconds ({}%)",
-                                        seek_time,
-                                        value * 100.0
-                                    );
 
                                     cx.update_global::<Playback, _>(|playback, _cx| {
                                         if let Err(e) = playback.seek(seek_time) {

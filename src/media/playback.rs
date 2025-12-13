@@ -58,15 +58,14 @@ impl Playback {
     pub fn init(cx: &mut App) -> Result<()> {
         let mut context = Self::new()?;
 
-        if let Some(settings) = cx.try_global::<Config>() {
-            context.apply_settings(settings);
-        }
+        let settings = cx.global::<Config>();
+        context.apply_settings(settings);
 
         cx.set_global(context);
         Ok(())
     }
 
-    pub fn load_file_with_replaygain(
+    pub fn open(
         &mut self,
         path: impl AsRef<Path>,
         settings: &Config,
@@ -127,7 +126,7 @@ impl Playback {
         if let Some(song) = first_song {
             let config = cx.global::<Config>().clone();
             cx.update_global::<Playback, _>(|playback, _cx| {
-                playback.load_file_with_replaygain(
+                playback.open(
                     &song.file_path,
                     &config,
                     song.replaygain_track_gain,
@@ -159,19 +158,12 @@ impl Playback {
         }
     }
 
-    pub fn toggle_play_pause(&mut self) {
+    pub fn play_pause(&mut self) {
         if self.is_paused {
             self.play();
         } else {
             self.pause();
         }
-    }
-
-    pub fn stop(&mut self) {
-        self.sink.stop();
-        self.is_paused = true;
-        self.current_file = None;
-        debug!("Playback stopped");
     }
 
     pub fn set_volume(&mut self, vol: f32) {
@@ -184,13 +176,16 @@ impl Playback {
         );
     }
 
-    pub fn set_volume_and_save(&mut self, vol: f32, config: &mut Config) {
-        self.set_volume(vol);
-
-        config.get_mut().audio.volume = self.volume;
-        if let Err(e) = config.save() {
-            tracing::error!("Failed to save volume to config: {}", e);
+    fn log_volume(volume: f32) -> f32 {
+        let mut amplitude = volume;
+        if amplitude > 0.0 && amplitude < Self::UNITY_GAIN {
+            amplitude =
+                f32::exp(Self::LOG_VOLUME_GROWTH_RATE * volume) / Self::LOG_VOLUME_SCALE_FACTOR;
+            if volume < 0.1 {
+                amplitude *= volume * 10.0;
+            }
         }
+        amplitude
     }
 
     pub fn get_volume(&self) -> f32 {
@@ -203,10 +198,6 @@ impl Playback {
 
     pub fn is_playing(&self) -> bool {
         !self.is_paused
-    }
-
-    pub fn current_file(&self) -> Option<&str> {
-        self.current_file.as_deref()
     }
 
     pub fn apply_equalizer_settings(&mut self, gains: &[f32], q_values: &[f32]) {
@@ -252,7 +243,7 @@ impl Playback {
         eq.get_bands().iter().map(|b| b.q).collect()
     }
 
-    pub fn load_equalizer_from_settings(&mut self, settings: &Config) {
+    pub fn load_eq_settings(&mut self, settings: &Config) {
         let config = settings.get();
         let eq_settings = &config.equalizer;
 
@@ -266,53 +257,23 @@ impl Playback {
     }
 
     pub fn apply_settings(&mut self, settings: &Config) {
-        let config = settings.get();
+        let volume = settings.get().audio.volume;
+        let normalization = settings.get().audio.normalization;
 
-        self.set_volume(config.audio.volume);
-        self.load_equalizer_from_settings(settings);
-        self.set_normalization_enabled(config.audio.normalization);
+        self.set_volume(volume);
+        self.load_eq_settings(settings);
+        self.set_normalization(normalization);
 
         debug!("Applied all settings to playback context");
     }
 
-    pub fn set_normalization_enabled(&mut self, enabled: bool) {
+    pub fn set_normalization(&mut self, enabled: bool) {
         let mut state = self.normalization.write().unwrap();
         state.enabled = enabled;
         debug!(
             "Normalization {}",
             if enabled { "enabled" } else { "disabled" }
         );
-    }
-
-    pub fn is_normalization_enabled(&self) -> bool {
-        self.normalization.read().unwrap().enabled
-    }
-
-    pub fn set_track_replaygain(&mut self, gain_db: f32, peak: Option<f32>) {
-        let mut state = self.normalization.write().unwrap();
-        state.set_replaygain(gain_db, peak);
-        debug!("Set ReplayGain: {:.2} dB, peak: {:?}", gain_db, peak);
-    }
-
-    pub fn set_track_loudness(&mut self, lufs: f32) {
-        let mut state = self.normalization.write().unwrap();
-        state.set_track_loudness(lufs);
-        debug!(
-            "Set track loudness: {:.2} LUFS, gain: {:.3}",
-            lufs, state.gain
-        );
-    }
-
-    fn log_volume(volume: f32) -> f32 {
-        let mut amplitude = volume;
-        if amplitude > 0.0 && amplitude < Self::UNITY_GAIN {
-            amplitude =
-                f32::exp(Self::LOG_VOLUME_GROWTH_RATE * volume) / Self::LOG_VOLUME_SCALE_FACTOR;
-            if volume < 0.1 {
-                amplitude *= volume * 10.0;
-            }
-        }
-        amplitude
     }
 
     pub fn seek(&mut self, position: f32) -> anyhow::Result<()> {
