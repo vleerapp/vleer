@@ -4,8 +4,8 @@ use anyhow::Result;
 use gpui::{App, BorrowAppContext, Global};
 use tracing::debug;
 
-use crate::data::types::Song;
 use crate::data::config::Config;
+use crate::data::types::Song;
 use crate::media::playback::Playback;
 
 pub struct Queue {
@@ -53,7 +53,11 @@ impl Queue {
         if was_empty && !self.items.is_empty() {
             self.current_index = Some(0);
         }
-        debug!("Added {} items to queue. Queue size: {}", count, self.items.len());
+        debug!(
+            "Added {} items to queue. Queue size: {}",
+            count,
+            self.items.len()
+        );
     }
 
     pub fn clear_and_queue_songs(&mut self, songs: &[Arc<Song>]) {
@@ -106,7 +110,7 @@ impl Queue {
         if let Some(song) = next_song {
             let config = cx.global::<Config>().clone();
             cx.update_global::<Playback, _>(|playback, _cx| {
-                playback.load_file_with_replaygain(
+                playback.open(
                     &song.file_path,
                     &config,
                     song.replaygain_track_gain,
@@ -163,7 +167,7 @@ impl Queue {
         if let Some(song) = prev_song {
             let config = cx.global::<Config>().clone();
             cx.update_global::<Playback, _>(|playback, _cx| {
-                playback.load_file_with_replaygain(
+                playback.open(
                     &song.file_path,
                     &config,
                     song.replaygain_track_gain,

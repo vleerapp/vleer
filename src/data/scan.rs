@@ -69,7 +69,6 @@ impl MusicScanner {
 
             match self.scan_directory(path).await {
                 Ok(mut found_tracks) => {
-                    info!("Found {} tracks in {:?}", found_tracks.len(), path);
                     all_tracks.append(&mut found_tracks);
                 }
                 Err(e) => {
@@ -102,7 +101,7 @@ impl MusicScanner {
         .await
         .context("Failed to walk directory")?;
 
-        info!("Found {} audio files to scan", audio_files.len());
+        debug!("Found {} audio files to scan", audio_files.len());
 
         let covers_dir = self.covers_dir.clone();
         let tracks: Vec<ScannedTrack> = stream::iter(audio_files)
@@ -161,7 +160,7 @@ impl MusicScanner {
         let tracks = self.scan().await?;
         let scanned_count = tracks.len();
 
-        info!("Processing {} scanned tracks", scanned_count);
+        debug!("Processing {} scanned tracks", scanned_count);
 
         let mut stats = ScanStats {
             scanned: scanned_count,
@@ -188,12 +187,12 @@ impl MusicScanner {
             }
         }
 
-        info!("Checking for songs to remove from database");
+        debug!("Checking for songs to remove from database");
         match self.remove_missing_songs(db, &found_paths).await {
             Ok(removed) => {
                 stats.removed = removed;
                 if removed > 0 {
-                    info!("Removed {} songs that no longer exist", removed);
+                    debug!("Removed {} songs that no longer exist", removed);
                 }
             }
             Err(e) => {
@@ -202,7 +201,7 @@ impl MusicScanner {
         }
 
         if stats.removed > 0 {
-            info!("Cleaning up orphaned artists and albums");
+            debug!("Cleaning up orphaned artists and albums");
             if let Err(e) = db.cleanup_orphaned_artists().await {
                 error!("Failed to cleanup orphaned artists: {}", e);
             }
@@ -423,7 +422,7 @@ impl MusicWatcher {
         .context("Failed to create filesystem watcher")?;
 
         for path in &scanner.scan_paths {
-            info!("Watching directory for changes: {:?}", path);
+            debug!("Watching directory for changes: {:?}", path);
             debouncer
                 .watch(path, RecursiveMode::Recursive)
                 .with_context(|| format!("Failed to watch directory: {:?}", path))?;
