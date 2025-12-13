@@ -1,11 +1,11 @@
 use anyhow::Ok;
 use gpui::{prelude::FluentBuilder, *};
-use std::fs;
-use tracing::debug;
+use std::{collections::HashMap, fs};
+use tracing::{debug, error, info};
 
 use crate::{
     data::{
-        config::{Config, ConfigWatcher},
+        config::Config,
         db::{Database, create_pool},
         scan::{MusicScanner, MusicWatcher, expand_scan_paths},
     },
@@ -13,10 +13,12 @@ use crate::{
     ui::{
         assets::VleerAssetSource,
         components::div::{flex_col, flex_row},
+        global_actions::register_actions,
         layout::{library::Library, navbar::Navbar, player::Player},
+        media_keys::MediaKeyHandler,
         state::State,
         variables::Variables,
-        views::{AppView, HomeView, SongsView},
+        views::{AppView, ViewRegistry},
     },
 };
 
@@ -24,8 +26,7 @@ struct MainWindow {
     library: Entity<Library>,
     navbar: Entity<Navbar>,
     player: Entity<Player>,
-    home_view: Entity<HomeView>,
-    songs_view: Entity<SongsView>,
+    views: HashMap<AppView, AnyView>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -53,27 +54,12 @@ impl MainWindow {
 
         let state = cx.global::<State>();
         let current_view = state.get_current_view_sync();
-        match current_view {
-            AppView::Home => {
-                self.home_view.update(cx, |home, cx| {
-                    home.hovered = target == HoverTarget::Content;
-                    cx.notify();
-                });
-                self.songs_view.update(cx, |songs, cx| {
-                    songs.hovered = false;
-                    cx.notify();
-                });
-            }
-            AppView::Songs => {
-                self.home_view.update(cx, |home, cx| {
-                    home.hovered = false;
-                    cx.notify();
-                });
-                self.songs_view.update(cx, |songs, cx| {
-                    songs.hovered = target == HoverTarget::Content;
-                    cx.notify();
-                });
-            }
+
+        for (view_type, entity) in &self.views {
+            let is_current = *view_type == current_view;
+            let should_hover = is_current && target == HoverTarget::Content;
+
+            ViewRegistry::set_hovered(*view_type, entity, should_hover, cx);
         }
     }
 }
@@ -84,10 +70,11 @@ impl Render for MainWindow {
         let state = cx.global::<State>();
         let current_view = state.get_current_view_sync();
 
-        let content: AnyElement = match current_view {
-            AppView::Home => self.home_view.clone().into_any_element(),
-            AppView::Songs => self.songs_view.clone().into_any_element(),
-        };
+        let content: AnyElement = self
+            .views
+            .get(&current_view)
+            .map(|view| view.clone().into_any_element())
+            .unwrap_or_else(|| div().into_any_element());
 
         let mut element = flex_col()
             .gap(px(variables.padding_16))
@@ -140,7 +127,7 @@ impl Render for MainWindow {
                                 div()
                                     .id("current-view")
                                     .flex_1()
-                                    .w_full()
+                                    .size_full()
                                     .on_mouse_move(cx.listener(
                                         |this,
                                          _event: &MouseMoveEvent,
@@ -224,82 +211,39 @@ pub async fn run() -> anyhow::Result<()> {
             Variables::init(cx);
             State::init(cx);
 
+            find_fonts(cx)
+                .inspect_err(|e| error!(?e, "Failed to load fonts"))
+                .ok();
+            register_actions(cx);
+
+            match MediaKeyHandler::new(cx) {
+                std::result::Result::Ok(_handler) => {
+                    info!("Media key handler initialized");
+                    cx.set_global(_handler);
+                }
+                std::result::Result::Err(e) => {
+                    error!("Failed to setup media keys: {}", e);
+                }
+            }
+
+            // populate state
             let config = cx.global::<Config>().clone();
             let state = cx.global::<State>().clone();
             tokio::spawn(async move {
-                state.set_config(config.get().clone()).await;
+                state.set_config(config.clone().get().clone()).await;
             });
 
             let db = cx.global::<Database>().clone();
             let state = cx.global::<State>().clone();
             tokio::spawn(async move {
-                tracing::info!("Loading library data into state...");
-
-                match db.get_all_songs().await {
-                    std::result::Result::Ok(db_songs) => {
-                        tracing::info!("Fetched {} songs from database", db_songs.len());
-
-                        match db.hydrate(db_songs).await {
-                            std::result::Result::Ok(hydrated_songs) => {
-                                tracing::info!(
-                                    "Hydrated {} songs with metadata",
-                                    hydrated_songs.len()
-                                );
-                                state.set_songs(hydrated_songs).await;
-                                tracing::info!("Library data loaded successfully!");
-                            }
-                            Err(e) => {
-                                tracing::error!("Failed to hydrate songs: {}", e);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to load songs from database: {}", e);
-                    }
-                }
+                let songs = db.get_all_songs().await;
+                let hydrated_songs = db.hydrate(songs.expect("Failed to hydrate songs")).await;
+                state
+                    .set_songs(hydrated_songs.expect("Failed to populate hydrated songs to state"))
+                    .await;
             });
 
-            let config_path = config_dir.join("config.toml");
-            match ConfigWatcher::new(config_path) {
-                std::result::Result::Ok((_watcher, mut rx)) => {
-                    cx.spawn(|cx: &mut gpui::AsyncApp| {
-                        let cx = cx.clone();
-                        async move {
-                            let _watcher = _watcher;
-                            while rx.recv().await.is_some() {
-                                cx.update(|cx| {
-                                    cx.update_global::<Config, _>(|config, _cx| {
-                                        if let Err(e) = config.reload() {
-                                            tracing::error!("Failed to reload config: {}", e);
-                                        } else {
-                                            tracing::info!("Config reloaded successfully");
-                                        }
-                                    });
-
-                                    let config = cx.global::<Config>().clone();
-                                    let config_for_state = config.clone();
-                                    let state = cx.global::<State>().clone();
-
-                                    tokio::spawn(async move {
-                                        state.set_config(config_for_state.get().clone()).await;
-                                    });
-
-                                    cx.update_global::<Playback, _>(|playback, _cx| {
-                                        playback.apply_settings(&config);
-                                        tracing::debug!("Applied reloaded settings to playback");
-                                    });
-                                })
-                                .ok();
-                            }
-                        }
-                    })
-                    .detach();
-                }
-                Err(e) => {
-                    tracing::error!("Failed to initialize config watcher: {}", e);
-                }
-            }
-
+            // path scan setup
             let config = cx.global::<Config>();
             let scan_paths = expand_scan_paths(&config.get().scan.paths);
             let db = cx.global::<Database>().clone();
@@ -317,49 +261,46 @@ pub async fn run() -> anyhow::Result<()> {
                     tokio::spawn(async move {
                         let _watcher = watcher;
                         while let Some(stats) = rx.recv().await {
-                            tracing::info!(
+                            info!(
                                 "Library scan completed - Added: {}, Updated: {}, Removed: {}",
-                                stats.added,
-                                stats.updated,
-                                stats.removed
+                                stats.added, stats.updated, stats.removed
                             );
 
-                            match db_clone.get_all_songs().await {
-                                std::result::Result::Ok(db_songs) => {
-                                    match db_clone.hydrate(db_songs).await {
-                                        std::result::Result::Ok(hydrated_songs) => {
-                                            state_clone.set_songs(hydrated_songs).await;
-                                            tracing::info!("State updated after scan");
-                                        }
-                                        Err(e) => {
-                                            tracing::error!(
-                                                "Failed to hydrate songs after scan: {}",
-                                                e
-                                            );
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    tracing::error!("Failed to reload songs after scan: {}", e);
+                            if let std::result::Result::Ok(db_songs) =
+                                db_clone.get_all_songs().await
+                            {
+                                if let std::result::Result::Ok(hydrated_songs) =
+                                    db_clone.hydrate(db_songs).await
+                                {
+                                    state_clone.set_songs(hydrated_songs).await;
+                                    debug!("State updated after scan");
                                 }
                             }
                         }
                     });
 
                     let db_clone = cx.global::<Database>().clone();
+                    let state_clone = state.clone();
                     tokio::spawn(async move {
-                        tracing::info!("Starting initial library scan...");
-                        match scanner_clone.scan_and_save(&db_clone).await {
-                            std::result::Result::Ok(stats) => {
-                                tracing::info!(
-                                    "Initial scan complete - Added: {}, Updated: {}, Removed: {}",
-                                    stats.added,
-                                    stats.updated,
-                                    stats.removed
-                                );
-                            }
-                            Err(e) => {
-                                tracing::error!("Initial scan failed: {}", e);
+                        info!("Starting initial library scan...");
+                        if let std::result::Result::Ok(stats) =
+                            scanner_clone.scan_and_save(&db_clone).await
+                        {
+                            info!(
+                                "Initial scan complete - Added: {}, Updated: {}, Removed: {}",
+                                stats.added, stats.updated, stats.removed
+                            );
+
+                            if stats.added > 0 || stats.updated > 0 || stats.removed > 0 {
+                                if let std::result::Result::Ok(db_songs) =
+                                    db_clone.get_all_songs().await
+                                {
+                                    if let std::result::Result::Ok(hydrated_songs) =
+                                        db_clone.hydrate(db_songs).await
+                                    {
+                                        state_clone.set_songs(hydrated_songs).await;
+                                    }
+                                }
                             }
                         }
                     });
@@ -368,10 +309,6 @@ pub async fn run() -> anyhow::Result<()> {
                     tracing::error!("Failed to initialize music watcher: {}", e);
                 }
             }
-
-            find_fonts(cx)
-                .inspect_err(|e| tracing::error!(?e, "Failed to load fonts"))
-                .expect("unable to load fonts");
 
             cx.open_window(
                 WindowOptions {
@@ -390,12 +327,13 @@ pub async fn run() -> anyhow::Result<()> {
                     cx.new(|cx| {
                         Playback::start_playback_monitor(window, cx);
 
+                        let views = ViewRegistry::register_all(window, cx);
+
                         MainWindow {
                             library: cx.new(|_cx| Library::new()),
                             navbar: cx.new(|_cx| Navbar::new()),
                             player: cx.new(|_cx| Player::new()),
-                            home_view: cx.new(|cx| HomeView::new(window, cx)),
-                            songs_view: cx.new(|cx| SongsView::new(window, cx)),
+                            views,
                         }
                     })
                 },

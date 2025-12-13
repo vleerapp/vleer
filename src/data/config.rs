@@ -1,16 +1,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use anyhow::{Context, Result};
 use gpui::{App, Global};
-use notify_debouncer_full::{
-    DebounceEventResult, new_debouncer,
-    notify::{EventKind, RecursiveMode, event::ModifyKind},
-};
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EqualizerSettings {
@@ -176,6 +170,11 @@ impl Config {
         }
     }
 
+    pub fn set_volume(&mut self, vol: f32) {
+        self.config.audio.volume = vol;
+        self.save().ok();
+    }
+
     pub fn save(&self) -> Result<()> {
         debug!("Saving config to {:?}", self.config_path);
 
@@ -183,7 +182,6 @@ impl Config {
         Self::validate_equalizer(&mut config.equalizer);
 
         let content = toml::to_string_pretty(&config).context("Failed to serialize config")?;
-
         fs::write(&self.config_path, content).context("Failed to write config file")?;
 
         Ok(())
@@ -193,41 +191,7 @@ impl Config {
         &self.config
     }
 
-    pub fn get_mut(&mut self) -> &mut SettingsConfig {
-        &mut self.config
-    }
-
-    pub fn update_equalizer<F>(&mut self, f: F) -> Result<()>
-    where
-        F: FnOnce(&mut EqualizerSettings),
-    {
-        f(&mut self.config.equalizer);
-        self.save()
-    }
-
-    pub fn update_scan<F>(&mut self, f: F) -> Result<()>
-    where
-        F: FnOnce(&mut ScanSettings),
-    {
-        f(&mut self.config.scan);
-        self.save()
-    }
-
-    pub fn update_volume<F>(&mut self, f: F) -> Result<()>
-    where
-        F: FnOnce(&mut f32),
-    {
-        f(&mut self.config.audio.volume);
-        self.save()
-    }
-
-    pub fn config_path(&self) -> &Path {
-        &self.config_path
-    }
-
     pub fn reload(&mut self) -> Result<()> {
-        debug!("Reloading config from {:?}", self.config_path);
-
         if self.config_path.exists() {
             let content =
                 fs::read_to_string(&self.config_path).context("Failed to read config file")?;
@@ -236,7 +200,7 @@ impl Config {
                 Ok(mut config) => {
                     Self::validate_equalizer(&mut config.equalizer);
                     self.config = config;
-                    debug!("Config reloaded successfully");
+                    info!("Config reloaded successfully");
                 }
                 Err(e) => {
                     warn!("Failed to parse config file during reload: {}", e);
@@ -245,49 +209,5 @@ impl Config {
         }
 
         Ok(())
-    }
-}
-
-pub struct ConfigWatcher {}
-
-impl ConfigWatcher {
-    pub fn new(config_path: PathBuf) -> Result<(Self, mpsc::Receiver<()>)> {
-        let (tx, rx) = mpsc::channel(10);
-
-        let runtime_handle = tokio::runtime::Handle::current();
-
-        let mut debouncer = new_debouncer(
-            Duration::from_secs(1),
-            None,
-            move |result: DebounceEventResult| match result {
-                Ok(events) => {
-                    let has_data_change = events.iter().any(|event| {
-                        matches!(
-                            event.kind,
-                            EventKind::Modify(ModifyKind::Data(_)) | EventKind::Create(_)
-                        )
-                    });
-
-                    if has_data_change {
-                        let tx = tx.clone();
-                        runtime_handle.spawn(async move {
-                            if let Err(e) = tx.send(()).await {
-                                tracing::error!("Failed to send config reload signal: {}", e);
-                            }
-                        });
-                    }
-                }
-                Err(errors) => {
-                    for error in errors {
-                        tracing::error!("Config watch error: {:?}", error);
-                    }
-                }
-            },
-        )?;
-
-        debouncer.watch(&config_path, RecursiveMode::NonRecursive)?;
-        debug!("Watching config file: {:?}", config_path);
-
-        Ok((Self {}, rx))
     }
 }
