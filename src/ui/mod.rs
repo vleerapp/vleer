@@ -5,3 +5,5 @@ pub mod layout;
 pub mod views;
 pub mod variables;
 pub mod state;
+pub mod global_actions;
+pub mod media_keys;
