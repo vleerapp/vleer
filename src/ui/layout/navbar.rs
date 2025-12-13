@@ -1,7 +1,12 @@
 use gpui::*;
 
 use crate::ui::{
-    components::{div::flex_row, icons::icons::HOME, navbutton::NavButton, title::Title},
+    components::{
+        div::flex_row,
+        icons::icons::{HOME, SETTINGS},
+        nav_button::NavButton,
+        title::Title,
+    },
     variables::Variables,
     views::AppView,
 };
@@ -33,8 +38,17 @@ impl Render for Navbar {
                     .border(px(1.0))
                     .border_color(border_color)
                     .h_full()
-                    .p(px(variables.padding_16))
-                    .child(NavButton::new(HOME, "Home", AppView::Home)),
+                    .justify_between()
+                    .child(flex_row().p(px(variables.padding_16)).child(NavButton::new(
+                        HOME,
+                        Some("Home"),
+                        AppView::Home,
+                    )))
+                    .child(div().p(px(variables.padding_16)).child(NavButton::new(
+                        SETTINGS,
+                        None,
+                        AppView::Settings,
+                    ))),
             )
             .child(Title::new("NavBar", self.hovered))
     }
