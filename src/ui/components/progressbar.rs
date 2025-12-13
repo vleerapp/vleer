@@ -213,35 +213,109 @@ impl Element for ProgressSlider {
         let total = Self::format_time(self.duration);
         let time_text = format!("{} / {}", current, total);
 
-        let runs = [TextRun {
-            len: time_text.len(),
-            font: Font {
-                family: "Feature Mono".into(),
-                features: Default::default(),
-                fallbacks: None,
-                weight: Default::default(),
-                style: Default::default(),
-            },
-            color: variables.accent.into(),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        }];
+        let filled_layout = if filled_width > px(0.0) {
+            let filled_runs = [TextRun {
+                len: time_text.len(),
+                font: Font {
+                    family: "Feature Mono".into(),
+                    features: Default::default(),
+                    fallbacks: None,
+                    weight: Default::default(),
+                    style: Default::default(),
+                },
+                color: rgb(0x000000).into(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            }];
+            Some(window.text_system().shape_line(
+                time_text.clone().into(),
+                px(14.0),
+                &filled_runs,
+                None,
+            ))
+        } else {
+            None
+        };
 
-        let text_layout = window
-            .text_system()
-            .shape_line(time_text.into(), px(14.0), &runs, None);
+        let unfilled_layout = if filled_width < bounds.size.width {
+            let unfilled_runs = [TextRun {
+                len: time_text.len(),
+                font: Font {
+                    family: "Feature Mono".into(),
+                    features: Default::default(),
+                    fallbacks: None,
+                    weight: Default::default(),
+                    style: Default::default(),
+                },
+                color: variables.accent.into(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            }];
+            Some(window.text_system().shape_line(
+                time_text.clone().into(),
+                px(14.0),
+                &unfilled_runs,
+                None,
+            ))
+        } else {
+            None
+        };
 
-        let text_width = text_layout.width;
+        let text_width = unfilled_layout
+            .as_ref()
+            .map_or(px(0.0), |layout| layout.width);
         let text_x = bounds.origin.x + (bounds.size.width - text_width) / 2.0;
         let text_y = bounds.origin.y + (bounds.size.height - px(14.0)) / 2.0;
-
         let text_origin = Point {
             x: text_x,
             y: text_y,
         };
 
-        text_layout.paint(text_origin, px(14.0), window, cx).ok();
+        if let Some(filled_layout) = filled_layout {
+            let filled_clip = Bounds {
+                origin: Point {
+                    x: bounds.origin.x,
+                    y: bounds.origin.y,
+                },
+                size: Size {
+                    width: filled_width.max(px(1.0)),
+                    height: bounds.size.height,
+                },
+            };
+            window.with_content_mask(
+                Some(ContentMask {
+                    bounds: filled_clip,
+                }),
+                |window| {
+                    filled_layout.paint(text_origin, px(14.0), window, cx).ok();
+                },
+            );
+        }
+
+        if let Some(unfilled_layout) = unfilled_layout {
+            let unfilled_clip = Bounds {
+                origin: Point {
+                    x: bounds.origin.x + filled_width,
+                    y: bounds.origin.y,
+                },
+                size: Size {
+                    width: bounds.size.width - filled_width,
+                    height: bounds.size.height,
+                },
+            };
+            window.with_content_mask(
+                Some(ContentMask {
+                    bounds: unfilled_clip,
+                }),
+                |window| {
+                    unfilled_layout
+                        .paint(text_origin, px(14.0), window, cx)
+                        .ok();
+                },
+            );
+        }
 
         fn compute_value(pos: Point<Pixels>, bounds: Bounds<Pixels>) -> f32 {
             let relative = pos - bounds.origin;
