@@ -1,7 +1,7 @@
 use gpui::*;
 
 use crate::ui::{
-    components::{div::flex_col, icons::icons, navbutton::NavButton, title::Title},
+    components::{div::flex_col, icons::icons, nav_button::NavButton, title::Title},
     variables::Variables,
     views::AppView,
 };
@@ -37,7 +37,7 @@ impl Render for Library {
                     .overflow_y_scroll()
                     .p(px(variables.padding_16))
                     .gap(px(8.0))
-                    .child(NavButton::new(icons::SONGS, "Songs", AppView::Songs)),
+                    .child(NavButton::new(icons::SONGS, Some("Songs"), AppView::Songs)),
             )
             .child(Title::new("Library", self.hovered))
     }
