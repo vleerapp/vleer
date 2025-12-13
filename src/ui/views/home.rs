@@ -5,7 +5,7 @@ use gpui::{prelude::FluentBuilder, *};
 use std::collections::HashMap;
 
 use crate::{
-    data::{db::Database, types::Song},
+    data::types::Song,
     ui::{
         components::{
             div::{flex_col, flex_row},
@@ -15,7 +15,9 @@ use crate::{
             },
             title::Title,
         },
+        state::State,
         variables::Variables,
+        views::HoverableView,
     },
 };
 
@@ -66,7 +68,7 @@ impl HomeView {
     }
 
     fn load_recently_added(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let db = cx.global::<Database>().clone();
+        let state = cx.global::<State>().clone();
         let covers_dir = self.covers_dir.clone();
 
         cx.spawn_in(
@@ -74,118 +76,107 @@ impl HomeView {
             |this: WeakEntity<Self>, cx: &mut AsyncWindowContext| {
                 let mut cx = cx.clone();
                 async move {
-                    let songs_result = db.get_recently_added_songs(100).await;
+                    let song_ids = state.get_all_song_ids().await;
+                    let mut songs: Vec<Song> = Vec::new();
 
-                    match songs_result {
-                        Ok(db_songs) => match db.hydrate(db_songs).await {
-                            Ok(songs) => {
-                                let mut cover_groups: HashMap<String, Vec<Song>> = HashMap::new();
-                                let mut no_cover_songs: Vec<Song> = Vec::new();
-
-                                for song in songs {
-                                    if let Some(cover) = &song.cover {
-                                        cover_groups.entry(cover.clone()).or_default().push(song);
-                                    } else {
-                                        no_cover_songs.push(song);
-                                    }
-                                }
-
-                                let mut recent_items: Vec<(String, String, RecentItem)> =
-                                    Vec::new();
-
-                                for (_cover_hash, group_songs) in cover_groups {
-                                    let first_song = &group_songs[0];
-                                    let most_recent = group_songs
-                                        .iter()
-                                        .map(|s| s.date_added.clone())
-                                        .max()
-                                        .unwrap_or_default();
-
-                                    let artist_name =
-                                        first_song.artist.as_ref().map(|a| a.name.clone());
-
-                                    let cover_uri =
-                                        first_song.cover.as_ref().and_then(|cover_hash| {
-                                            let cover_path = covers_dir.join(cover_hash);
-                                            if cover_path.exists() {
-                                                Some(format!(
-                                                    "!file://{}",
-                                                    cover_path.to_string_lossy()
-                                                ))
-                                            } else {
-                                                None
-                                            }
-                                        });
-
-                                    let year = first_song.date.clone();
-
-                                    if group_songs.len() > 1 {
-                                        let album_title =
-                                            first_song.album.as_ref().map(|a| a.title.clone());
-
-                                        let title = album_title
-                                            .unwrap_or_else(|| "Unknown Album".to_string());
-
-                                        recent_items.push((
-                                            most_recent,
-                                            title.clone(),
-                                            RecentItem::Album {
-                                                title,
-                                                artist_name,
-                                                cover_uri,
-                                                year,
-                                            },
-                                        ));
-                                    } else {
-                                        recent_items.push((
-                                            most_recent,
-                                            first_song.title.clone(),
-                                            RecentItem::Song {
-                                                title: first_song.title.clone(),
-                                                artist_name,
-                                                cover_uri,
-                                            },
-                                        ));
-                                    }
-                                }
-
-                                for song in no_cover_songs {
-                                    let date_added = song.date_added.clone();
-                                    let artist_name = song.artist.as_ref().map(|a| a.name.clone());
-
-                                    recent_items.push((
-                                        date_added,
-                                        song.title.clone(),
-                                        RecentItem::Song {
-                                            title: song.title.clone(),
-                                            artist_name,
-                                            cover_uri: None,
-                                        },
-                                    ));
-                                }
-
-                                recent_items.sort_by(|a, b| match b.0.cmp(&a.0) {
-                                    std::cmp::Ordering::Equal => a.1.cmp(&b.1),
-                                    other => other,
-                                });
-
-                                let items: Vec<RecentItem> =
-                                    recent_items.into_iter().map(|(_, _, item)| item).collect();
-
-                                this.update(&mut cx, |this, cx| {
-                                    this.recently_added = items;
-                                    cx.notify();
-                                })
-                                .ok();
-                            }
-                            Err(e) => {
-                                tracing::error!("Failed to hydrate songs: {}", e);
-                            }
-                        },
-                        Err(e) => {
-                            tracing::error!("Failed to load recently added songs: {}", e);
+                    for id in song_ids {
+                        if let Some(song) = state.get_song(&id).await {
+                            songs.push((*song).clone());
                         }
                     }
+
+                    songs.sort_by(|a, b| b.date_added.cmp(&a.date_added));
+                    songs.truncate(100);
+
+                    let mut cover_groups: HashMap<String, Vec<Song>> = HashMap::new();
+                    let mut no_cover_songs: Vec<Song> = Vec::new();
+
+                    for song in songs {
+                        if let Some(cover) = &song.cover {
+                            cover_groups.entry(cover.clone()).or_default().push(song);
+                        } else {
+                            no_cover_songs.push(song);
+                        }
+                    }
+
+                    let mut recent_items: Vec<(String, String, RecentItem)> = Vec::new();
+
+                    for (_cover_hash, group_songs) in cover_groups {
+                        let first_song = &group_songs[0];
+                        let most_recent = group_songs
+                            .iter()
+                            .map(|s| s.date_added.clone())
+                            .max()
+                            .unwrap_or_default();
+
+                        let artist_name = first_song.artist.as_ref().map(|a| a.name.clone());
+
+                        let cover_uri = first_song.cover.as_ref().and_then(|cover_hash| {
+                            let cover_path = covers_dir.join(cover_hash);
+                            if cover_path.exists() {
+                                Some(format!("!file://{}", cover_path.to_string_lossy()))
+                            } else {
+                                None
+                            }
+                        });
+
+                        let year = first_song.date.clone();
+
+                        if group_songs.len() > 1 {
+                            let album_title = first_song.album.as_ref().map(|a| a.title.clone());
+                            let title = album_title.unwrap_or_else(|| "Unknown Album".to_string());
+
+                            recent_items.push((
+                                most_recent,
+                                title.clone(),
+                                RecentItem::Album {
+                                    title,
+                                    artist_name,
+                                    cover_uri,
+                                    year,
+                                },
+                            ));
+                        } else {
+                            recent_items.push((
+                                most_recent,
+                                first_song.title.clone(),
+                                RecentItem::Song {
+                                    title: first_song.title.clone(),
+                                    artist_name,
+                                    cover_uri,
+                                },
+                            ));
+                        }
+                    }
+
+                    for song in no_cover_songs {
+                        let date_added = song.date_added.clone();
+                        let artist_name = song.artist.as_ref().map(|a| a.name.clone());
+
+                        recent_items.push((
+                            date_added,
+                            song.title.clone(),
+                            RecentItem::Song {
+                                title: song.title.clone(),
+                                artist_name,
+                                cover_uri: None,
+                            },
+                        ));
+                    }
+
+                    recent_items.sort_by(|a, b| match b.0.cmp(&a.0) {
+                        std::cmp::Ordering::Equal => a.1.cmp(&b.1),
+                        other => other,
+                    });
+
+                    let items: Vec<RecentItem> =
+                        recent_items.into_iter().map(|(_, _, item)| item).collect();
+
+                    this.update(&mut cx, |this, cx| {
+                        this.recently_added = items;
+                        cx.notify();
+                    })
+                    .ok();
                 }
             },
         )
@@ -241,7 +232,7 @@ impl Render for HomeView {
 
         let bounds = window.bounds();
         let window_width: f32 = bounds.size.width.into();
-        let estimated_width = window_width - 300.0 - 96.0;
+        let estimated_width = window_width - 300.0 - 98.0;
         if estimated_width > 0.0 {
             self.container_width = Some(estimated_width);
         }
@@ -508,5 +499,12 @@ impl Render for HomeView {
                     ),
             )
             .child(Title::new("Home", self.hovered))
+    }
+}
+
+impl HoverableView for HomeView {
+    fn set_hovered(&mut self, hovered: bool, cx: &mut Context<Self>) {
+        self.hovered = hovered;
+        cx.notify();
     }
 }

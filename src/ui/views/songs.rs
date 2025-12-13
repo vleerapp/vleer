@@ -3,14 +3,16 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::{
-    data::{db::Database, types::Cuid},
+    data::types::Cuid,
     ui::{
         components::{
-            songtable::{SongColumn, SongEntry, SongTable, SongTableEvent, TableSort},
+            div::flex_col,
+            song_table::{SongColumn, SongEntry, SongTable, TableSort},
             title::Title,
         },
         state::State,
         variables::Variables,
+        views::HoverableView,
     },
 };
 
@@ -146,35 +148,11 @@ pub struct SongsView {
 }
 
 impl SongsView {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
         let get_rows_handler = Rc::new(get_rows);
         let get_row_handler = Rc::new(get_row);
 
         let table = SongTable::new(cx, get_rows_handler, get_row_handler, None);
-        let table_entity = table.clone();
-        let db = cx.global::<Database>().clone();
-        let state = cx.global::<State>().clone();
-
-        cx.spawn_in(window, move |_, cx: &mut AsyncWindowContext| {
-            let mut cx = cx.clone();
-            async move {
-                let songs_result = db.get_all_songs().await;
-
-                if let Ok(db_songs) = songs_result {
-                    if let Ok(hydrated_songs) = db.hydrate(db_songs).await {
-                        state.set_songs(hydrated_songs).await;
-                    }
-                }
-
-                cx.update(|_, cx| {
-                    table_entity.update(cx, |_, cx| {
-                        cx.emit(SongTableEvent::NewRows);
-                    });
-                })
-                .ok();
-            }
-        })
-        .detach();
 
         Self {
             hovered: false,
@@ -202,10 +180,8 @@ impl Render for SongsView {
                     .size_full()
                     .overflow_hidden()
                     .child(
-                        div()
+                        flex_col()
                             .id("songs-border")
-                            .flex()
-                            .flex_col()
                             .border(px(1.0))
                             .border_color(border_color)
                             .size_full()
@@ -214,5 +190,12 @@ impl Render for SongsView {
                     ),
             )
             .child(Title::new("Songs", self.hovered))
+    }
+}
+
+impl HoverableView for SongsView {
+    fn set_hovered(&mut self, hovered: bool, cx: &mut Context<Self>) {
+        self.hovered = hovered;
+        cx.notify();
     }
 }
