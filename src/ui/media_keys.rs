@@ -272,13 +272,9 @@ impl MediaKeyHandler {
             let player = VleerPlayer { action_tx };
 
             match Server::new("org.mpris.MediaPlayer2.vleer", player).await {
-                Ok(_server) => {
-                    use tracing::info;
-
-                    loop {
-                        tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
-                    }
-                }
+                Ok(_server) => loop {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
+                },
                 Err(e) => {
                     use tracing::error;
 

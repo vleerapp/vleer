@@ -4,6 +4,7 @@ use tracing::{debug, info};
 use crate::{
     data::config::Config,
     media::{playback::Playback, queue::Queue},
+    ui::state::State,
 };
 
 actions!(vleer, [Quit]);
@@ -59,9 +60,7 @@ fn next(_: &Next, cx: &mut App) {
 }
 
 fn reload_config(_: &Reload, cx: &mut App) {
-    cx.update_global::<Config, _>(|config, _| {
-        if let Err(e) = config.reload() {
-            tracing::error!("Failed to save config: {}", e);
-        }
-    });
+    if let Err(e) = Config::reload(cx) {
+        tracing::error!("Failed to reload config: {}", e);
+    }
 }
