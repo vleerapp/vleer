@@ -30,12 +30,13 @@ pub mod db {
         pub file_path: String,
         pub genre: Option<String>,
         pub date: Option<String>,
-        pub date_added: String,
         pub duration: i32,
         pub cover: Option<String>,
         pub track_number: Option<i32>,
         pub favorite: bool,
         pub track_lufs: Option<f32>,
+        pub pinned: bool,
+        pub date_added: String,
     }
 
     #[derive(Debug, Clone, FromRow)]
@@ -44,6 +45,7 @@ pub mod db {
         pub name: String,
         pub image: Option<String>,
         pub favorite: bool,
+        pub pinned: bool,
     }
 
     #[derive(Debug, Clone, FromRow)]
@@ -53,6 +55,7 @@ pub mod db {
         pub artist: Option<Cuid>,
         pub cover: Option<String>,
         pub favorite: bool,
+        pub pinned: bool,
     }
 }
 
@@ -65,12 +68,13 @@ pub struct Song {
     pub file_path: String,
     pub genre: Option<String>,
     pub date: Option<String>,
-    pub date_added: String,
     pub duration: i32,
     pub cover: Option<String>,
     pub track_number: Option<i32>,
     pub favorite: bool,
     pub track_lufs: Option<f32>,
+    pub pinned: bool,
+    pub date_added: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,6 +83,7 @@ pub struct Artist {
     pub name: String,
     pub image: Option<String>,
     pub favorite: bool,
+    pub pinned: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,6 +93,7 @@ pub struct Album {
     pub artist: Option<Arc<Artist>>,
     pub cover: Option<String>,
     pub favorite: bool,
+    pub pinned: bool,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -96,8 +102,9 @@ pub struct Playlist {
     pub name: String,
     pub description: Option<String>,
     pub image: Option<String>,
-    pub date_created: String,
+    pub pinned: bool,
     pub date_updated: String,
+    pub date_created: String,
 }
 
 #[derive(Debug, FromRow, Serialize, Deserialize)]
@@ -105,6 +112,7 @@ pub struct Event {
     pub id: Cuid,
     pub event_type: EventType,
     pub context_id: Option<Cuid>,
+    pub date_created: String,
     pub timestamp: String,
 }
 
@@ -126,4 +134,5 @@ pub struct EventContext {
     pub id: Cuid,
     pub song_id: Option<Cuid>,
     pub playlist_id: Option<Cuid>,
+    pub date_created: String,
 }

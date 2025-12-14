@@ -4,7 +4,6 @@ use tracing::{debug, info};
 use crate::{
     data::config::Config,
     media::{playback::Playback, queue::Queue},
-    ui::state::State,
 };
 
 actions!(vleer, [Quit]);

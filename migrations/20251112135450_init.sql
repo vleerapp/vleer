@@ -2,7 +2,8 @@ CREATE TABLE IF NOT EXISTS artists (
     id TEXT PRIMARY KEY,
     name TEXT UNIQUE NOT NULL,
     image TEXT,
-    favorite BOOLEAN DEFAULT FALSE
+    favorite BOOLEAN DEFAULT FALSE,
+    pinned BOOLEAN DEFAULT FALSE
 );
 CREATE TABLE IF NOT EXISTS albums (
     id TEXT PRIMARY KEY,
@@ -10,6 +11,7 @@ CREATE TABLE IF NOT EXISTS albums (
     artist TEXT,
     cover TEXT,
     favorite BOOLEAN DEFAULT FALSE,
+    pinned BOOLEAN DEFAULT FALSE,
     FOREIGN KEY (artist) REFERENCES artists(id) ON DELETE CASCADE
 );
 CREATE TABLE IF NOT EXISTS songs (
@@ -24,8 +26,9 @@ CREATE TABLE IF NOT EXISTS songs (
     cover TEXT,
     track_number INTEGER,
     favorite BOOLEAN DEFAULT FALSE,
-    date_added TEXT DEFAULT (DATETIME('now')),
     track_lufs REAL,
+    pinned BOOLEAN DEFAULT FALSE,
+    date_added TEXT DEFAULT (DATETIME('now')),
     FOREIGN KEY (artist_id) REFERENCES artists(id) ON DELETE CASCADE,
     FOREIGN KEY (album_id) REFERENCES albums(id) ON DELETE CASCADE
 );
@@ -34,8 +37,9 @@ CREATE TABLE IF NOT EXISTS playlists (
     name TEXT NOT NULL,
     description TEXT,
     image TEXT,
-    date_created TEXT DEFAULT (DATETIME('now')),
-    date_updated TEXT DEFAULT (DATETIME('now'))
+    pinned BOOLEAN DEFAULT FALSE,
+    date_updated TEXT DEFAULT (DATETIME('now')),
+    date_created TEXT DEFAULT (DATETIME('now'))
 );
 CREATE TABLE IF NOT EXISTS events (
     id TEXT PRIMARY KEY,
@@ -43,6 +47,7 @@ CREATE TABLE IF NOT EXISTS events (
         event_type IN ('PLAY', 'STOP', 'PAUSE', 'RESUME')
     ) NOT NULL,
     context_id TEXT,
+    date_created TEXT DEFAULT (DATETIME('now')),
     timestamp TEXT DEFAULT (DATETIME('now')),
     FOREIGN KEY (context_id) REFERENCES event_contexts(id) ON DELETE CASCADE
 );
@@ -50,6 +55,7 @@ CREATE TABLE IF NOT EXISTS event_contexts (
     id TEXT PRIMARY KEY,
     song_id TEXT,
     playlist_id TEXT,
+    date_created TEXT DEFAULT (DATETIME('now')),
     FOREIGN KEY (song_id) REFERENCES songs(id) ON DELETE CASCADE,
     FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE
 );
