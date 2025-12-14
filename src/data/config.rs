@@ -2,9 +2,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use gpui::{App, Global};
+use gpui::{App, BorrowAppContext, Global};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
+
+use crate::ui::state::State;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EqualizerSettings {
@@ -191,7 +193,7 @@ impl Config {
         &self.config
     }
 
-    pub fn reload(&mut self) -> Result<()> {
+    fn reload_internal(&mut self) -> Result<()> {
         if self.config_path.exists() {
             let content =
                 fs::read_to_string(&self.config_path).context("Failed to read config file")?;
@@ -200,6 +202,7 @@ impl Config {
                 Ok(mut config) => {
                     Self::validate_equalizer(&mut config.equalizer);
                     self.config = config;
+
                     info!("Config reloaded successfully");
                 }
                 Err(e) => {
@@ -209,5 +212,21 @@ impl Config {
         }
 
         Ok(())
+    }
+
+    pub fn reload(cx: &mut App) -> Result<()> {
+        let state = cx.global::<State>().clone();
+
+        cx.update_global::<Config, _>(|config, _cx| {
+            config.reload_internal()?;
+            let updated_config = config.get().clone();
+
+            tokio::spawn(async move {
+                state.set_config(updated_config).await;
+                debug!("Config synced to State");
+            });
+
+            Ok(())
+        })
     }
 }
