@@ -11,46 +11,46 @@ use tracing::debug;
 use super::queue::Queue;
 
 use super::equalizer::{Equalizer, EqualizerSource};
-use super::normalization::{NormalizationSource, NormalizationState};
 use crate::data::config::Config;
+
+const LOG_VOLUME_GROWTH_RATE: f32 = 6.908;
+const LOG_VOLUME_SCALE_FACTOR: f32 = 1000.0;
+const UNITY_GAIN: f32 = 1.0;
+const DEFAULT_TARGET_LUFS: f32 = -14.0;
 
 pub struct Playback {
     _stream: Arc<OutputStream>,
     sink: Arc<Sink>,
     equalizer: Arc<Mutex<Equalizer>>,
-    normalization: Arc<std::sync::RwLock<NormalizationState>>,
     volume: f32,
     is_paused: bool,
     current_file: Option<String>,
+    current_track_lufs: Option<f32>,
+    normalization_enabled: bool,
     position: f32,
 }
 
 impl Global for Playback {}
 
 impl Playback {
-    const LOG_VOLUME_GROWTH_RATE: f32 = 6.908;
-    const LOG_VOLUME_SCALE_FACTOR: f32 = 1000.0;
-    const UNITY_GAIN: f32 = 1.0;
-
     pub fn new() -> Result<Self> {
         let stream = OutputStreamBuilder::open_default_stream()
             .context("Failed to open default audio output stream")?;
 
         let sink = Sink::connect_new(&stream.mixer());
-
         sink.pause();
 
         let equalizer = Arc::new(Mutex::new(Equalizer::new(44100, 2)));
-        let normalization = Arc::new(std::sync::RwLock::new(NormalizationState::default()));
 
         Ok(Self {
             _stream: Arc::new(stream),
             sink: Arc::new(sink),
             equalizer,
-            normalization,
             volume: 0.5,
             is_paused: true,
             current_file: None,
+            current_track_lufs: None,
+            normalization_enabled: false,
             position: 0.0,
         })
     }
@@ -69,8 +69,7 @@ impl Playback {
         &mut self,
         path: impl AsRef<Path>,
         settings: &Config,
-        replaygain_track_gain: Option<f32>,
-        replaygain_track_peak: Option<f32>,
+        track_lufs: Option<f32>,
     ) -> Result<()> {
         let path = path.as_ref();
         debug!("Loading audio file: {:?}", path);
@@ -88,31 +87,20 @@ impl Playback {
         *self.equalizer.lock().unwrap() =
             Equalizer::from_settings(sample_rate, &settings.get().equalizer);
 
-        {
-            let mut norm_state = self.normalization.write().unwrap();
-            norm_state.enabled = settings.get().audio.normalization;
-            norm_state.reset();
-
-            if norm_state.enabled {
-                if let Some(gain_db) = replaygain_track_gain {
-                    norm_state.set_replaygain(gain_db, replaygain_track_peak);
-                    debug!(
-                        "Applied ReplayGain: {:.2} dB, peak: {:?}",
-                        gain_db, replaygain_track_peak
-                    );
-                }
-            }
-        }
+        self.current_track_lufs = track_lufs;
+        self.normalization_enabled = settings.get().audio.normalization;
 
         self.sink.stop();
 
         let eq_source = EqualizerSource::new(source, self.equalizer.clone());
-        let norm_source = NormalizationSource::new(eq_source, self.normalization.clone());
-        self.sink.append(norm_source);
+
+        let gain = self.calculate_normalization_gain();
+        let normalized = eq_source.amplify(gain);
+
+        self.sink.append(normalized);
         self.sink.set_volume(Self::log_volume(self.volume));
 
         self.position = 0.0;
-
         self.current_file = Some(path.to_string_lossy().to_string());
         self.is_paused = true;
 
@@ -126,12 +114,7 @@ impl Playback {
         if let Some(song) = first_song {
             let config = cx.global::<Config>().clone();
             cx.update_global::<Playback, _>(|playback, _cx| {
-                playback.open(
-                    &song.file_path,
-                    &config,
-                    song.replaygain_track_gain,
-                    song.replaygain_track_peak,
-                )?;
+                playback.open(&song.file_path, &config, song.track_lufs)?;
                 playback.play();
                 debug!("Started playback from queue");
                 Ok(())
@@ -178,9 +161,9 @@ impl Playback {
 
     fn log_volume(volume: f32) -> f32 {
         let mut amplitude = volume;
-        if amplitude > 0.0 && amplitude < Self::UNITY_GAIN {
+        if amplitude > 0.0 && amplitude < UNITY_GAIN {
             amplitude =
-                f32::exp(Self::LOG_VOLUME_GROWTH_RATE * volume) / Self::LOG_VOLUME_SCALE_FACTOR;
+                f32::exp(LOG_VOLUME_GROWTH_RATE * volume) / LOG_VOLUME_SCALE_FACTOR;
             if volume < 0.1 {
                 amplitude *= volume * 10.0;
             }
@@ -268,12 +251,30 @@ impl Playback {
     }
 
     pub fn set_normalization(&mut self, enabled: bool) {
-        let mut state = self.normalization.write().unwrap();
-        state.enabled = enabled;
+        self.normalization_enabled = enabled;
         debug!(
             "Normalization {}",
             if enabled { "enabled" } else { "disabled" }
         );
+    }
+
+    fn calculate_normalization_gain(&self) -> f32 {
+        if self.normalization_enabled {
+            if let Some(lufs) = self.current_track_lufs {
+                let gain_db = (DEFAULT_TARGET_LUFS - lufs).clamp(-12.0, 12.0);
+                let linear_gain = 10.0f32.powf(gain_db / 20.0);
+
+                debug!(
+                    "Normalization - Track LUFS: {:.2}, Gain dB: {:.2}, Linear: {:.4}",
+                    lufs, gain_db, linear_gain
+                );
+
+                return linear_gain;
+            } else {
+                debug!("No LUFS data available, normalization disabled for this track");
+            }
+        }
+        1.0
     }
 
     pub fn seek(&mut self, position: f32) -> anyhow::Result<()> {
@@ -283,11 +284,14 @@ impl Playback {
             let file = File::open(file_path)?;
             let mut source: Decoder<BufReader<File>> = Decoder::try_from(file)?;
             source.try_seek(Duration::from_secs_f32(position)).ok();
+
             let eq_source = EqualizerSource::new(source, self.equalizer.clone());
-            let norm_source = NormalizationSource::new(eq_source, self.normalization.clone());
+
+            let gain = self.calculate_normalization_gain();
+            let normalized = eq_source.amplify(gain);
 
             self.sink.stop();
-            self.sink.append(norm_source);
+            self.sink.append(normalized);
             self.sink.set_volume(Self::log_volume(self.volume));
 
             self.position = position;

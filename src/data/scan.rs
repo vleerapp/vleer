@@ -18,7 +18,7 @@ const MAX_CONCURRENT_SCANS: usize = 16;
 
 #[derive(Debug, Clone)]
 pub struct ScanStats {
-    pub scanned: usize,
+    pub _scanned: usize,
     pub added: usize,
     pub updated: usize,
     pub removed: usize,
@@ -163,7 +163,7 @@ impl MusicScanner {
         debug!("Processing {} scanned tracks", scanned_count);
 
         let mut stats = ScanStats {
-            scanned: scanned_count,
+            _scanned: scanned_count,
             added: 0,
             updated: 0,
             removed: 0,
@@ -269,9 +269,7 @@ impl MusicScanner {
                 || existing.date != meta.year.map(|y| y.to_string())
                 || existing.genre.as_deref() != meta.genre.as_deref()
                 || existing.cover.as_deref() != cover_hash.as_deref()
-                || existing.replaygain_track_gain != meta.replaygain_track_gain
-                || existing.replaygain_track_peak != meta.replaygain_track_peak;
-
+                || existing.track_lufs != meta.track_lufs;
             if metadata_changed {
                 db.update_song_metadata(
                     &existing.id,
@@ -283,8 +281,7 @@ impl MusicScanner {
                     meta.year,
                     meta.genre.as_deref(),
                     cover_hash.as_deref(),
-                    meta.replaygain_track_gain,
-                    meta.replaygain_track_peak,
+                    meta.track_lufs,
                 )
                 .await?;
                 debug!("Updated metadata for: {:?}", track.path);
@@ -303,8 +300,7 @@ impl MusicScanner {
                 meta.year,
                 meta.genre.as_deref(),
                 cover_hash.as_deref(),
-                meta.replaygain_track_gain,
-                meta.replaygain_track_peak,
+                meta.track_lufs,
             )
             .await?;
             debug!("Added new song: {:?}", track.path);

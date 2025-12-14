@@ -18,8 +18,7 @@ pub struct AudioMetadata {
     pub year: Option<i32>,
     pub duration: Duration,
     pub genre: Option<String>,
-    pub replaygain_track_gain: Option<f32>,
-    pub replaygain_track_peak: Option<f32>,
+    pub track_lufs: Option<f32>,
 }
 
 impl AudioMetadata {
@@ -50,12 +49,13 @@ impl AudioMetadata {
             metadata.year = tag.year().map(|y| y as i32);
             metadata.genre = tag.genre().map(|s| s.to_string());
 
-            metadata.replaygain_track_gain = tag
+            metadata.track_lufs = tag
                 .get_string(&lofty::tag::ItemKey::ReplayGainTrackGain)
-                .and_then(parse_replaygain_db);
-            metadata.replaygain_track_peak = tag
-                .get_string(&lofty::tag::ItemKey::ReplayGainTrackPeak)
-                .and_then(|s| s.trim().parse().ok());
+                .and_then(|s| parse_replaygain_to_lufs(s))
+                .or_else(|| {
+                    tag.get_string(&lofty::tag::ItemKey::Unknown("LUFS".to_string()))
+                        .and_then(|s| s.trim().parse().ok())
+                });
         }
 
         if metadata.title.is_none() {
@@ -69,12 +69,15 @@ impl AudioMetadata {
     }
 }
 
-fn parse_replaygain_db(s: &str) -> Option<f32> {
-    s.trim()
+fn parse_replaygain_to_lufs(s: &str) -> Option<f32> {
+    let gain_db = s
+        .trim()
         .trim_end_matches(" dB")
         .trim_end_matches("dB")
-        .parse()
-        .ok()
+        .parse::<f32>()
+        .ok()?;
+
+    Some(-18.0 + gain_db)
 }
 
 pub fn extract_and_save_cover(audio_path: &Path, covers_dir: &Path) -> Result<Option<PathBuf>> {

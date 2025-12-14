@@ -1,6 +1,6 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::collections::HashMap;
 
 use gpui::{App, Global};
 use sqlx::{
@@ -9,7 +9,7 @@ use sqlx::{
 };
 use tracing::debug;
 
-use crate::data::types::{self, Cuid, EventContext, Playlist, Song, Artist, Album};
+use crate::data::types::{self, Album, Artist, Cuid, EventContext, Playlist, Song};
 
 pub async fn create_pool(path: impl AsRef<Path>) -> Result<SqlitePool, sqlx::Error> {
     debug!("Creating database pool at {:?}", path.as_ref());
@@ -53,39 +53,37 @@ impl Database {
         year: Option<i32>,
         genre: Option<&str>,
         cover: Option<&str>,
-        replaygain_track_gain: Option<f32>,
-        replaygain_track_peak: Option<f32>,
+        track_lufs: Option<f32>,
     ) -> Result<Cuid, sqlx::Error> {
         let id = Cuid::new();
         let year_str = year.map(|y| y.to_string());
         sqlx::query(
-                "INSERT INTO songs (id, title, artist_id, album_id, file_path, duration, track_number, date, genre, cover, replaygain_track_gain, replaygain_track_peak)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-            )
-            .bind(&id)
-            .bind(title)
-            .bind(artist_id)
-            .bind(album_id)
-            .bind(file_path)
-            .bind(duration)
-            .bind(track_number)
-            .bind(year_str)
-            .bind(genre)
-            .bind(cover)
-            .bind(replaygain_track_gain)
-            .bind(replaygain_track_peak)
-            .execute(&self.pool)
-            .await?;
+            "INSERT INTO songs (id, title, artist_id, album_id, file_path, genre, date, duration, cover, track_number, track_lufs)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(&id)
+        .bind(title)
+        .bind(artist_id)
+        .bind(album_id)
+        .bind(file_path)
+        .bind(genre)
+        .bind(year_str)
+        .bind(duration)
+        .bind(cover)
+        .bind(track_number)
+        .bind(track_lufs)
+        .execute(&self.pool)
+        .await?;
         Ok(id)
     }
 
     pub async fn get_all_songs(&self) -> Result<Vec<types::db::Song>, sqlx::Error> {
-        sqlx::query_as::<_, types::db::Song>(
-            "SELECT id, title, artist_id, album_id, file_path, genre, date, date_added, duration, cover, track_number, favorite, replaygain_track_gain, replaygain_track_peak
-             FROM songs"
-        )
-        .fetch_all(&self.pool)
-        .await
+        sqlx
+            ::query_as::<_, types::db::Song>(
+                "SELECT id, title, artist_id, album_id, file_path, genre, date, date_added, duration, cover, track_number, favorite, track_lufs
+         FROM songs"
+            )
+            .fetch_all(&self.pool).await
     }
 
     pub async fn get_song(&self, id: &Cuid) -> Result<types::db::Song, sqlx::Error> {
@@ -95,14 +93,17 @@ impl Database {
             .await
     }
 
-    pub async fn get_song_by_path(&self, file_path: &str) -> Result<Option<types::db::Song>, sqlx::Error> {
-        sqlx::query_as::<_, types::db::Song>(
-            "SELECT id, title, artist_id, album_id, file_path, genre, date, date_added, duration, cover, track_number, favorite, replaygain_track_gain, replaygain_track_peak
-             FROM songs WHERE file_path = ?"
-        )
-        .bind(file_path)
-        .fetch_optional(&self.pool)
-        .await
+    pub async fn get_song_by_path(
+        &self,
+        file_path: &str,
+    ) -> Result<Option<types::db::Song>, sqlx::Error> {
+        sqlx
+            ::query_as::<_, types::db::Song>(
+                "SELECT id, title, artist_id, album_id, file_path, genre, date, date_added, duration, cover, track_number, favorite, track_lufs
+         FROM songs WHERE file_path = ?"
+            )
+            .bind(file_path)
+            .fetch_optional(&self.pool).await
     }
 
     pub async fn delete_song(&self, id: &Cuid) -> Result<(), sqlx::Error> {
@@ -132,53 +133,54 @@ impl Database {
         year: Option<i32>,
         genre: Option<&str>,
         cover: Option<&str>,
-        replaygain_track_gain: Option<f32>,
-        replaygain_track_peak: Option<f32>,
+        track_lufs: Option<f32>,
     ) -> Result<(), sqlx::Error> {
         let year_str = year.map(|y| y.to_string());
-        sqlx::query(
-            "UPDATE songs SET title = ?, artist_id = ?, album_id = ?, duration = ?, track_number = ?, date = ?, genre = ?, cover = ?, replaygain_track_gain = ?, replaygain_track_peak = ?
-             WHERE id = ?"
-        )
-        .bind(title)
-        .bind(artist_id)
-        .bind(album_id)
-        .bind(duration)
-        .bind(track_number)
-        .bind(year_str)
-        .bind(genre)
-        .bind(cover)
-        .bind(replaygain_track_gain)
-        .bind(replaygain_track_peak)
-        .bind(id)
-        .execute(&self.pool)
-        .await?;
+        sqlx
+            ::query(
+                "UPDATE songs SET title = ?, artist_id = ?, album_id = ?, duration = ?, track_number = ?, date = ?, genre = ?, cover = ?, track_lufs = ?
+         WHERE id = ?"
+            )
+            .bind(title)
+            .bind(artist_id)
+            .bind(album_id)
+            .bind(duration)
+            .bind(track_number)
+            .bind(year_str)
+            .bind(genre)
+            .bind(cover)
+            .bind(track_lufs)
+            .bind(id)
+            .execute(&self.pool).await?;
         Ok(())
     }
 
     pub async fn get_recently_played_songs(&self) -> Result<Vec<types::db::Song>, sqlx::Error> {
-        sqlx::query_as::<_, types::db::Song>(
-            "SELECT DISTINCT s.id, s.title, s.artist_id, s.album_id, s.file_path, s.genre, s.date, s.date_added,
-                    s.duration, s.cover, s.track_number, s.favorite, s.replaygain_track_gain, s.replaygain_track_peak
-             FROM playback_history ph
-             JOIN songs s ON ph.song_id = s.id
-             WHERE ph.event_type = 'PLAY'
-             ORDER BY ph.timestamp DESC"
-        )
-        .fetch_all(&self.pool)
-        .await
+        sqlx
+            ::query_as::<_, types::db::Song>(
+                "SELECT DISTINCT s.id, s.title, s.artist_id, s.album_id, s.file_path, s.genre, s.date, s.date_added,
+                s.duration, s.cover, s.track_number, s.favorite, s.track_lufs
+         FROM playback_history ph
+         JOIN songs s ON ph.song_id = s.id
+         WHERE ph.event_type = 'PLAY'
+         ORDER BY ph.timestamp DESC"
+            )
+            .fetch_all(&self.pool).await
     }
 
-    pub async fn get_recently_added_songs(&self, limit: i32) -> Result<Vec<types::db::Song>, sqlx::Error> {
-        sqlx::query_as::<_, types::db::Song>(
-            "SELECT id, title, artist_id, album_id, file_path, genre, date, date_added, duration, cover, track_number, favorite, replaygain_track_gain, replaygain_track_peak
-             FROM songs
-             ORDER BY date_added DESC
-             LIMIT ?"
-        )
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await
+    pub async fn get_recently_added_songs(
+        &self,
+        limit: i32,
+    ) -> Result<Vec<types::db::Song>, sqlx::Error> {
+        sqlx
+            ::query_as::<_, types::db::Song>(
+                "SELECT id, title, artist_id, album_id, file_path, genre, date, date_added, duration, cover, track_number, favorite, track_lufs
+         FROM songs
+         ORDER BY date_added DESC
+         LIMIT ?"
+            )
+            .bind(limit)
+            .fetch_all(&self.pool).await
     }
 
     pub async fn get_artist_name(&self, id: &Cuid) -> Result<Option<String>, sqlx::Error> {
@@ -233,14 +235,14 @@ impl Database {
         _genre: Option<&str>,
         cover: Option<&str>,
     ) -> Result<Cuid, sqlx::Error> {
-        let existing: Option<(Cuid,)> = sqlx::query_as(
-            "SELECT id FROM albums WHERE title = ? AND (artist = ? OR (artist IS NULL AND ? IS NULL))"
-        )
-        .bind(title)
-        .bind(artist)
-        .bind(artist)
-        .fetch_optional(&self.pool)
-        .await?;
+        let existing: Option<(Cuid,)> = sqlx
+            ::query_as(
+                "SELECT id FROM albums WHERE title = ? AND (artist = ? OR (artist IS NULL AND ? IS NULL))"
+            )
+            .bind(title)
+            .bind(artist)
+            .bind(artist)
+            .fetch_optional(&self.pool).await?;
 
         if let Some((id,)) = existing {
             if let Some(cover_path) = cover {
@@ -265,9 +267,11 @@ impl Database {
     }
 
     pub async fn get_all_albums(&self) -> Result<Vec<types::db::Album>, sqlx::Error> {
-        sqlx::query_as::<_, types::db::Album>("SELECT id, title, artist, cover, favorite FROM albums")
-            .fetch_all(&self.pool)
-            .await
+        sqlx::query_as::<_, types::db::Album>(
+            "SELECT id, title, artist, cover, favorite FROM albums",
+        )
+        .fetch_all(&self.pool)
+        .await
     }
 
     pub async fn get_album(&self, id: &Cuid) -> Result<types::db::Album, sqlx::Error> {
@@ -347,20 +351,20 @@ impl Database {
     }
 
     pub async fn cleanup_orphaned_artists(&self) -> Result<u64, sqlx::Error> {
-        let result = sqlx::query(
-            "DELETE FROM artists WHERE id NOT IN (SELECT DISTINCT artist_id FROM songs WHERE artist_id IS NOT NULL)"
-        )
-        .execute(&self.pool)
-        .await?;
+        let result = sqlx
+            ::query(
+                "DELETE FROM artists WHERE id NOT IN (SELECT DISTINCT artist_id FROM songs WHERE artist_id IS NOT NULL)"
+            )
+            .execute(&self.pool).await?;
         Ok(result.rows_affected())
     }
 
     pub async fn cleanup_orphaned_albums(&self) -> Result<u64, sqlx::Error> {
-        let result = sqlx::query(
-            "DELETE FROM albums WHERE id NOT IN (SELECT DISTINCT album_id FROM songs WHERE album_id IS NOT NULL)"
-        )
-        .execute(&self.pool)
-        .await?;
+        let result = sqlx
+            ::query(
+                "DELETE FROM albums WHERE id NOT IN (SELECT DISTINCT album_id FROM songs WHERE album_id IS NOT NULL)"
+            )
+            .execute(&self.pool).await?;
         Ok(result.rows_affected())
     }
 
@@ -382,7 +386,10 @@ impl Database {
         }
 
         for db_album in db_albums {
-            let artist = db_album.artist.as_ref().and_then(|id| artists.get(id).cloned());
+            let artist = db_album
+                .artist
+                .as_ref()
+                .and_then(|id| artists.get(id).cloned());
             let album = Album {
                 id: db_album.id.clone(),
                 title: db_album.title,
@@ -396,8 +403,14 @@ impl Database {
         let songs: Vec<Song> = db_songs
             .into_iter()
             .map(|db_song| {
-                let artist = db_song.artist_id.as_ref().and_then(|id| artists.get(id).cloned());
-                let album = db_song.album_id.as_ref().and_then(|id| albums.get(id).cloned());
+                let artist = db_song
+                    .artist_id
+                    .as_ref()
+                    .and_then(|id| artists.get(id).cloned());
+                let album = db_song
+                    .album_id
+                    .as_ref()
+                    .and_then(|id| albums.get(id).cloned());
 
                 Song {
                     id: db_song.id,
@@ -412,8 +425,7 @@ impl Database {
                     cover: db_song.cover,
                     track_number: db_song.track_number,
                     favorite: db_song.favorite,
-                    replaygain_track_gain: db_song.replaygain_track_gain,
-                    replaygain_track_peak: db_song.replaygain_track_peak,
+                    track_lufs: db_song.track_lufs,
                 }
             })
             .collect();

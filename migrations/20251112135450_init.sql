@@ -25,8 +25,7 @@ CREATE TABLE IF NOT EXISTS songs (
     track_number INTEGER,
     favorite BOOLEAN DEFAULT FALSE,
     date_added TEXT DEFAULT (DATETIME('now')),
-    replaygain_track_gain REAL,
-    replaygain_track_peak REAL,
+    track_lufs REAL,
     FOREIGN KEY (artist_id) REFERENCES artists(id) ON DELETE CASCADE,
     FOREIGN KEY (album_id) REFERENCES albums(id) ON DELETE CASCADE
 );

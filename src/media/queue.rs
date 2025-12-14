@@ -113,8 +113,7 @@ impl Queue {
                 playback.open(
                     &song.file_path,
                     &config,
-                    song.replaygain_track_gain,
-                    song.replaygain_track_peak,
+                    song.track_lufs
                 )?;
                 playback.play();
                 debug!("Playing next track");
@@ -170,8 +169,7 @@ impl Queue {
                 playback.open(
                     &song.file_path,
                     &config,
-                    song.replaygain_track_gain,
-                    song.replaygain_track_peak,
+                    song.track_lufs
                 )?;
                 playback.play();
                 debug!("Playing previous track");
