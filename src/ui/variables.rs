@@ -13,6 +13,7 @@ pub struct Variables {
     pub padding_8: f32,
     pub padding_16: f32,
     pub padding_24: f32,
+    pub padding_32: f32,
 }
 
 impl Default for Variables {
@@ -30,6 +31,7 @@ impl Default for Variables {
             padding_8: 8.0,
             padding_16: 16.0,
             padding_24: 24.0,
+            padding_32: 32.0,
         }
     }
 }
