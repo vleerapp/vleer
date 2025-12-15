@@ -301,7 +301,7 @@ impl MediaKeyHandler {
         manager.register(previous)?;
 
         let receiver = GlobalHotKeyEvent::receiver();
-        cx.spawn(|cx: &mut gpui::AsyncApp| {
+        cx.spawn(move |cx: &mut gpui::AsyncApp| {
             let cx = cx.clone();
             async move {
                 loop {
