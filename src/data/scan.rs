@@ -4,14 +4,17 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use futures::stream::{self, StreamExt};
+use gpui::App;
 use notify::{EventKind, RecursiveMode, event::ModifyKind};
 use notify_debouncer_full::{DebounceEventResult, new_debouncer};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 use walkdir::WalkDir;
 
+use crate::data::config::Config;
 use crate::data::db::Database;
 use crate::data::metadata::{AudioMetadata, extract_and_save_cover};
+use crate::ui::state::State;
 
 const SUPPORTED_EXTENSIONS: &[&str] = &["mp3", "flac", "ogg", "m4a", "aac", "wav", "mp1", "mp2"];
 const MAX_CONCURRENT_SCANS: usize = 16;
@@ -38,16 +41,81 @@ pub struct ScannedTrack {
     pub cover_path: Option<PathBuf>,
 }
 
-pub struct MusicScanner {
+pub struct Scanner {
     scan_paths: Vec<PathBuf>,
     covers_dir: PathBuf,
 }
 
-impl MusicScanner {
+impl Scanner {
     pub fn new(scan_paths: Vec<PathBuf>, covers_dir: PathBuf) -> Self {
         Self {
             scan_paths,
             covers_dir,
+        }
+    }
+
+    pub fn init(cx: &mut App) {
+        let config = cx.global::<Config>();
+        let db = cx.global::<Database>().clone();
+        let state = cx.global::<State>().clone();
+
+        let data_dir = dirs::data_dir()
+            .expect("couldn't get data directory")
+            .join("vleer");
+
+        let covers_dir = data_dir.join("covers");
+        if !covers_dir.exists() {
+            let _ = std::fs::create_dir_all(&covers_dir);
+        }
+
+        let scan_paths = expand_scan_paths(&config.get().scan.paths);
+        let scanner = Arc::new(Scanner::new(scan_paths, covers_dir));
+        let scanner_clone = scanner.clone();
+
+        match MusicWatcher::new(scanner.clone(), Arc::new(db.clone())) {
+            Ok((watcher, mut rx)) => {
+                let state_clone = state.clone();
+                let db_clone = db.clone();
+
+                tokio::spawn(async move {
+                    let _watcher = watcher;
+                    while let Some(stats) = rx.recv().await {
+                        info!(
+                            "Library scan completed - Added: {}, Updated: {}, Removed: {}",
+                            stats.added, stats.updated, stats.removed
+                        );
+
+                        if stats.added > 0 || stats.updated > 0 || stats.removed > 0 {
+                            State::refresh(&db_clone, &state_clone).await;
+                        }
+                    }
+                });
+
+                let db_clone = db.clone();
+                let state_clone = state.clone();
+
+                tokio::spawn(async move {
+                    info!("Starting initial library scan...");
+                    match scanner_clone.scan_and_save(&db_clone).await {
+                        Ok(stats) => {
+                            info!(
+                                "Initial scan complete - Added: {}, Updated: {}, Removed: {}",
+                                stats.added, stats.updated, stats.removed
+                            );
+
+                            if stats.added > 0 || stats.updated > 0 || stats.removed > 0 {
+                                State::refresh(&db_clone, &state_clone).await;
+                            }
+                        }
+                        Err(e) => {
+                            error!("Initial scan failed: {}", e);
+                        }
+                    }
+                });
+            }
+            Err(e) => {
+                error!("Failed to initialize music watcher: {}", e);
+            }
         }
     }
 
@@ -351,13 +419,13 @@ pub fn expand_scan_paths(paths: &[String]) -> Vec<PathBuf> {
 }
 
 pub struct MusicWatcher {
-    _scanner: Arc<MusicScanner>,
+    _scanner: Arc<Scanner>,
     _db: Arc<Database>,
 }
 
 impl MusicWatcher {
     pub fn new(
-        scanner: Arc<MusicScanner>,
+        scanner: Arc<Scanner>,
         db: Arc<Database>,
     ) -> Result<(Self, mpsc::Receiver<ScanStats>)> {
         let (tx, rx) = mpsc::channel(100);
@@ -380,10 +448,7 @@ impl MusicWatcher {
                         );
 
                         is_meaningful_event
-                            && event
-                                .paths
-                                .iter()
-                                .any(|path| MusicScanner::is_audio_file(path))
+                            && event.paths.iter().any(|path| Scanner::is_audio_file(path))
                     });
 
                     if has_audio_changes {

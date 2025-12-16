@@ -6,7 +6,7 @@ use tracing::info;
 
 use crate::data::config::{Config, SettingsConfig};
 use crate::data::db::Database;
-use crate::data::types::{Album, Artist, Cuid, Playlist, Song};
+use crate::data::types::{self, Album, Artist, Cuid, Playlist, Song};
 use crate::ui::views::AppView;
 
 #[derive(Clone)]
@@ -23,6 +23,7 @@ struct StateInner {
     album_ids: Vec<Cuid>,
     playlists: HashMap<Cuid, Arc<Playlist>>,
     playlist_ids: Vec<Cuid>,
+    playlist_tracks: HashMap<Cuid, Vec<Cuid>>,
     current_view: AppView,
     config: SettingsConfig,
 }
@@ -41,6 +42,7 @@ impl State {
                 album_ids: Vec::new(),
                 playlists: HashMap::new(),
                 playlist_ids: Vec::new(),
+                playlist_tracks: HashMap::new(),
                 current_view: AppView::default(),
                 config: SettingsConfig::default(),
             })),
@@ -63,60 +65,118 @@ impl State {
         let state = cx.global::<State>().clone();
 
         tokio::spawn(async move {
-            let db_songs = db.get_all_songs().await.expect("Failed to fetch songs");
-            let db_artists = db.get_all_artists().await.expect("Failed to fetch artists");
-            let db_albums = db.get_all_albums().await.expect("Failed to fetch albums");
-            let db_playlists = db
-                .get_all_playlists()
-                .await
-                .expect("Failed to fetch playlists");
+            Self::refresh(&db, &state).await;
+        });
+    }
 
-            let artists: Vec<Artist> = db_artists
-                .into_iter()
-                .map(|a| Artist {
+    pub async fn refresh(db: &Database, state: &State) {
+        let db_songs = db.get_all_songs().await.expect("Failed to fetch songs");
+        let db_artists = db.get_all_artists().await.expect("Failed to fetch artists");
+        let db_albums = db.get_all_albums().await.expect("Failed to fetch albums");
+        let db_playlists = db
+            .get_all_playlists()
+            .await
+            .expect("Failed to fetch playlists");
+        let db_playlist_tracks = db
+            .get_all_playlist_tracks()
+            .await
+            .expect("Failed to fetch playlist tracks");
+
+        let artists: Vec<Artist> = db_artists
+            .into_iter()
+            .map(|a| Artist {
+                id: a.id,
+                name: a.name,
+                image: a.image,
+                favorite: a.favorite,
+                pinned: a.pinned,
+            })
+            .collect();
+
+        let artist_map: HashMap<Cuid, Arc<Artist>> = artists
+            .iter()
+            .map(|a| (a.id.clone(), Arc::new(a.clone())))
+            .collect();
+
+        let albums: Vec<Album> = db_albums
+            .into_iter()
+            .map(|a| {
+                let artist = a.artist.as_ref().and_then(|id| artist_map.get(id).cloned());
+                Album {
                     id: a.id,
-                    name: a.name,
-                    image: a.image,
+                    title: a.title,
+                    artist,
+                    cover: a.cover,
                     favorite: a.favorite,
                     pinned: a.pinned,
-                })
-                .collect();
+                }
+            })
+            .collect();
 
-            let artist_map: HashMap<Cuid, Arc<Artist>> = artists
-                .iter()
-                .map(|a| (a.id.clone(), Arc::new(a.clone())))
-                .collect();
+        let album_map: HashMap<Cuid, Arc<Album>> = albums
+            .iter()
+            .map(|a| (a.id.clone(), Arc::new(a.clone())))
+            .collect();
 
-            let albums: Vec<Album> = db_albums
-                .into_iter()
-                .map(|a| {
-                    let artist = a.artist.as_ref().and_then(|id| artist_map.get(id).cloned());
-                    Album {
-                        id: a.id,
-                        title: a.title,
-                        artist,
-                        cover: a.cover,
-                        favorite: a.favorite,
-                        pinned: a.pinned,
-                    }
-                })
-                .collect();
+        let songs: Vec<Song> = db_songs
+            .into_iter()
+            .map(|db_song| {
+                let artist = db_song
+                    .artist_id
+                    .as_ref()
+                    .and_then(|id| artist_map.get(id).cloned());
+                let album = db_song
+                    .album_id
+                    .as_ref()
+                    .and_then(|id| album_map.get(id).cloned());
 
-            let hydrated_songs = db.hydrate(db_songs).await.expect("Failed to hydrate songs");
+                Song {
+                    id: db_song.id,
+                    title: db_song.title,
+                    artist,
+                    album,
+                    file_path: db_song.file_path,
+                    genre: db_song.genre,
+                    date: db_song.date,
+                    duration: db_song.duration,
+                    cover: db_song.cover,
+                    track_number: db_song.track_number,
+                    favorite: db_song.favorite,
+                    track_lufs: db_song.track_lufs,
+                    pinned: db_song.pinned,
+                    date_added: db_song.date_added,
+                }
+            })
+            .collect();
 
-            state.set_artists(artists).await;
-            state.set_albums(albums).await;
-            state.set_playlists(db_playlists).await;
-            state.set_songs(hydrated_songs).await;
+        let mut tracks_by_playlist: HashMap<Cuid, Vec<types::db::PlaylistTrack>> = HashMap::new();
+        for track in db_playlist_tracks {
+            tracks_by_playlist
+                .entry(track.playlist_id.clone())
+                .or_default()
+                .push(track);
+        }
 
-            info!(
-                "Successfully prepared state with {} songs, {} artists, {} albums, {} playlists",
-                state.get_all_song_ids().await.len(),
-                state.get_all_artist_ids().await.len(),
-                state.get_all_album_ids().await.len(),
-                state.get_all_playlist_ids().await.len()
-            );
-        });
+        let mut final_playlist_tracks: HashMap<Cuid, Vec<Cuid>> = HashMap::new();
+        for (playlist_id, mut tracks) in tracks_by_playlist {
+            tracks.sort_by_key(|t| t.position);
+            let song_ids = tracks.into_iter().map(|t| t.song_id).collect();
+            final_playlist_tracks.insert(playlist_id, song_ids);
+        }
+
+        state.set_artists(artists).await;
+        state.set_albums(albums).await;
+        state.set_playlists(db_playlists).await;
+        state.set_songs(songs).await;
+        state.set_playlist_tracks(final_playlist_tracks).await;
+
+        info!(
+            "Successfully refreshed state with {} songs, {} artists, {} albums, {} playlists",
+            state.get_all_song_ids().await.len(),
+            state.get_all_artist_ids().await.len(),
+            state.get_all_album_ids().await.len(),
+            state.get_all_playlist_ids().await.len()
+        );
     }
 
     pub async fn get_current_view(&self) -> AppView {
@@ -155,7 +215,6 @@ impl State {
         let mut inner = self.inner.write().await;
         inner.songs.clear();
         inner.song_ids.clear();
-
         for song in songs {
             let id = song.id.clone();
             inner.song_ids.push(id.clone());
@@ -196,7 +255,6 @@ impl State {
         let mut inner = self.inner.write().await;
         inner.artists.clear();
         inner.artist_ids.clear();
-
         for artist in artists {
             let id = artist.id.clone();
             inner.artist_ids.push(id.clone());
@@ -225,7 +283,6 @@ impl State {
         let mut inner = self.inner.write().await;
         inner.albums.clear();
         inner.album_ids.clear();
-
         for album in albums {
             let id = album.id.clone();
             inner.album_ids.push(id.clone());
@@ -254,12 +311,16 @@ impl State {
         let mut inner = self.inner.write().await;
         inner.playlists.clear();
         inner.playlist_ids.clear();
-
         for playlist in playlists {
             let id = playlist.id.clone();
             inner.playlist_ids.push(id.clone());
             inner.playlists.insert(id, Arc::new(playlist));
         }
+    }
+
+    pub async fn set_playlist_tracks(&self, tracks: HashMap<Cuid, Vec<Cuid>>) {
+        let mut inner = self.inner.write().await;
+        inner.playlist_tracks = tracks;
     }
 
     pub async fn get_playlist(&self, id: &Cuid) -> Option<Arc<Playlist>> {
@@ -279,7 +340,44 @@ impl State {
         inner.playlists.insert(id, Arc::new(playlist));
     }
 
-    pub fn get_pinned_items_sync(&self) -> Vec<(String, Option<String>, String)> {
+    pub async fn get_album_songs(&self, id: &Cuid) -> Option<Vec<Arc<Song>>> {
+        let inner = self.inner.read().await;
+        if !inner.albums.contains_key(id) {
+            return None;
+        }
+
+        let mut songs: Vec<Arc<Song>> = inner
+            .songs
+            .values()
+            .filter(|song| song.album.as_ref().map(|a| &a.id) == Some(id))
+            .cloned()
+            .collect();
+
+        songs.sort_by_key(|s| s.track_number);
+
+        Some(songs)
+    }
+
+    pub async fn get_playlist_songs(&self, id: &Cuid) -> Option<Vec<Arc<Song>>> {
+        let inner = self.inner.read().await;
+
+        if !inner.playlists.contains_key(id) {
+            return None;
+        }
+
+        let song_ids = inner.playlist_tracks.get(id)?;
+
+        let mut songs = Vec::new();
+        for song_id in song_ids {
+            if let Some(song) = inner.songs.get(song_id) {
+                songs.push(song.clone());
+            }
+        }
+
+        Some(songs)
+    }
+
+    pub fn get_pinned_items_sync(&self) -> Vec<(Cuid, String, Option<String>, String)> {
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
                 let inner = self.inner.read().await;
@@ -288,6 +386,7 @@ impl State {
                 for artist in inner.artists.values() {
                     if artist.pinned {
                         items.push((
+                            artist.id.clone(),
                             artist.name.clone(),
                             artist.image.clone(),
                             "Artist".to_string(),
@@ -297,6 +396,7 @@ impl State {
                 for album in inner.albums.values() {
                     if album.pinned {
                         items.push((
+                            album.id.clone(),
                             album.title.clone(),
                             album.cover.clone(),
                             "Album".to_string(),
@@ -306,6 +406,7 @@ impl State {
                 for playlist in inner.playlists.values() {
                     if playlist.pinned {
                         items.push((
+                            playlist.id.clone(),
                             playlist.name.clone(),
                             playlist.image.clone(),
                             "Playlist".to_string(),
@@ -314,7 +415,12 @@ impl State {
                 }
                 for song in inner.songs.values() {
                     if song.pinned {
-                        items.push((song.title.clone(), song.cover.clone(), "Song".to_string()));
+                        items.push((
+                            song.id.clone(),
+                            song.title.clone(),
+                            song.cover.clone(),
+                            "Song".to_string(),
+                        ));
                     }
                 }
                 items
