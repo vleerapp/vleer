@@ -77,7 +77,7 @@ fn parse_replaygain_to_lufs(s: &str) -> Option<f32> {
         .parse::<f32>()
         .ok()?;
 
-    Some(-18.0 + gain_db)
+    Some(-18.0 - gain_db)
 }
 
 pub fn extract_and_save_cover(audio_path: &Path, covers_dir: &Path) -> Result<Option<PathBuf>> {
