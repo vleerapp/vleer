@@ -61,14 +61,62 @@ impl State {
 
         let db = cx.global::<Database>().clone();
         let state = cx.global::<State>().clone();
+
         tokio::spawn(async move {
-            let songs = db.get_all_songs().await;
-            let hydrated_songs = db.hydrate(songs.expect("Failed to hydrate songs")).await;
-            state
-                .set_songs(hydrated_songs.expect("Failed to populate hydrated songs to state"))
-                .await;
+            let db_songs = db.get_all_songs().await.expect("Failed to fetch songs");
+            let db_artists = db.get_all_artists().await.expect("Failed to fetch artists");
+            let db_albums = db.get_all_albums().await.expect("Failed to fetch albums");
+            let db_playlists = db
+                .get_all_playlists()
+                .await
+                .expect("Failed to fetch playlists");
+
+            let artists: Vec<Artist> = db_artists
+                .into_iter()
+                .map(|a| Artist {
+                    id: a.id,
+                    name: a.name,
+                    image: a.image,
+                    favorite: a.favorite,
+                    pinned: a.pinned,
+                })
+                .collect();
+
+            let artist_map: HashMap<Cuid, Arc<Artist>> = artists
+                .iter()
+                .map(|a| (a.id.clone(), Arc::new(a.clone())))
+                .collect();
+
+            let albums: Vec<Album> = db_albums
+                .into_iter()
+                .map(|a| {
+                    let artist = a.artist.as_ref().and_then(|id| artist_map.get(id).cloned());
+                    Album {
+                        id: a.id,
+                        title: a.title,
+                        artist,
+                        cover: a.cover,
+                        favorite: a.favorite,
+                        pinned: a.pinned,
+                    }
+                })
+                .collect();
+
+            let hydrated_songs = db.hydrate(db_songs).await.expect("Failed to hydrate songs");
+
+            state.set_artists(artists).await;
+            state.set_albums(albums).await;
+            state.set_playlists(db_playlists).await;
+            state.set_songs(hydrated_songs).await;
+
+            info!(
+                "Successfully prepared state with {} songs, {} artists, {} albums, {} playlists",
+                state.get_all_song_ids().await.len(),
+                state.get_all_artist_ids().await.len(),
+                state.get_all_album_ids().await.len(),
+                state.get_all_playlist_ids().await.len()
+            );
         });
-        info!("Sucessfully prepared state");
     }
 
     pub async fn get_current_view(&self) -> AppView {
