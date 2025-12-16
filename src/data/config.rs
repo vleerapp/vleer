@@ -49,7 +49,7 @@ pub struct AudioSettings {
 impl Default for AudioSettings {
     fn default() -> Self {
         Self {
-            normalization: false,
+            normalization: true,
             volume: 0.5,
         }
     }
