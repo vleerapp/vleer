@@ -7,7 +7,7 @@ use crate::{
     data::{
         config::Config,
         db::{Database, create_pool},
-        scan::{MusicScanner, MusicWatcher, expand_scan_paths},
+        scan::Scanner,
     },
     media::{playback::Playback, queue::Queue},
     ui::{
@@ -213,6 +213,7 @@ pub async fn run() -> anyhow::Result<()> {
             Queue::init(cx);
             Variables::init(cx);
             State::init(cx);
+            Scanner::init(cx);
 
             find_fonts(cx)
                 .inspect_err(|e| error!(?e, "Failed to load fonts"))
@@ -227,73 +228,6 @@ pub async fn run() -> anyhow::Result<()> {
                 }
                 std::result::Result::Err(e) => {
                     error!("Failed to setup media keys: {}", e);
-                }
-            }
-
-            // path scan setup
-            let config = cx.global::<Config>();
-            let scan_paths = expand_scan_paths(&config.get().scan.paths);
-            let db = cx.global::<Database>().clone();
-            let state = cx.global::<State>().clone();
-            let covers_dir = data_dir.join("covers");
-
-            let scanner = std::sync::Arc::new(MusicScanner::new(scan_paths, covers_dir));
-            let scanner_clone = scanner.clone();
-
-            match MusicWatcher::new(scanner.clone(), std::sync::Arc::new(db.clone())) {
-                std::result::Result::Ok((watcher, mut rx)) => {
-                    let state_clone = state.clone();
-                    let db_clone = db.clone();
-
-                    tokio::spawn(async move {
-                        let _watcher = watcher;
-                        while let Some(stats) = rx.recv().await {
-                            info!(
-                                "Library scan completed - Added: {}, Updated: {}, Removed: {}",
-                                stats.added, stats.updated, stats.removed
-                            );
-
-                            if let std::result::Result::Ok(db_songs) =
-                                db_clone.get_all_songs().await
-                            {
-                                if let std::result::Result::Ok(hydrated_songs) =
-                                    db_clone.hydrate(db_songs).await
-                                {
-                                    state_clone.set_songs(hydrated_songs).await;
-                                    debug!("State updated after scan");
-                                }
-                            }
-                        }
-                    });
-
-                    let db_clone = cx.global::<Database>().clone();
-                    let state_clone = state.clone();
-                    tokio::spawn(async move {
-                        info!("Starting initial library scan...");
-                        if let std::result::Result::Ok(stats) =
-                            scanner_clone.scan_and_save(&db_clone).await
-                        {
-                            info!(
-                                "Initial scan complete - Added: {}, Updated: {}, Removed: {}",
-                                stats.added, stats.updated, stats.removed
-                            );
-
-                            if stats.added > 0 || stats.updated > 0 || stats.removed > 0 {
-                                if let std::result::Result::Ok(db_songs) =
-                                    db_clone.get_all_songs().await
-                                {
-                                    if let std::result::Result::Ok(hydrated_songs) =
-                                        db_clone.hydrate(db_songs).await
-                                    {
-                                        state_clone.set_songs(hydrated_songs).await;
-                                    }
-                                }
-                            }
-                        }
-                    });
-                }
-                Err(e) => {
-                    tracing::error!("Failed to initialize music watcher: {}", e);
                 }
             }
 
