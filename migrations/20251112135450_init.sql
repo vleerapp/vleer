@@ -41,6 +41,15 @@ CREATE TABLE IF NOT EXISTS playlists (
     date_updated TEXT DEFAULT (DATETIME('now')),
     date_created TEXT DEFAULT (DATETIME('now'))
 );
+CREATE TABLE IF NOT EXISTS playlist_tracks (
+    id TEXT PRIMARY KEY,
+    playlist_id TEXT NOT NULL,
+    song_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    date_added TEXT DEFAULT (DATETIME('now')),
+    FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE,
+    FOREIGN KEY (song_id) REFERENCES songs(id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS events (
     id TEXT PRIMARY KEY,
     event_type TEXT CHECK(
@@ -71,3 +80,5 @@ CREATE INDEX IF NOT EXISTS idx_event_contexts_playlist ON event_contexts(playlis
 CREATE INDEX IF NOT EXISTS idx_songs_favorite ON songs(favorite);
 CREATE INDEX IF NOT EXISTS idx_albums_favorite ON albums(favorite);
 CREATE INDEX IF NOT EXISTS idx_artists_favorite ON artists(favorite);
+CREATE INDEX IF NOT EXISTS idx_playlist_tracks_playlist ON playlist_tracks(playlist_id);
+CREATE INDEX IF NOT EXISTS idx_playlist_tracks_song ON playlist_tracks(song_id);

@@ -57,6 +57,14 @@ pub mod db {
         pub favorite: bool,
         pub pinned: bool,
     }
+
+    #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+    pub struct PlaylistTrack {
+        pub id: Cuid,
+        pub playlist_id: Cuid,
+        pub song_id: Cuid,
+        pub position: i32,
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,6 +113,14 @@ pub struct Playlist {
     pub pinned: bool,
     pub date_updated: String,
     pub date_created: String,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct PlaylistTrack {
+    pub id: Cuid,
+    pub playlist: Playlist,
+    pub song: Song,
+    pub position: i32,
 }
 
 #[derive(Debug, FromRow, Serialize, Deserialize)]

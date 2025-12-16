@@ -324,6 +324,60 @@ impl Database {
         .await
     }
 
+    pub async fn add_song_to_playlist(
+        &self,
+        playlist_id: &Cuid,
+        song_id: &Cuid,
+        position: i32,
+    ) -> Result<Cuid, sqlx::Error> {
+        let id = Cuid::new();
+        sqlx::query(
+            "INSERT INTO playlist_tracks (id, playlist_id, song_id, position) VALUES (?, ?, ?, ?)",
+        )
+        .bind(&id)
+        .bind(playlist_id)
+        .bind(song_id)
+        .bind(position)
+        .execute(&self.pool)
+        .await?;
+        Ok(id)
+    }
+
+    pub async fn remove_song_from_playlist(
+        &self,
+        playlist_id: &Cuid,
+        song_id: &Cuid,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM playlist_tracks WHERE playlist_id = ? AND song_id = ?")
+            .bind(playlist_id)
+            .bind(song_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn get_playlist_tracks(
+        &self,
+        playlist_id: &Cuid,
+    ) -> Result<Vec<types::db::PlaylistTrack>, sqlx::Error> {
+        sqlx::query_as::<_, types::db::PlaylistTrack>(
+            "SELECT id, playlist_id, song_id, position FROM playlist_tracks WHERE playlist_id = ? ORDER BY position"
+        )
+        .bind(playlist_id)
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    pub async fn get_all_playlist_tracks(
+        &self,
+    ) -> Result<Vec<types::db::PlaylistTrack>, sqlx::Error> {
+        sqlx::query_as::<_, types::db::PlaylistTrack>(
+            "SELECT id, playlist_id, song_id, position FROM playlist_tracks ORDER BY position",
+        )
+        .fetch_all(&self.pool)
+        .await
+    }
+
     pub async fn insert_event(
         &self,
         event_type: crate::data::types::EventType,
@@ -379,73 +433,5 @@ impl Database {
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected())
-    }
-
-    pub async fn hydrate(&self, db_songs: Vec<types::db::Song>) -> Result<Vec<Song>, sqlx::Error> {
-        let db_artists = self.get_all_artists().await?;
-        let db_albums = self.get_all_albums().await?;
-
-        let mut artists: HashMap<Cuid, Arc<Artist>> = HashMap::new();
-        let mut albums: HashMap<Cuid, Arc<Album>> = HashMap::new();
-
-        for db_artist in db_artists {
-            let artist = Artist {
-                id: db_artist.id.clone(),
-                name: db_artist.name,
-                image: db_artist.image,
-                favorite: db_artist.favorite,
-                pinned: db_artist.pinned,
-            };
-            artists.insert(db_artist.id, Arc::new(artist));
-        }
-
-        for db_album in db_albums {
-            let artist = db_album
-                .artist
-                .as_ref()
-                .and_then(|id| artists.get(id).cloned());
-            let album = Album {
-                id: db_album.id.clone(),
-                title: db_album.title,
-                artist,
-                cover: db_album.cover,
-                favorite: db_album.favorite,
-                pinned: db_album.pinned,
-            };
-            albums.insert(db_album.id, Arc::new(album));
-        }
-
-        let songs: Vec<Song> = db_songs
-            .into_iter()
-            .map(|db_song| {
-                let artist = db_song
-                    .artist_id
-                    .as_ref()
-                    .and_then(|id| artists.get(id).cloned());
-                let album = db_song
-                    .album_id
-                    .as_ref()
-                    .and_then(|id| albums.get(id).cloned());
-
-                Song {
-                    id: db_song.id,
-                    title: db_song.title,
-                    artist,
-                    album,
-                    file_path: db_song.file_path,
-                    genre: db_song.genre,
-                    date: db_song.date,
-                    duration: db_song.duration,
-                    cover: db_song.cover,
-                    track_number: db_song.track_number,
-                    favorite: db_song.favorite,
-                    track_lufs: db_song.track_lufs,
-                    pinned: db_song.pinned,
-                    date_added: db_song.date_added,
-                }
-            })
-            .collect();
-
-        Ok(songs)
     }
 }
