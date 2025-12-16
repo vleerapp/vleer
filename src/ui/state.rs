@@ -2,8 +2,10 @@ use gpui::{App, Global};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::info;
 
-use crate::data::config::SettingsConfig;
+use crate::data::config::{Config, SettingsConfig};
+use crate::data::db::Database;
 use crate::data::types::{Album, Artist, Cuid, Playlist, Song};
 use crate::ui::views::AppView;
 
@@ -47,6 +49,26 @@ impl State {
 
     pub fn init(cx: &mut App) {
         cx.set_global(Self::new());
+        State::prepare(cx);
+    }
+
+    pub fn prepare(cx: &mut App) {
+        let config = cx.global::<Config>().clone();
+        let state = cx.global::<State>().clone();
+        tokio::spawn(async move {
+            state.set_config(config.clone().get().clone()).await;
+        });
+
+        let db = cx.global::<Database>().clone();
+        let state = cx.global::<State>().clone();
+        tokio::spawn(async move {
+            let songs = db.get_all_songs().await;
+            let hydrated_songs = db.hydrate(songs.expect("Failed to hydrate songs")).await;
+            state
+                .set_songs(hydrated_songs.expect("Failed to populate hydrated songs to state"))
+                .await;
+        });
+        info!("Sucessfully prepared state");
     }
 
     pub async fn get_current_view(&self) -> AppView {
@@ -207,6 +229,49 @@ impl State {
         let id = playlist.id.clone();
         inner.playlist_ids.push(id.clone());
         inner.playlists.insert(id, Arc::new(playlist));
+    }
+
+    pub fn get_pinned_items_sync(&self) -> Vec<(String, Option<String>, String)> {
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let inner = self.inner.read().await;
+                let mut items = Vec::new();
+
+                for artist in inner.artists.values() {
+                    if artist.pinned {
+                        items.push((
+                            artist.name.clone(),
+                            artist.image.clone(),
+                            "Artist".to_string(),
+                        ));
+                    }
+                }
+                for album in inner.albums.values() {
+                    if album.pinned {
+                        items.push((
+                            album.title.clone(),
+                            album.cover.clone(),
+                            "Album".to_string(),
+                        ));
+                    }
+                }
+                for playlist in inner.playlists.values() {
+                    if playlist.pinned {
+                        items.push((
+                            playlist.name.clone(),
+                            playlist.image.clone(),
+                            "Playlist".to_string(),
+                        ));
+                    }
+                }
+                for song in inner.songs.values() {
+                    if song.pinned {
+                        items.push((song.title.clone(), song.cover.clone(), "Song".to_string()));
+                    }
+                }
+                items
+            })
+        })
     }
 }
 

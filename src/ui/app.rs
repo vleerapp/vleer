@@ -12,7 +12,10 @@ use crate::{
     media::{playback::Playback, queue::Queue},
     ui::{
         assets::VleerAssetSource,
-        components::div::{flex_col, flex_row},
+        components::{
+            div::{flex_col, flex_row},
+            input::bind_input_keys,
+        },
         global_actions::register_actions,
         layout::{library::Library, navbar::Navbar, player::Player},
         media_keys::MediaKeyHandler,
@@ -215,6 +218,7 @@ pub async fn run() -> anyhow::Result<()> {
                 .inspect_err(|e| error!(?e, "Failed to load fonts"))
                 .ok();
             register_actions(cx);
+            bind_input_keys(cx);
 
             match MediaKeyHandler::new(cx) {
                 std::result::Result::Ok(_handler) => {
@@ -225,23 +229,6 @@ pub async fn run() -> anyhow::Result<()> {
                     error!("Failed to setup media keys: {}", e);
                 }
             }
-
-            // populate state
-            let config = cx.global::<Config>().clone();
-            let state = cx.global::<State>().clone();
-            tokio::spawn(async move {
-                state.set_config(config.clone().get().clone()).await;
-            });
-
-            let db = cx.global::<Database>().clone();
-            let state = cx.global::<State>().clone();
-            tokio::spawn(async move {
-                let songs = db.get_all_songs().await;
-                let hydrated_songs = db.hydrate(songs.expect("Failed to hydrate songs")).await;
-                state
-                    .set_songs(hydrated_songs.expect("Failed to populate hydrated songs to state"))
-                    .await;
-            });
 
             // path scan setup
             let config = cx.global::<Config>();
@@ -330,7 +317,7 @@ pub async fn run() -> anyhow::Result<()> {
                         let views = ViewRegistry::register_all(window, cx);
 
                         MainWindow {
-                            library: cx.new(|_cx| Library::new()),
+                            library: cx.new(|cx| Library::new(cx)),
                             navbar: cx.new(|_cx| Navbar::new()),
                             player: cx.new(|_cx| Player::new()),
                             views,
