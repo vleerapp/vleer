@@ -8,7 +8,7 @@ use crate::media::playback::Playback;
 use crate::media::queue::Queue;
 use crate::ui::components::div::{flex_col, flex_row};
 use crate::ui::components::icons::icon::icon;
-use crate::ui::components::icons::icons::{ARROW_DOWN, ARROW_UP, DURATION};
+use crate::ui::components::icons::icons::{ARROW_DOWN, ARROW_UP, DURATION, PLAY};
 use crate::ui::components::scrollbar::{Scrollbar, ScrollbarAxis};
 use crate::ui::state::State;
 use crate::ui::variables::Variables;
@@ -167,6 +167,7 @@ impl Render for SongTableItem {
         let mut row = flex_row()
             .w_full()
             .id(element_id)
+            .group("song-row")
             .items_center()
             .gap(px(variables.padding_8))
             .px(px(variables.padding_8))
@@ -184,7 +185,6 @@ impl Render for SongTableItem {
         if let Some(data) = &self.data {
             for column in SongColumn::ALL {
                 let size = column.size(self.number_width, self.duration_width);
-
                 let mut column_div = div();
 
                 match size {
@@ -209,6 +209,7 @@ impl Render for SongTableItem {
                                 .size(px(image_size))
                                 .flex_shrink_0()
                                 .bg(variables.element)
+                                .relative()
                                 .when_some(data.cover_uri.clone(), |div, image| {
                                     div.child(
                                         img(image)
@@ -216,6 +217,18 @@ impl Render for SongTableItem {
                                             .object_fit(ObjectFit::Cover),
                                     )
                                 })
+                                .child(
+                                    div()
+                                        .absolute()
+                                        .inset_0()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .bg(black().opacity(0.5))
+                                        .invisible()
+                                        .group_hover("song-row", |s| s.visible())
+                                        .child(icon(PLAY).size(px(16.0)).text_color(white())),
+                                )
                                 .cursor_pointer()
                                 .on_mouse_down(MouseButton::Left, {
                                     let items = items.clone();
@@ -250,9 +263,7 @@ impl Render for SongTableItem {
                                                             },
                                                         );
 
-                                                        if let Err(e) =
-                                                            Playback::play_queue(cx)
-                                                        {
+                                                        if let Err(e) = Playback::play_queue(cx) {
                                                             tracing::error!(
                                                                 "Failed to start playback: {}",
                                                                 e
