@@ -1,17 +1,26 @@
+mod albums;
+mod artists;
 mod home;
+mod playlists;
 mod settings;
 mod songs;
 
 use gpui::*;
 use std::collections::HashMap;
 
-use crate::ui::views::{home::HomeView, settings::SettingsView, songs::SongsView};
+use crate::ui::views::{
+    albums::AlbumsView, artists::ArtistsView, home::HomeView, playlists::PlaylistsView,
+    settings::SettingsView, songs::SongsView,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AppView {
     Home,
     Songs,
     Settings,
+    Albums,
+    Artists,
+    Playlists,
 }
 
 impl Default for AppView {
@@ -44,6 +53,21 @@ impl ViewRegistry {
             cx.new(|cx| SettingsView::new(window, cx)).into(),
         );
 
+        views.insert(
+            AppView::Albums,
+            cx.new(|cx| AlbumsView::new(window, cx)).into(),
+        );
+
+        views.insert(
+            AppView::Artists,
+            cx.new(|cx| ArtistsView::new(window, cx)).into(),
+        );
+
+        views.insert(
+            AppView::Playlists,
+            cx.new(|cx| PlaylistsView::new(window, cx)).into(),
+        );
+
         views
     }
 
@@ -65,6 +89,27 @@ impl ViewRegistry {
             }
             AppView::Settings => {
                 if let Ok(entity) = view.clone().downcast::<SettingsView>() {
+                    entity.update(cx, |v, cx| {
+                        v.set_hovered(hovered, cx);
+                    });
+                }
+            }
+            AppView::Albums => {
+                if let Ok(entity) = view.clone().downcast::<AlbumsView>() {
+                    entity.update(cx, |v, cx| {
+                        v.set_hovered(hovered, cx);
+                    });
+                }
+            }
+            AppView::Artists => {
+                if let Ok(entity) = view.clone().downcast::<ArtistsView>() {
+                    entity.update(cx, |v, cx| {
+                        v.set_hovered(hovered, cx);
+                    });
+                }
+            }
+            AppView::Playlists => {
+                if let Ok(entity) = view.clone().downcast::<PlaylistsView>() {
                     entity.update(cx, |v, cx| {
                         v.set_hovered(hovered, cx);
                     });
