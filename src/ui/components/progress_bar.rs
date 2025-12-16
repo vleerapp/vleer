@@ -265,7 +265,10 @@ impl Element for ProgressSlider {
 
         let text_width = unfilled_layout
             .as_ref()
-            .map_or(px(0.0), |layout| layout.width);
+            .map(|layout| layout.width)
+            .or_else(|| filled_layout.as_ref().map(|layout| layout.width))
+            .unwrap_or(px(0.0));
+
         let text_x = bounds.origin.x + (bounds.size.width - text_width) / 2.0;
         let text_y = bounds.origin.y + (bounds.size.height - px(14.0)) / 2.0;
         let text_origin = Point {
