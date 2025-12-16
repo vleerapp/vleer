@@ -1,10 +1,16 @@
 use gpui::prelude::FluentBuilder;
 use gpui::*;
+use std::sync::Arc;
 
+use crate::data::types::{Cuid, Song};
+use crate::media::playback::Playback;
+use crate::media::queue::Queue;
+
+use crate::ui::components::icons::icon::icon;
 use crate::ui::{
     components::{
         div::flex_col,
-        icons::icons,
+        icons::icons::{self, PLAY},
         input::{InputEvent, TextInput},
         nav_button::NavButton,
         title::Title,
@@ -45,12 +51,15 @@ impl Library {
 }
 
 fn pinned_item(
+    id: Cuid,
     name: String,
     image_hash: Option<String>,
     item_type: String,
     variables: &Variables,
 ) -> impl IntoElement {
     let is_artist = item_type == "Artist";
+    let item_type_clone = item_type.clone();
+    let id_clone = id.clone();
 
     let covers_dir = dirs::data_dir()
         .expect("couldn't get data directory")
@@ -77,6 +86,7 @@ fn pinned_item(
 
     div()
         .flex()
+        .group("pinned-item")
         .items_center()
         .bg(variables.element)
         .gap(px(variables.padding_8))
@@ -85,7 +95,66 @@ fn pinned_item(
             div()
                 .size(px(36.0))
                 .map(|this| if is_artist { this.rounded_full() } else { this })
-                .child(cover_element),
+                .relative()
+                .child(cover_element)
+                .when(!is_artist, |this| {
+                    this.child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .bg(black().opacity(0.5))
+                            .invisible()
+                            .group_hover("pinned-item", |s| s.visible())
+                            .child(icon(PLAY).size(px(16.0)).text_color(white()))
+                            .cursor_pointer()
+                            .on_mouse_down(MouseButton::Left, move |_event, _window, cx| {
+                                let item_type = item_type_clone.clone();
+                                let id = id_clone.clone();
+                                let state = cx.global::<State>().clone();
+
+                                cx.spawn(move |cx: &mut gpui::AsyncApp| {
+                                    let cx = cx.clone();
+                                    async move {
+                                        let songs: Vec<Arc<Song>> = match item_type.as_str() {
+                                            "Album" => {
+                                                state.get_album_songs(&id).await.unwrap_or_default()
+                                            }
+                                            "Playlist" => state
+                                                .get_playlist_songs(&id)
+                                                .await
+                                                .unwrap_or_default(),
+                                            "Song" => state
+                                                .get_song(&id)
+                                                .await
+                                                .map(|s| vec![s])
+                                                .unwrap_or_default(),
+                                            _ => Vec::new(),
+                                        };
+
+                                        if !songs.is_empty() {
+                                            cx.update(|cx| {
+                                                cx.update_global::<Queue, _>(|queue, _cx| {
+                                                    queue.clear_and_queue_songs(&songs);
+                                                });
+
+                                                if let Err(e) = Playback::play_queue(cx) {
+                                                    tracing::error!(
+                                                        "Failed to start playback: {}",
+                                                        e
+                                                    );
+                                                }
+                                            })
+                                            .ok();
+                                        }
+                                    }
+                                })
+                                .detach();
+                            }),
+                    )
+                }),
         )
         .child(
             div()
@@ -154,8 +223,8 @@ impl Render for Library {
                                 .border_t(px(1.0))
                                 .border_color(variables.border)
                                 .children(pinned_items.into_iter().map(
-                                    |(name, cover, item_type)| {
-                                        pinned_item(name, cover, item_type, variables)
+                                    |(id, name, cover, item_type)| {
+                                        pinned_item(id, name, cover, item_type, variables)
                                     },
                                 )),
                         )
