@@ -157,13 +157,13 @@ impl Render for MainWindow {
             );
 
         let text_styles = element.text_style();
-        *text_styles = Some(TextStyleRefinement {
+        *text_styles = TextStyleRefinement {
             color: Some(Hsla::from(variables.text)),
             font_family: Some(SharedString::new("Feature Mono")),
             font_size: Some(AbsoluteLength::Pixels(px(14.0))),
             line_height: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(14.0)))),
             ..Default::default()
-        });
+        };
 
         element
     }

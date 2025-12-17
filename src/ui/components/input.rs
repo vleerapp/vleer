@@ -210,7 +210,7 @@ impl TextInput {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.focus_handle.focus(window);
+        self.focus_handle.focus(window, cx);
 
         self.is_selecting = true;
         if event.modifiers.shift {
