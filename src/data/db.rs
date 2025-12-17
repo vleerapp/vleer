@@ -1,6 +1,4 @@
-use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
 
 use gpui::{App, Global};
 use sqlx::{
@@ -9,7 +7,7 @@ use sqlx::{
 };
 use tracing::debug;
 
-use crate::data::types::{self, Album, Artist, Cuid, EventContext, Playlist, Song};
+use crate::data::types::{self, Cuid, EventContext, Playlist};
 
 pub async fn create_pool(path: impl AsRef<Path>) -> Result<SqlitePool, sqlx::Error> {
     debug!("Creating database pool at {:?}", path.as_ref());
