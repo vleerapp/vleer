@@ -8,9 +8,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::debug;
 
-use super::queue::Queue;
-
 use super::equalizer::{Equalizer, EqualizerSource};
+use super::queue::Queue;
 use crate::data::config::Config;
 
 const LOG_VOLUME_GROWTH_RATE: f32 = 6.908;
@@ -19,8 +18,8 @@ const UNITY_GAIN: f32 = 1.0;
 const DEFAULT_TARGET_LUFS: f32 = -14.0;
 
 pub struct Playback {
-    _stream: Arc<OutputStream>,
-    sink: Arc<Sink>,
+    _stream: Option<OutputStream>,
+    sink: Option<Sink>,
     equalizer: Arc<Mutex<Equalizer>>,
     volume: f32,
     is_paused: bool,
@@ -34,17 +33,11 @@ impl Global for Playback {}
 
 impl Playback {
     pub fn new() -> Result<Self> {
-        let stream = OutputStreamBuilder::open_default_stream()
-            .context("Failed to open default audio output stream")?;
-
-        let sink = Sink::connect_new(&stream.mixer());
-        sink.pause();
-
         let equalizer = Arc::new(Mutex::new(Equalizer::new(44100, 2)));
 
         Ok(Self {
-            _stream: Arc::new(stream),
-            sink: Arc::new(sink),
+            _stream: None,
+            sink: None,
             equalizer,
             volume: 0.5,
             is_paused: true,
@@ -57,10 +50,8 @@ impl Playback {
 
     pub fn init(cx: &mut App) -> Result<()> {
         let mut context = Self::new()?;
-
         let settings = cx.global::<Config>();
         context.apply_settings(settings);
-
         cx.set_global(context);
         Ok(())
     }
@@ -76,7 +67,6 @@ impl Playback {
 
         let file =
             File::open(path).with_context(|| format!("Failed to open audio file: {:?}", path))?;
-
         let source = Decoder::new(BufReader::new(file)).context("Failed to decode audio file")?;
 
         let sample_rate = source.sample_rate();
@@ -84,27 +74,38 @@ impl Playback {
 
         debug!("Audio file info: {}Hz, {} channels", sample_rate, channels);
 
+        let builder = OutputStreamBuilder::from_default_device()
+            .context("Failed to create output stream builder")?;
+
+        let stream = builder
+            .with_sample_rate(sample_rate)
+            .open_stream()
+            .context("Failed to open output stream with custom sample rate")?;
+
+        let sink = Sink::connect_new(stream.mixer());
+
         *self.equalizer.lock().unwrap() =
             Equalizer::from_settings(sample_rate, &settings.get().equalizer);
 
         self.current_track_lufs = track_lufs;
         self.normalization_enabled = settings.get().audio.normalization;
 
-        self.sink.stop();
-
         let eq_source = EqualizerSource::new(source, self.equalizer.clone());
-
         let gain = self.calculate_normalization_gain();
         let normalized = eq_source.amplify(gain);
 
-        self.sink.append(normalized);
-        self.sink.set_volume(Self::log_volume(self.volume));
+        sink.append(normalized);
+        sink.set_volume(Self::log_volume(self.volume));
+        sink.pause();
+
+        self._stream = Some(stream);
+        self.sink = Some(sink);
 
         self.position = 0.0;
         self.current_file = Some(path.to_string_lossy().to_string());
         self.is_paused = true;
 
-        debug!("Successfully loaded audio file");
+        debug!("Successfully loaded audio file with rate: {}", sample_rate);
         Ok(())
     }
 
@@ -127,17 +128,21 @@ impl Playback {
 
     pub fn play(&mut self) {
         if self.is_paused {
-            self.sink.play();
-            self.is_paused = false;
-            debug!("Playback started");
+            if let Some(sink) = &self.sink {
+                sink.play();
+                self.is_paused = false;
+                debug!("Playback started");
+            }
         }
     }
 
     pub fn pause(&mut self) {
         if !self.is_paused {
-            self.sink.pause();
-            self.is_paused = true;
-            debug!("Playback paused");
+            if let Some(sink) = &self.sink {
+                sink.pause();
+                self.is_paused = true;
+                debug!("Playback paused");
+            }
         }
     }
 
@@ -152,7 +157,10 @@ impl Playback {
     pub fn set_volume(&mut self, vol: f32) {
         self.volume = vol.clamp(0.0, 1.0);
         let actual_vol = Self::log_volume(self.volume);
-        self.sink.set_volume(actual_vol);
+
+        if let Some(sink) = &self.sink {
+            sink.set_volume(actual_vol);
+        }
         debug!(
             "Volume set to {:.2} (actual: {:.2})",
             self.volume, actual_vol
@@ -162,8 +170,7 @@ impl Playback {
     fn log_volume(volume: f32) -> f32 {
         let mut amplitude = volume;
         if amplitude > 0.0 && amplitude < UNITY_GAIN {
-            amplitude =
-                f32::exp(LOG_VOLUME_GROWTH_RATE * volume) / LOG_VOLUME_SCALE_FACTOR;
+            amplitude = f32::exp(LOG_VOLUME_GROWTH_RATE * volume) / LOG_VOLUME_SCALE_FACTOR;
             if volume < 0.1 {
                 amplitude *= volume * 10.0;
             }
@@ -286,33 +293,41 @@ impl Playback {
             source.try_seek(Duration::from_secs_f32(position)).ok();
 
             let eq_source = EqualizerSource::new(source, self.equalizer.clone());
-
             let gain = self.calculate_normalization_gain();
             let normalized = eq_source.amplify(gain);
 
-            self.sink.stop();
-            self.sink.append(normalized);
-            self.sink.set_volume(Self::log_volume(self.volume));
+            if let Some(sink) = &self.sink {
+                sink.stop();
+                sink.append(normalized);
+                sink.set_volume(Self::log_volume(self.volume));
 
-            self.position = position;
-
-            if was_playing {
-                self.sink.play();
-                self.is_paused = false;
-            } else {
-                self.sink.pause();
-                self.is_paused = true;
+                if was_playing {
+                    sink.play();
+                    self.is_paused = false;
+                } else {
+                    sink.pause();
+                    self.is_paused = true;
+                }
             }
+            self.position = position;
         }
         Ok(())
     }
 
     pub fn get_position(&self) -> f32 {
-        self.position + self.sink.get_pos().as_secs_f32()
+        if let Some(sink) = &self.sink {
+            self.position + sink.get_pos().as_secs_f32()
+        } else {
+            0.0
+        }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.sink.empty()
+        if let Some(sink) = &self.sink {
+            sink.empty()
+        } else {
+            true
+        }
     }
 
     pub fn start_playback_monitor<T: 'static>(window: &Window, cx: &mut gpui::Context<T>) {
