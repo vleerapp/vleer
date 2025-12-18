@@ -96,13 +96,13 @@ jobs:
           vc_commit_sha: ${{ github.sha }}
           vc_commit_url: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
 
-      - name: Upload EXE to Buildstash
+      - name: Upload MSI to Buildstash
         if: runner.os == 'Windows'
         uses: Buildstash/upload-to-buildstash@v1.3.0
         with:
           api_key: ${{ secrets.BUILDSTASH_API_KEY }}
           structure: "file"
-          primary_file_path: target/release/bundles/vleer_${{ steps.version.outputs.full }}_x64-setup.exe
+          primary_file_path: target/release/bundles/vleer_${{ steps.version.outputs.full }}_x64-setup.msi
 
           version_component_1_major: ${{ steps.version.outputs.major }}
           version_component_2_minor: ${{ steps.version.outputs.minor }}
