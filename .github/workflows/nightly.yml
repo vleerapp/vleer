@@ -102,7 +102,7 @@ jobs:
         with:
           api_key: ${{ secrets.BUILDSTASH_API_KEY }}
           structure: "file"
-          primary_file_path: target/release/bundles/vleer_${{ steps.version.outputs.full }}_x64-setup.msi
+          primary_file_path: target/release/bundles/vleer_${{ steps.version.outputs.full }}_x64_en-US.msi
 
           version_component_1_major: ${{ steps.version.outputs.major }}
           version_component_2_minor: ${{ steps.version.outputs.minor }}
