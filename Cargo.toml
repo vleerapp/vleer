@@ -1,7 +1,13 @@
 [package]
 name = "vleer"
+description = "Music, but without the subscription."
 version = "0.1.0"
 edition = "2024"
+authors = ["PandaDEV <hello@pandadev.net>"]
+homepage = "https://vleer.app"
+repository = "https://github.com/vleerapp/vleer"
+license = "AGPL-3.0"
+categories = ["multimedia::audio"]
 
 [dependencies]
 gpui = { git = "https://github.com/zed-industries/zed" }
@@ -37,7 +43,12 @@ global-hotkey = "0.7.0"
 
 [package.metadata.packager]
 product_name = "Vleer"
+description = "Music, but without the subscription."
+authors = ["PandaDEV <hello@pandadev.net>"]
+homepage = "https://vleer.app"
+category = "Music"
 identifier = "app.vleerapp.vleer"
 before_packaging_command = "cargo build --release"
 icons = ["assets/images/icon.png", "assets/images/icon.icns"]
 out_dir = "target/release/bundles"
+formats = ["all"]
