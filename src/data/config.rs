@@ -6,7 +6,7 @@ use gpui::{App, BorrowAppContext, Global};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-use crate::ui::state::State;
+use crate::data::state::State;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EqualizerSettings {
@@ -59,6 +59,7 @@ impl Default for AudioSettings {
 pub struct SettingsConfig {
     #[serde(default = "default_version")]
     pub version: u32,
+    pub telemetry: bool,
     pub equalizer: EqualizerSettings,
     pub scan: ScanSettings,
     pub audio: AudioSettings,
@@ -72,6 +73,7 @@ impl Default for SettingsConfig {
     fn default() -> Self {
         Self {
             version: default_version(),
+            telemetry: true,
             equalizer: EqualizerSettings::default(),
             scan: ScanSettings::default(),
             audio: AudioSettings::default(),
@@ -146,10 +148,6 @@ impl Config {
                 "Migrating config from version {} to {}",
                 config.version, CURRENT_VERSION
             );
-
-            // if config.version < 2 {
-            //
-            // }
 
             config.version = CURRENT_VERSION;
         }

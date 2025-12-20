@@ -14,7 +14,8 @@ use walkdir::WalkDir;
 use crate::data::config::Config;
 use crate::data::db::Database;
 use crate::data::metadata::{AudioMetadata, extract_and_save_cover};
-use crate::ui::state::State;
+use crate::data::state::State;
+use crate::data::telemetry::Telemetry;
 
 const SUPPORTED_EXTENSIONS: &[&str] = &["mp3", "flac", "ogg", "m4a", "aac", "wav", "mp1", "mp2"];
 const MAX_CONCURRENT_SCANS: usize = 16;
@@ -55,9 +56,10 @@ impl Scanner {
     }
 
     pub fn init(cx: &mut App) {
-        let config = cx.global::<Config>();
+        let config = cx.global::<Config>().clone();
         let db = cx.global::<Database>().clone();
         let state = cx.global::<State>().clone();
+        let telemetry = cx.global::<Telemetry>().clone();
 
         let data_dir = dirs::data_dir()
             .expect("couldn't get data directory")
@@ -76,6 +78,8 @@ impl Scanner {
             Ok((watcher, mut rx)) => {
                 let state_clone = state.clone();
                 let db_clone = db.clone();
+                let telemetry_clone = telemetry.clone();
+                let config_clone = config.clone();
 
                 tokio::spawn(async move {
                     let _watcher = watcher;
@@ -88,11 +92,15 @@ impl Scanner {
                         if stats.added > 0 || stats.updated > 0 || stats.removed > 0 {
                             State::refresh(&db_clone, &state_clone).await;
                         }
+
+                        telemetry_clone.submit(&state_clone, &config_clone).await;
                     }
                 });
 
                 let db_clone = db.clone();
                 let state_clone = state.clone();
+                let telemetry_clone = telemetry.clone();
+                let config_clone = config.clone();
 
                 tokio::spawn(async move {
                     info!("Starting initial library scan...");
@@ -103,9 +111,8 @@ impl Scanner {
                                 stats.added, stats.updated, stats.removed
                             );
 
-                            if stats.added > 0 || stats.updated > 0 || stats.removed > 0 {
-                                State::refresh(&db_clone, &state_clone).await;
-                            }
+                            State::refresh(&db_clone, &state_clone).await;
+                            telemetry_clone.submit(&state_clone, &config_clone).await;
                         }
                         Err(e) => {
                             error!("Initial scan failed: {}", e);
