@@ -1,8 +1,10 @@
-use crate::ui::{
-    components::{div::flex_row, icons::icon::icon},
-    state::State,
-    variables::Variables,
-    views::AppView,
+use crate::{
+    data::state::State,
+    ui::{
+        components::{div::flex_row, icons::icon::icon},
+        variables::Variables,
+        views::AppView,
+    },
 };
 use gpui::prelude::FluentBuilder;
 use gpui::*;

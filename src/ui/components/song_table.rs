@@ -10,7 +10,7 @@ use crate::ui::components::div::{flex_col, flex_row};
 use crate::ui::components::icons::icon::icon;
 use crate::ui::components::icons::icons::{ARROW_DOWN, ARROW_UP, DURATION, PLAY};
 use crate::ui::components::scrollbar::{Scrollbar, ScrollbarAxis};
-use crate::ui::state::State;
+use crate::data::state::State;
 use crate::ui::variables::Variables;
 
 #[derive(Clone, Copy, Debug, PartialEq)]

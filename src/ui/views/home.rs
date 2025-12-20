@@ -5,7 +5,7 @@ use gpui::{prelude::FluentBuilder, *};
 use std::collections::HashMap;
 
 use crate::{
-    data::types::Song,
+    data::{state::State, types::Song},
     ui::{
         components::{
             div::{flex_col, flex_row},
@@ -15,7 +15,6 @@ use crate::{
             },
             title::Title,
         },
-        state::State,
         variables::Variables,
         views::HoverableView,
     },

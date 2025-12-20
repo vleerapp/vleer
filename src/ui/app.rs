@@ -8,6 +8,7 @@ use crate::{
         config::Config,
         db::{Database, create_pool},
         scan::Scanner,
+        state::State, telemetry::Telemetry,
     },
     media::{playback::Playback, queue::Queue},
     ui::{
@@ -19,7 +20,6 @@ use crate::{
         global_actions::register_actions,
         layout::{library::Library, navbar::Navbar, player::Player},
         media_keys::MediaKeyHandler,
-        state::State,
         variables::Variables,
         views::{AppView, ViewRegistry},
     },
@@ -212,6 +212,7 @@ pub async fn run() -> anyhow::Result<()> {
             Playback::init(cx).expect("unable to initizalize playback context");
             Queue::init(cx);
             Variables::init(cx);
+            Telemetry::init(cx, data_dir.clone());
             State::init(cx);
             Scanner::init(cx);
 

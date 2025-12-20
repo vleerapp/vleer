@@ -3,9 +3,9 @@
     windows_subsystem = "windows"
 )]
 
-mod ui;
 mod data;
 mod media;
+mod ui;
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();

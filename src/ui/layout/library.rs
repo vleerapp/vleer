@@ -2,6 +2,7 @@ use gpui::prelude::FluentBuilder;
 use gpui::*;
 use std::sync::Arc;
 
+use crate::data::state::State;
 use crate::data::types::{Cuid, Song};
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
@@ -15,7 +16,6 @@ use crate::ui::{
         nav_button::NavButton,
         title::Title,
     },
-    state::State,
     variables::Variables,
     views::AppView,
 };

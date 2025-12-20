@@ -3,14 +3,13 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::{
-    data::types::Cuid,
+    data::{state::State, types::Cuid},
     ui::{
         components::{
             div::flex_col,
             song_table::{SongColumn, SongEntry, SongTable, TableSort},
             title::Title,
         },
-        state::State,
         variables::Variables,
         views::HoverableView,
     },
