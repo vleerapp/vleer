@@ -26,14 +26,17 @@ impl MediaKeyHandler {
         }
     }
 
-    pub fn new(cx: &mut App, _window: &Window) -> Result<Self> {
+    pub fn new(cx: &mut App, window: &Window) -> Result<Self> {
         #[cfg(target_os = "linux")]
         let hwnd = None;
 
         #[cfg(target_os = "windows")]
         let hwnd = {
             use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-            match window.window_handle()?.as_raw() {
+            let handle_wrapper = HasWindowHandle::window_handle(window)
+                .map_err(|e| anyhow::anyhow!("Failed to get window handle: {}", e))?;
+
+            match handle_wrapper.as_raw() {
                 RawWindowHandle::Win32(handle) => Some(handle.hwnd.get() as *mut std::ffi::c_void),
                 _ => None,
             }
@@ -42,7 +45,10 @@ impl MediaKeyHandler {
         #[cfg(target_os = "macos")]
         let hwnd = {
             use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-            match window.window_handle()?.as_raw() {
+            let handle_wrapper = HasWindowHandle::window_handle(window)
+                .map_err(|e| anyhow::anyhow!("Failed to get window handle: {}", e))?;
+
+            match handle_wrapper.as_raw() {
                 RawWindowHandle::AppKit(handle) => {
                     Some(handle.ns_view.as_ptr() as *mut std::ffi::c_void)
                 }
