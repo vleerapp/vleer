@@ -43,8 +43,8 @@ fn quit(_: &Quit, cx: &mut App) {
 }
 
 fn play_pause(_: &PlayPause, cx: &mut App) {
-    cx.update_global::<Playback, _>(|playback, _cx| {
-        playback.play_pause();
+    cx.update_global::<Playback, _>(|playback, cx| {
+        playback.play_pause(cx);
     });
 }
 

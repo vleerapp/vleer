@@ -8,9 +8,10 @@ use crate::{
         config::Config,
         db::{Database, create_pool},
         scan::Scanner,
-        state::State, telemetry::Telemetry,
+        state::State,
+        telemetry::Telemetry,
     },
-    media::{playback::Playback, queue::Queue},
+    media::{media_keys::MediaKeyHandler, playback::Playback, queue::Queue},
     ui::{
         assets::VleerAssetSource,
         components::{
@@ -19,7 +20,6 @@ use crate::{
         },
         global_actions::register_actions,
         layout::{library::Library, navbar::Navbar, player::Player},
-        media_keys::MediaKeyHandler,
         variables::Variables,
         views::{AppView, ViewRegistry},
     },
@@ -222,16 +222,6 @@ pub async fn run() -> anyhow::Result<()> {
             register_actions(cx);
             bind_input_keys(cx);
 
-            match MediaKeyHandler::new(cx) {
-                std::result::Result::Ok(_handler) => {
-                    info!("Media key handler initialized");
-                    cx.set_global(_handler);
-                }
-                std::result::Result::Err(e) => {
-                    error!("Failed to setup media keys: {}", e);
-                }
-            }
-
             cx.open_window(
                 WindowOptions {
                     titlebar: Some(TitlebarOptions {
@@ -245,6 +235,8 @@ pub async fn run() -> anyhow::Result<()> {
                 },
                 |window, cx| {
                     window.set_window_title("Vleer");
+
+                    MediaKeyHandler::init(cx, window);
 
                     cx.new(|cx| {
                         Playback::start_playback_monitor(window, cx);
