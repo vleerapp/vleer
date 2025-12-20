@@ -292,7 +292,9 @@ impl Element for ProgressSlider {
                     bounds: filled_clip,
                 }),
                 |window| {
-                    filled_layout.paint(text_origin, px(14.0), window, cx).ok();
+                    filled_layout
+                        .paint(text_origin, px(14.0), TextAlign::Left, None, window, cx)
+                        .ok();
                 },
             );
         }
@@ -314,7 +316,7 @@ impl Element for ProgressSlider {
                 }),
                 |window| {
                     unfilled_layout
-                        .paint(text_origin, px(14.0), window, cx)
+                        .paint(text_origin, px(14.0), TextAlign::Left, None, window, cx)
                         .ok();
                 },
             );
