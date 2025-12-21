@@ -3,6 +3,7 @@ use rustc_hash::FxHashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::data::state::State;
 use crate::data::types::{Cuid, Song};
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
@@ -10,7 +11,6 @@ use crate::ui::components::div::{flex_col, flex_row};
 use crate::ui::components::icons::icon::icon;
 use crate::ui::components::icons::icons::{ARROW_DOWN, ARROW_UP, DURATION, PLAY};
 use crate::ui::components::scrollbar::{Scrollbar, ScrollbarAxis};
-use crate::data::state::State;
 use crate::ui::variables::Variables;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -284,9 +284,9 @@ impl Render for SongTableItem {
                                 .flex_1()
                                 .min_w_0()
                                 .gap(px(2.0))
+                                .items_start()
                                 .child(
                                     div()
-                                        .text_sm()
                                         .overflow_hidden()
                                         .text_ellipsis()
                                         .font_weight(FontWeight(500.0))
@@ -295,12 +295,26 @@ impl Render for SongTableItem {
                                 )
                                 .child(
                                     div()
+                                        .id(data.artist.clone())
                                         .text_color(variables.text_secondary)
                                         .overflow_hidden()
                                         .text_ellipsis()
+                                        .hover(|s| s.underline())
                                         .child(data.artist.clone()),
                                 ),
                         );
+                } else if matches!(column, SongColumn::Album) {
+                    column_div = column_div.items_start().child(
+                        div()
+                            .id(data.album.clone())
+                            .text_color(variables.text_secondary)
+                            .child(
+                                div()
+                                    .id(data.album.clone())
+                                    .child(data.album.clone())
+                                    .hover(|s| s.underline()),
+                            ),
+                    )
                 } else {
                     let value = if matches!(column, SongColumn::Number) {
                         self.row_number.to_string().into()
@@ -308,7 +322,6 @@ impl Render for SongTableItem {
                         data.get_column_value(column)
                     };
                     column_div = column_div
-                        .text_sm()
                         .text_color(variables.text_secondary)
                         .text_ellipsis()
                         .child(value);

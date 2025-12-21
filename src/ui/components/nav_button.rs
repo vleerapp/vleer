@@ -36,22 +36,34 @@ impl RenderOnce for NavButton {
         let icon_path = self.icon;
         let label = self.label;
 
-        let text_color = if is_active {
-            variables.text
+        let (default_color, hover_color) = if is_active {
+            (variables.text, variables.text)
         } else {
-            variables.text_secondary
+            (variables.text_secondary, variables.text)
+        };
+
+        let group_name = if let Some(ref txt) = label {
+            format!("nav_btn_{}", txt)
+        } else {
+            "nav_btn_icon_only".to_string()
         };
 
         flex_row()
+            .group(group_name.clone())
+            .id(group_name.clone())
             .items_center()
             .gap(px(variables.padding_8))
-            .text_color(text_color)
             .cursor_pointer()
-            .child(icon(icon_path).text_color(text_color))
+            .child(
+                icon(icon_path)
+                    .text_color(default_color)
+                    .group_hover(group_name.clone(), |s| s.text_color(hover_color)),
+            )
             .when_some(label, |this, label_text| {
-                this.child(div().child(label_text).hover(|s| s.underline()))
+                this.child(label_text.clone())
+                    .text_color(default_color)
+                    .group_hover(group_name.clone(), |s| s.text_color(hover_color))
             })
-            .hover(|s| s.text_color(variables.text))
             .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
                 let state = cx.global::<State>().clone();
                 state.set_current_view_sync(target_view);

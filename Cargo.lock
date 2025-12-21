@@ -193,7 +193,7 @@ dependencies = [
  "url",
  "wayland-backend",
  "wayland-client",
- "wayland-protocols 0.32.9",
+ "wayland-protocols",
  "zbus",
 ]
 
@@ -826,9 +826,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.49"
+version = "1.2.50"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90583009037521a116abf44494efecd645ba48b6622457080f080b85544e2215"
+checksum = "9f50d563227a1c37cc0a263f64eca3334388c01c5e4c4861a9def205c614383c"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -1004,7 +1004,7 @@ dependencies = [
 [[package]]
 name = "collections"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#cec46079fea8577c4b7bb6ad1f0e6f9a63bb7f2c"
+source = "git+https://github.com/errmayank/zed/?branch=gpui-hover-state#54c7d58598d311fe6c3ac0f4ad1e559391eb7989"
 dependencies = [
  "indexmap",
  "rustc-hash 2.1.1",
@@ -1515,7 +1515,7 @@ dependencies = [
 [[package]]
 name = "derive_refineable"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#cec46079fea8577c4b7bb6ad1f0e6f9a63bb7f2c"
+source = "git+https://github.com/errmayank/zed/?branch=gpui-hover-state#54c7d58598d311fe6c3ac0f4ad1e559391eb7989"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1701,7 +1701,7 @@ dependencies = [
  "cc",
  "memchr",
  "rustc_version",
- "toml 0.9.9+spec-1.0.0",
+ "toml 0.9.10+spec-1.1.0",
  "vswhom",
  "winreg",
 ]
@@ -2404,7 +2404,7 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "git+https://github.com/zed-industries/zed#cec46079fea8577c4b7bb6ad1f0e6f9a63bb7f2c"
+source = "git+https://github.com/errmayank/zed/?branch=gpui-hover-state#54c7d58598d311fe6c3ac0f4ad1e559391eb7989"
 dependencies = [
  "anyhow",
  "as-raw-xcb-connection",
@@ -2438,7 +2438,7 @@ dependencies = [
  "flume",
  "foreign-types 0.5.0",
  "futures",
- "gpui_macros",
+ "gpui_macros 0.1.0 (git+https://github.com/errmayank/zed/?branch=gpui-hover-state)",
  "http_client",
  "image",
  "inventory",
@@ -2486,13 +2486,13 @@ dependencies = [
  "wayland-backend",
  "wayland-client",
  "wayland-cursor",
- "wayland-protocols 0.31.2",
+ "wayland-protocols",
  "wayland-protocols-plasma",
  "wayland-protocols-wlr",
  "windows 0.61.3",
  "windows-core 0.61.2",
  "windows-numerics",
- "windows-registry",
+ "windows-registry 0.5.3",
  "x11-clipboard",
  "x11rb",
  "xkbcommon",
@@ -2504,7 +2504,18 @@ dependencies = [
 [[package]]
 name = "gpui_macros"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#cec46079fea8577c4b7bb6ad1f0e6f9a63bb7f2c"
+source = "git+https://github.com/errmayank/zed/?branch=gpui-hover-state#54c7d58598d311fe6c3ac0f4ad1e559391eb7989"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.111",
+]
+
+[[package]]
+name = "gpui_macros"
+version = "0.1.0"
+source = "git+https://github.com/zed-industries/zed#7f0842e3a64d5ad24937b0e74fb6afecd8236970"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -2685,7 +2696,7 @@ dependencies = [
 [[package]]
 name = "http_client"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#cec46079fea8577c4b7bb6ad1f0e6f9a63bb7f2c"
+source = "git+https://github.com/errmayank/zed/?branch=gpui-hover-state#54c7d58598d311fe6c3ac0f4ad1e559391eb7989"
 dependencies = [
  "anyhow",
  "async-compression",
@@ -2790,7 +2801,7 @@ dependencies = [
  "tokio",
  "tower-service",
  "tracing",
- "windows-registry",
+ "windows-registry 0.6.1",
 ]
 
 [[package]]
@@ -3492,7 +3503,7 @@ dependencies = [
 [[package]]
 name = "media"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#cec46079fea8577c4b7bb6ad1f0e6f9a63bb7f2c"
+source = "git+https://github.com/errmayank/zed/?branch=gpui-hover-state#54c7d58598d311fe6c3ac0f4ad1e559391eb7989"
 dependencies = [
  "anyhow",
  "bindgen",
@@ -3781,9 +3792,9 @@ checksum = "5e0826a989adedc2a244799e823aece04662b66609d96af8dff7ac6df9a8925d"
 
 [[package]]
 name = "ntapi"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8a3895c6391c39d7fe7ebc444a87eb2991b2a0bc718fdabd071eec617fc68e4"
+checksum = "c70f219e21142367c70c0b30c6a9e3a14d55b4d12a204d897fbec83a0363f081"
 dependencies = [
  "winapi",
 ]
@@ -4319,7 +4330,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "perf"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#cec46079fea8577c4b7bb6ad1f0e6f9a63bb7f2c"
+source = "git+https://github.com/errmayank/zed/?branch=gpui-hover-state#54c7d58598d311fe6c3ac0f4ad1e559391eb7989"
 dependencies = [
  "collections",
  "serde",
@@ -4680,9 +4691,9 @@ dependencies = [
 
 [[package]]
 name = "rangemap"
-version = "1.7.0"
+version = "1.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "acbbbbea733ec66275512d0b9694f34102e7d5406fdbe2ad8d21b28dce92887c"
+checksum = "973443cf09a9c8656b574a866ab68dfa19f0867d0340648c7d2f6a71b8a8ea68"
 
 [[package]]
 name = "rav1e"
@@ -4854,7 +4865,7 @@ dependencies = [
 [[package]]
 name = "refineable"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#cec46079fea8577c4b7bb6ad1f0e6f9a63bb7f2c"
+source = "git+https://github.com/errmayank/zed/?branch=gpui-hover-state#54c7d58598d311fe6c3ac0f4ad1e559391eb7989"
 dependencies = [
  "derive_refineable",
 ]
@@ -5941,7 +5952,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "sum_tree"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#cec46079fea8577c4b7bb6ad1f0e6f9a63bb7f2c"
+source = "git+https://github.com/errmayank/zed/?branch=gpui-hover-state#54c7d58598d311fe6c3ac0f4ad1e559391eb7989"
 dependencies = [
  "arrayvec",
  "log",
@@ -6608,14 +6619,14 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "0.9.9+spec-1.0.0"
+version = "0.9.10+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb5238e643fc34a1d5d7e753e1532a91912d74b63b92b3ea51fde8d1b7bc79dd"
+checksum = "0825052159284a1a8b4d6c0c86cbc801f2da5afd2b225fa548c72f2e74002f48"
 dependencies = [
  "indexmap",
  "serde_core",
  "serde_spanned 1.0.4",
- "toml_datetime 0.7.4+spec-1.0.0",
+ "toml_datetime 0.7.5+spec-1.1.0",
  "toml_parser",
  "toml_writer",
  "winnow",
@@ -6632,9 +6643,9 @@ dependencies = [
 
 [[package]]
 name = "toml_datetime"
-version = "0.7.4+spec-1.0.0"
+version = "0.7.5+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe3cea6b2aa3b910092f6abd4053ea464fab5f9c170ba5e9a6aead16ec4af2b6"
+checksum = "92e1cfed4a3038bc5a127e35a2d360f145e1f4b971b551a2ba5fd7aedf7e1347"
 dependencies = [
  "serde_core",
 ]
@@ -6660,16 +6671,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "84c8b9f757e028cee9fa244aea147aab2a9ec09d5325a9b01e0a49730c2b5269"
 dependencies = [
  "indexmap",
- "toml_datetime 0.7.4+spec-1.0.0",
+ "toml_datetime 0.7.5+spec-1.1.0",
  "toml_parser",
  "winnow",
 ]
 
 [[package]]
 name = "toml_parser"
-version = "1.0.5+spec-1.0.0"
+version = "1.0.6+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c03bee5ce3696f31250db0bbaff18bc43301ce0e8db2ed1f07cbb2acf89984c"
+checksum = "a3198b4b0a8e11f09dd03e133c0280504d0801269e9afa46362ffde1cbeebf44"
 dependencies = [
  "winnow",
 ]
@@ -6682,9 +6693,9 @@ checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
 
 [[package]]
 name = "toml_writer"
-version = "1.0.5+spec-1.0.0"
+version = "1.0.6+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9cd6190959dce0994aa8970cd32ab116d1851ead27e866039acaf2524ce44fa"
+checksum = "ab16f14aed21ee8bfd8ec22513f7287cd4a91aa92e44edfe2c17ddd004e92607"
 
 [[package]]
 name = "tower"
@@ -6997,7 +7008,7 @@ checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 [[package]]
 name = "util"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#cec46079fea8577c4b7bb6ad1f0e6f9a63bb7f2c"
+source = "git+https://github.com/errmayank/zed/?branch=gpui-hover-state#54c7d58598d311fe6c3ac0f4ad1e559391eb7989"
 dependencies = [
  "anyhow",
  "async-fs",
@@ -7033,7 +7044,7 @@ dependencies = [
 [[package]]
 name = "util_macros"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#cec46079fea8577c4b7bb6ad1f0e6f9a63bb7f2c"
+source = "git+https://github.com/errmayank/zed/?branch=gpui-hover-state#54c7d58598d311fe6c3ac0f4ad1e559391eb7989"
 dependencies = [
  "perf",
  "quote",
@@ -7128,7 +7139,7 @@ dependencies = [
  "futures",
  "global-hotkey",
  "gpui",
- "gpui_macros",
+ "gpui_macros 0.1.0 (git+https://github.com/zed-industries/zed)",
  "image",
  "indexmap",
  "lofty",
@@ -7145,7 +7156,7 @@ dependencies = [
  "souvlaki",
  "sqlx",
  "tokio",
- "toml 0.9.9+spec-1.0.0",
+ "toml 0.9.10+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
  "unicode-segmentation",
@@ -7317,18 +7328,6 @@ dependencies = [
 
 [[package]]
 name = "wayland-protocols"
-version = "0.31.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f81f365b8b4a97f422ac0e8737c438024b5951734506b0e1d775c73030561f4"
-dependencies = [
- "bitflags 2.10.0",
- "wayland-backend",
- "wayland-client",
- "wayland-scanner",
-]
-
-[[package]]
-name = "wayland-protocols"
 version = "0.32.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "efa790ed75fbfd71283bd2521a1cfdc022aabcc28bdcff00851f9e4ae88d9901"
@@ -7341,14 +7340,14 @@ dependencies = [
 
 [[package]]
 name = "wayland-protocols-plasma"
-version = "0.2.0"
+version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23803551115ff9ea9bce586860c5c5a971e360825a0309264102a9495a5ff479"
+checksum = "a07a14257c077ab3279987c4f8bb987851bf57081b93710381daea94f2c2c032"
 dependencies = [
  "bitflags 2.10.0",
  "wayland-backend",
  "wayland-client",
- "wayland-protocols 0.31.2",
+ "wayland-protocols",
  "wayland-scanner",
 ]
 
@@ -7361,7 +7360,7 @@ dependencies = [
  "bitflags 2.10.0",
  "wayland-backend",
  "wayland-client",
- "wayland-protocols 0.32.9",
+ "wayland-protocols",
  "wayland-scanner",
 ]
 
@@ -7665,6 +7664,17 @@ dependencies = [
  "windows-link 0.1.3",
  "windows-result 0.3.4",
  "windows-strings 0.4.2",
+]
+
+[[package]]
+name = "windows-registry"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02752bf7fbdcce7f2a27a742f798510f3e5ad88dbe84871e5168e2120c3d5720"
+dependencies = [
+ "windows-link 0.2.1",
+ "windows-result 0.4.1",
+ "windows-strings 0.5.1",
 ]
 
 [[package]]
@@ -8439,7 +8449,7 @@ dependencies = [
 [[package]]
 name = "zlog"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#cec46079fea8577c4b7bb6ad1f0e6f9a63bb7f2c"
+source = "git+https://github.com/errmayank/zed/?branch=gpui-hover-state#54c7d58598d311fe6c3ac0f4ad1e559391eb7989"
 dependencies = [
  "anyhow",
  "chrono",
@@ -8450,7 +8460,7 @@ dependencies = [
 [[package]]
 name = "ztracing"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#cec46079fea8577c4b7bb6ad1f0e6f9a63bb7f2c"
+source = "git+https://github.com/errmayank/zed/?branch=gpui-hover-state#54c7d58598d311fe6c3ac0f4ad1e559391eb7989"
 dependencies = [
  "tracing",
  "tracing-subscriber",
@@ -8461,7 +8471,7 @@ dependencies = [
 [[package]]
 name = "ztracing_macro"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#cec46079fea8577c4b7bb6ad1f0e6f9a63bb7f2c"
+source = "git+https://github.com/errmayank/zed/?branch=gpui-hover-state#54c7d58598d311fe6c3ac0f4ad1e559391eb7989"
 
 [[package]]
 name = "zune-core"

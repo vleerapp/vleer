@@ -745,8 +745,15 @@ impl Element for TextElement {
                     bounds.left() - prepaint.scroll_offset,
                     bounds.top() + prepaint.y_offset,
                 );
-                line.paint(origin, window.line_height(), window, cx)
-                    .unwrap();
+                line.paint(
+                    origin,
+                    window.line_height(),
+                    gpui::TextAlign::Left,
+                    None,
+                    window,
+                    cx,
+                )
+                .unwrap();
             }
 
             if focus_handle.is_focused(window) {
