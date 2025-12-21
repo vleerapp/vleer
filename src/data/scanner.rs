@@ -111,8 +111,10 @@ impl Scanner {
                                 stats.added, stats.updated, stats.removed
                             );
 
-                            State::refresh(&db_clone, &state_clone).await;
-                            telemetry_clone.submit(&state_clone, &config_clone).await;
+                            if stats.added > 0 || stats.updated > 0 || stats.removed > 0 {
+                                State::refresh(&db_clone, &state_clone).await;
+                                telemetry_clone.submit(&state_clone, &config_clone).await;
+                            }
                         }
                         Err(e) => {
                             error!("Initial scan failed: {}", e);
