@@ -1,13 +1,13 @@
 use anyhow::Ok;
 use gpui::{prelude::FluentBuilder, *};
 use std::{collections::HashMap, fs};
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 use crate::{
     data::{
         config::Config,
         db::{Database, create_pool},
-        scan::Scanner,
+        scanner::Scanner,
         state::State,
         telemetry::Telemetry,
     },
