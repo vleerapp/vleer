@@ -6,6 +6,7 @@ use tracing::debug;
 
 use crate::data::config::Config;
 use crate::data::types::Song;
+use crate::media::media_keys::MediaKeyHandler;
 use crate::media::playback::Playback;
 
 pub struct Queue {
@@ -109,16 +110,16 @@ impl Queue {
 
         if let Some(song) = next_song {
             let config = cx.global::<Config>().clone();
-            cx.update_global::<Playback, _>(|playback, _cx| {
-                playback.open(
-                    &song.file_path,
-                    &config,
-                    song.track_lufs
-                )?;
-                playback.play();
+            cx.update_global::<Playback, _>(|playback, cx| {
+                playback
+                    .open(&song.file_path, &config, song.track_lufs)
+                    .ok();
+                playback.play(cx);
                 debug!("Playing next track");
-                Ok(())
-            })
+            });
+
+            MediaKeyHandler::update_playback(cx);
+            Ok(())
         } else {
             debug!("No next track");
             Ok(())
@@ -165,16 +166,14 @@ impl Queue {
 
         if let Some(song) = prev_song {
             let config = cx.global::<Config>().clone();
-            cx.update_global::<Playback, _>(|playback, _cx| {
-                playback.open(
-                    &song.file_path,
-                    &config,
-                    song.track_lufs
-                )?;
-                playback.play();
+            cx.update_global::<Playback, _>(|playback, cx| {
+                playback.open(&song.file_path, &config, song.track_lufs).ok();
+                playback.play(cx);
                 debug!("Playing previous track");
-                Ok(())
-            })
+            });
+
+            MediaKeyHandler::update_playback(cx);
+            Ok(())
         } else {
             debug!("No previous track");
             Ok(())

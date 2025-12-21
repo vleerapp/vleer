@@ -12,10 +12,8 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-
           - os: macos-latest
             target: aarch64-apple-darwin
-
           - os: windows-latest
             target: x86_64-pc-windows-msvc
 
@@ -42,6 +40,10 @@ jobs:
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}-${{ runner.os }}
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
@@ -74,20 +76,16 @@ jobs:
           api_key: ${{ secrets.BUILDSTASH_API_KEY }}
           structure: "file"
           primary_file_path: target/release/bundles/Vleer_${{ steps.version.outputs.full }}_aarch64.dmg
-
           version_component_1_major: ${{ steps.version.outputs.major }}
           version_component_2_minor: ${{ steps.version.outputs.minor }}
           version_component_3_patch: ${{ steps.version.outputs.patch }}
-
           custom_build_number: ${{ github.run_number }}
           platform: "macos"
           stream: "nightly"
           architectures: apple
-
           ci_pipeline: ${{ github.workflow }}
           ci_run_id: ${{ github.run_id }}
           ci_run_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
           vc_host_type: "git"
           vc_host: "github"
           vc_repo_name: ${{ github.repository }}
@@ -103,20 +101,16 @@ jobs:
           api_key: ${{ secrets.BUILDSTASH_API_KEY }}
           structure: "file"
           primary_file_path: target/release/bundles/vleer_${{ steps.version.outputs.full }}_x64_en-US.msi
-
           version_component_1_major: ${{ steps.version.outputs.major }}
           version_component_2_minor: ${{ steps.version.outputs.minor }}
           version_component_3_patch: ${{ steps.version.outputs.patch }}
-
           custom_build_number: ${{ github.run_number }}
           platform: "windows"
           stream: "nightly"
           architectures: x64
-
           ci_pipeline: ${{ github.workflow }}
           ci_run_id: ${{ github.run_id }}
           ci_run_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
           vc_host_type: "git"
           vc_host: "github"
           vc_repo_name: ${{ github.repository }}
@@ -132,20 +126,16 @@ jobs:
           api_key: ${{ secrets.BUILDSTASH_API_KEY }}
           structure: "file"
           primary_file_path: target/release/bundles/vleer_${{ steps.version.outputs.full }}_amd64.deb
-
           version_component_1_major: ${{ steps.version.outputs.major }}
           version_component_2_minor: ${{ steps.version.outputs.minor }}
           version_component_3_patch: ${{ steps.version.outputs.patch }}
-
           custom_build_number: ${{ github.run_number }}
           platform: "debian"
           stream: "nightly"
           architectures: x64
-
           ci_pipeline: ${{ github.workflow }}
           ci_run_id: ${{ github.run_id }}
           ci_run_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
           vc_host_type: "git"
           vc_host: "github"
           vc_repo_name: ${{ github.repository }}
@@ -161,20 +151,16 @@ jobs:
           api_key: ${{ secrets.BUILDSTASH_API_KEY }}
           structure: "file"
           primary_file_path: target/release/bundles/vleer_${{ steps.version.outputs.full }}_x86_64.AppImage
-
           version_component_1_major: ${{ steps.version.outputs.major }}
           version_component_2_minor: ${{ steps.version.outputs.minor }}
           version_component_3_patch: ${{ steps.version.outputs.patch }}
-
           custom_build_number: ${{ github.run_number }}
           platform: "linux"
           stream: "nightly"
           architectures: x64
-
           ci_pipeline: ${{ github.workflow }}
           ci_run_id: ${{ github.run_id }}
           ci_run_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
           vc_host_type: "git"
           vc_host: "github"
           vc_repo_name: ${{ github.repository }}
@@ -190,20 +176,16 @@ jobs:
           api_key: ${{ secrets.BUILDSTASH_API_KEY }}
           structure: "file"
           primary_file_path: target/release/bundles/vleer_${{ steps.version.outputs.full }}_x86_64.tar.gz
-
           version_component_1_major: ${{ steps.version.outputs.major }}
           version_component_2_minor: ${{ steps.version.outputs.minor }}
           version_component_3_patch: ${{ steps.version.outputs.patch }}
-
           custom_build_number: ${{ github.run_number }}
           platform: "linux"
           stream: "nightly"
           architectures: x64
-
           ci_pipeline: ${{ github.workflow }}
           ci_run_id: ${{ github.run_id }}
           ci_run_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
           vc_host_type: "git"
           vc_host: "github"
           vc_repo_name: ${{ github.repository }}

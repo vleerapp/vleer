@@ -11,6 +11,7 @@ use tracing::debug;
 use super::equalizer::{Equalizer, EqualizerSource};
 use super::queue::Queue;
 use crate::data::config::Config;
+use crate::media::media_keys::MediaKeyHandler;
 
 const LOG_VOLUME_GROWTH_RATE: f32 = 6.908;
 const LOG_VOLUME_SCALE_FACTOR: f32 = 1000.0;
@@ -114,9 +115,9 @@ impl Playback {
 
         if let Some(song) = first_song {
             let config = cx.global::<Config>().clone();
-            cx.update_global::<Playback, _>(|playback, _cx| {
+            cx.update_global::<Playback, _>(|playback, cx| {
                 playback.open(&song.file_path, &config, song.track_lufs)?;
-                playback.play();
+                playback.play(cx);
                 debug!("Started playback from queue");
                 Ok(())
             })
@@ -126,31 +127,35 @@ impl Playback {
         }
     }
 
-    pub fn play(&mut self) {
+    pub fn play(&mut self, cx: &mut App) {
         if self.is_paused {
             if let Some(sink) = &self.sink {
                 sink.play();
                 self.is_paused = false;
                 debug!("Playback started");
+
+                MediaKeyHandler::update_playback(cx);
             }
         }
     }
 
-    pub fn pause(&mut self) {
+    pub fn pause(&mut self, cx: &mut App) {
         if !self.is_paused {
             if let Some(sink) = &self.sink {
                 sink.pause();
                 self.is_paused = true;
                 debug!("Playback paused");
+                
+                MediaKeyHandler::update_playback(cx);
             }
         }
     }
 
-    pub fn play_pause(&mut self) {
+    pub fn play_pause(&mut self, cx: &mut App) {
         if self.is_paused {
-            self.play();
+            self.play(cx);
         } else {
-            self.pause();
+            self.pause(cx);
         }
     }
 

@@ -70,8 +70,8 @@ impl Render for Player {
         let play_button = Button::new("play_pause")
             .child(if is_playing { icon(PAUSE) } else { icon(PLAY) })
             .on_click(cx.listener(|_this, _event, _window, cx| {
-                cx.update_global::<Playback, _>(|playback, _cx| {
-                    playback.play_pause();
+                cx.update_global::<Playback, _>(|playback, cx| {
+                    playback.play_pause(cx);
                 });
                 cx.notify();
             }));

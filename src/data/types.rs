@@ -18,6 +18,12 @@ impl Default for Cuid {
     }
 }
 
+impl std::fmt::Display for Cuid {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 pub mod db {
     use super::*;
 
