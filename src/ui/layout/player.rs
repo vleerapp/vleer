@@ -138,7 +138,7 @@ impl Render for Player {
                         .object_fit(ObjectFit::Cover)
                         .into_any_element()
                 } else {
-                    div().size(px(36.0)).bg(variables.border).into_any_element()
+                    div().size(px(36.0)).bg(variables.element).into_any_element()
                 })
                 .child(
                     flex_col()
