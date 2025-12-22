@@ -38,6 +38,7 @@ reqwest = { version = "0.12.26", features = ["json"] }
 uuid = { version = "1.19.0", features = ["serde", "v4"] }
 souvlaki = "0.8.3"
 raw-window-handle = "0.6.2"
+spectrum-analyzer = "1.5"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 mpris-server = "0.9.0"

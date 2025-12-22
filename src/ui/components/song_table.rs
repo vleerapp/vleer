@@ -9,9 +9,11 @@ use crate::media::playback::Playback;
 use crate::media::queue::Queue;
 use crate::ui::components::div::{flex_col, flex_row};
 use crate::ui::components::icons::icon::icon;
-use crate::ui::components::icons::icons::{ARROW_DOWN, ARROW_UP, DURATION, PLAY};
+use crate::ui::components::icons::icons::{ARROW_DOWN, ARROW_UP, DURATION, PAUSE, PLAY};
 use crate::ui::components::scrollbar::{Scrollbar, ScrollbarAxis};
 use crate::ui::variables::Variables;
+
+const ANIMATION_FPS: f32 = 60.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ColumnSize {
@@ -125,6 +127,7 @@ pub struct SongTableItem {
     duration_width: f32,
     row_number: usize,
     items: Option<Arc<Vec<Cuid>>>,
+    is_animating: bool,
 }
 
 impl SongTableItem {
@@ -147,12 +150,13 @@ impl SongTableItem {
             duration_width,
             row_number,
             items,
+            is_animating: false,
         })
     }
 }
 
 impl Render for SongTableItem {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
         let row_data = self.data.clone();
         let on_select = self.on_select.clone();
@@ -183,6 +187,63 @@ impl Render for SongTableItem {
             });
 
         if let Some(data) = &self.data {
+            let is_playing = if let Some(current_song) = cx.global::<Queue>().current() {
+                current_song.id == data.id && cx.global::<Playback>().is_playing()
+            } else {
+                false
+            };
+
+            if is_playing && !self.is_animating {
+                self.is_animating = true;
+
+                cx.spawn_in(
+                    window,
+                    |view: WeakEntity<SongTableItem>, cx: &mut AsyncWindowContext| {
+                        let mut cx = cx.clone();
+                        async move {
+                            loop {
+                                cx.background_executor()
+                                    .timer(std::time::Duration::from_secs_f32(1.0 / ANIMATION_FPS))
+                                    .await;
+
+                                let should_continue = view.update(
+                                    &mut cx,
+                                    |this: &mut SongTableItem, cx: &mut Context<SongTableItem>| {
+                                        let still_playing = if let Some(data) = &this.data {
+                                            cx.global::<Queue>()
+                                                .current()
+                                                .map_or(false, |s| s.id == data.id)
+                                                && cx.global::<Playback>().is_playing()
+                                        } else {
+                                            false
+                                        };
+
+                                        if still_playing {
+                                            cx.notify();
+                                            true
+                                        } else {
+                                            this.is_animating = false;
+                                            false
+                                        }
+                                    },
+                                );
+
+                                if should_continue.is_err() || !should_continue.unwrap() {
+                                    break;
+                                }
+                            }
+                        }
+                    },
+                )
+                .detach();
+            }
+
+            let spectrum = if is_playing {
+                cx.global::<Playback>().get_spectrum()
+            } else {
+                [0.1, 0.1, 0.1, 0.1]
+            };
+
             for column in SongColumn::ALL {
                 let size = column.size(self.number_width, self.duration_width);
                 let mut column_div = div();
@@ -210,6 +271,7 @@ impl Render for SongTableItem {
                                 .flex_shrink_0()
                                 .bg(variables.element)
                                 .relative()
+                                .group("cover-container")
                                 .when_some(data.cover_uri.clone(), |div, image| {
                                     div.child(
                                         img(image)
@@ -217,6 +279,22 @@ impl Render for SongTableItem {
                                             .object_fit(ObjectFit::Cover),
                                     )
                                 })
+                                .child(
+                                    flex_row()
+                                        .absolute()
+                                        .inset_0()
+                                        .gap(px(3.0))
+                                        .p(px(5.0))
+                                        .bg(black().opacity(0.5))
+                                        .when(!is_playing, |s| s.invisible())
+                                        .group_hover("cover-container", |s| s.invisible())
+                                        .children((0..4).map(|i| {
+                                            let height_pct =
+                                                (spectrum[i] * 100.0).clamp(10.0, 80.0);
+                                            let height_px = 36.0 * (height_pct / 100.0);
+                                            div().w(px(4.0)).h(px(height_px)).bg(variables.text)
+                                        })),
+                                )
                                 .child(
                                     div()
                                         .absolute()
@@ -226,7 +304,7 @@ impl Render for SongTableItem {
                                         .justify_center()
                                         .bg(black().opacity(0.5))
                                         .invisible()
-                                        .group_hover("song-row", |s| s.visible())
+                                        .group_hover("cover-container", |s| s.visible())
                                         .child(icon(PLAY).size(px(16.0)).text_color(white())),
                                 )
                                 .cursor_pointer()
@@ -336,7 +414,7 @@ impl Render for SongTableItem {
 }
 
 pub enum SongTableEvent {
-    NewRows,
+    _NewRows,
 }
 
 #[derive(Clone)]
@@ -405,7 +483,7 @@ impl SongTable {
 
             let get_rows_for_event = get_rows_clone;
             cx.subscribe(&cx.entity(), move |this, _, event, cx| match event {
-                SongTableEvent::NewRows => {
+                SongTableEvent::_NewRows => {
                     let sort_method = *this.sort_method.read(cx);
                     let items = Some(Arc::new((get_rows_for_event)(cx, sort_method)));
                     let (number_width, duration_width) =

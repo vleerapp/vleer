@@ -12,6 +12,7 @@ use super::equalizer::{Equalizer, EqualizerSource};
 use super::queue::Queue;
 use crate::data::config::Config;
 use crate::media::media_keys::MediaKeyHandler;
+use crate::media::visualizer::{F32Converter, VisualizerSource, VisualizerState};
 
 const LOG_VOLUME_GROWTH_RATE: f32 = 6.908;
 const LOG_VOLUME_SCALE_FACTOR: f32 = 1000.0;
@@ -28,6 +29,7 @@ pub struct Playback {
     current_track_lufs: Option<f32>,
     normalization_enabled: bool,
     position: f32,
+    visualizer_state: VisualizerState,
 }
 
 impl Global for Playback {}
@@ -46,6 +48,7 @@ impl Playback {
             current_track_lufs: None,
             normalization_enabled: false,
             position: 0.0,
+            visualizer_state: VisualizerState::default(),
         })
     }
 
@@ -68,7 +71,10 @@ impl Playback {
 
         let file =
             File::open(path).with_context(|| format!("Failed to open audio file: {:?}", path))?;
-        let source = Decoder::new(BufReader::new(file)).context("Failed to decode audio file")?;
+
+        let decoder = Decoder::new(BufReader::new(file)).context("Failed to decode audio file")?;
+
+        let source = F32Converter { input: decoder };
 
         let sample_rate = source.sample_rate();
         let channels = source.channels();
@@ -92,8 +98,9 @@ impl Playback {
         self.normalization_enabled = settings.get().audio.normalization;
 
         let eq_source = EqualizerSource::new(source, self.equalizer.clone());
+        let vis_source = VisualizerSource::new(eq_source, self.visualizer_state.clone());
         let gain = self.calculate_normalization_gain();
-        let normalized = eq_source.amplify(gain);
+        let normalized = vis_source.amplify(gain);
 
         sink.append(normalized);
         sink.set_volume(Self::log_volume(self.volume));
@@ -145,7 +152,7 @@ impl Playback {
                 sink.pause();
                 self.is_paused = true;
                 debug!("Playback paused");
-                
+
                 MediaKeyHandler::update_playback(cx);
             }
         }
@@ -298,8 +305,9 @@ impl Playback {
             source.try_seek(Duration::from_secs_f32(position)).ok();
 
             let eq_source = EqualizerSource::new(source, self.equalizer.clone());
+            let vis_source = VisualizerSource::new(eq_source, self.visualizer_state.clone());
             let gain = self.calculate_normalization_gain();
-            let normalized = eq_source.amplify(gain);
+            let normalized = vis_source.amplify(gain);
 
             if let Some(sink) = &self.sink {
                 sink.stop();
@@ -333,6 +341,10 @@ impl Playback {
         } else {
             true
         }
+    }
+
+    pub fn get_spectrum(&self) -> [f32; 4] {
+        *self.visualizer_state.bands.lock().unwrap()
     }
 
     pub fn start_playback_monitor<T: 'static>(window: &Window, cx: &mut gpui::Context<T>) {
