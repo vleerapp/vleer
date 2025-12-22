@@ -7,6 +7,7 @@ use crate::data::types::{Cuid, Song};
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
 
+use crate::ui::components::div::flex_row;
 use crate::ui::components::icons::icon::icon;
 use crate::ui::{
     components::{
@@ -84,11 +85,10 @@ fn pinned_item(
         div().bg(variables.border).into_any_element()
     };
 
-    div()
-        .flex()
+    flex_row()
         .group("pinned-item")
-        .items_center()
         .bg(variables.element)
+        .hover(|s| s.bg(variables.element_hover))
         .gap(px(variables.padding_8))
         .pr(px(variables.padding_8))
         .child(
