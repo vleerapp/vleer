@@ -1,4 +1,4 @@
-use gpui::*;
+use gpui::{prelude::FluentBuilder, *};
 
 use crate::{
     data::config::Config,
@@ -65,10 +65,15 @@ impl Render for Player {
         let is_playing = cx.global::<Playback>().is_playing();
         let volume = cx.global::<Playback>().get_volume();
         let repeat_mode = cx.global::<Queue>().repeat_mode();
-        let _is_shuffle = cx.global::<Queue>().is_shuffle();
+        let is_shuffle = cx.global::<Queue>().is_shuffle();
 
         let play_button = Button::new("play_pause")
-            .child(if is_playing { icon(PAUSE) } else { icon(PLAY) })
+            .group("playpause-button")
+            .child(if is_playing {
+                icon(PAUSE).group_hover("playpause-button", |s| s.text_color(variables.text))
+            } else {
+                icon(PLAY).group_hover("playpause-button", |s| s.text_color(variables.text))
+            })
             .on_click(cx.listener(|_this, _event, _window, cx| {
                 cx.update_global::<Playback, _>(|playback, cx| {
                     playback.play_pause(cx);
@@ -77,7 +82,8 @@ impl Render for Player {
             }));
 
         let prev_button = Button::new("previous")
-            .child(icon(PREVIOUS))
+            .group("previous-button")
+            .child(icon(PREVIOUS).group_hover("previous-button", |s| s.text_color(variables.text)))
             .on_click(cx.listener(|_this, _event, _window, cx| {
                 if let Err(e) = Queue::previous(cx) {
                     tracing::error!("Failed to play previous: {}", e);
@@ -85,17 +91,29 @@ impl Render for Player {
                 cx.notify();
             }));
 
-        let next_button = Button::new("next").child(icon(NEXT)).on_click(cx.listener(
-            |_this, _event, _window, cx| {
+        let next_button = Button::new("next")
+            .group("next-button")
+            .child(icon(NEXT).group_hover("next-button", |s| s.text_color(variables.text)))
+            .on_click(cx.listener(|_this, _event, _window, cx| {
                 if let Err(e) = Queue::next(cx) {
                     tracing::error!("Failed to play next: {}", e);
                 }
                 cx.notify();
-            },
-        ));
+            }));
 
         let shuffle_button = Button::new("shuffle")
-            .child(icon(SHUFFLE))
+            .group("shuffle-button")
+            .child(
+                icon(SHUFFLE)
+                    .when(is_shuffle, |s| s.text_color(variables.accent))
+                    .group_hover("shuffle-button", |s| {
+                        if !is_shuffle {
+                            s.text_color(variables.text)
+                        } else {
+                            s
+                        }
+                    }),
+            )
             .on_click(cx.listener(|_this, _event, _window, cx| {
                 cx.update_global::<Queue, _>(|queue, _cx| {
                     queue.toggle_shuffle();
@@ -110,7 +128,21 @@ impl Render for Player {
         };
 
         let repeat_button = Button::new("repeat")
-            .child(icon(repeat_icon))
+            .group("repeat-button")
+            .child(
+                icon(repeat_icon)
+                    .when(
+                        repeat_mode == RepeatMode::All || repeat_mode == RepeatMode::One,
+                        |s| s.text_color(variables.accent),
+                    )
+                    .group_hover("repeat-button", |s| {
+                        if repeat_mode == RepeatMode::Off {
+                            s.text_color(variables.text)
+                        } else {
+                            s
+                        }
+                    }),
+            )
             .on_click(cx.listener(|_this, _event, _window, cx| {
                 cx.update_global::<Queue, _>(|queue, _cx| {
                     queue.cycle_repeat();
@@ -138,7 +170,10 @@ impl Render for Player {
                         .object_fit(ObjectFit::Cover)
                         .into_any_element()
                 } else {
-                    div().size(px(36.0)).bg(variables.element).into_any_element()
+                    div()
+                        .size(px(36.0))
+                        .bg(variables.element)
+                        .into_any_element()
                 })
                 .child(
                     flex_col()
