@@ -27,6 +27,7 @@ struct StateInner {
     playlist_tracks: HashMap<Cuid, Vec<Cuid>>,
     current_view: AppView,
     config: SettingsConfig,
+    search_query: String,
 }
 
 impl Global for State {}
@@ -46,6 +47,7 @@ impl State {
                 playlist_tracks: HashMap::new(),
                 current_view: AppView::default(),
                 config: SettingsConfig::default(),
+                search_query: String::new(),
             })),
         }
     }
@@ -185,6 +187,200 @@ impl State {
             state.get_all_album_ids().await.len(),
             state.get_all_playlist_ids().await.len()
         );
+    }
+
+    pub async fn get_search_query(&self) -> String {
+        let inner = self.inner.read().await;
+        inner.search_query.clone()
+    }
+
+    pub async fn set_search_query(&self, query: String) {
+        let mut inner = self.inner.write().await;
+        inner.search_query = query;
+    }
+
+    pub fn get_search_query_sync(&self) -> String {
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(self.get_search_query())
+        })
+    }
+
+    pub fn set_search_query_sync(&self, query: String) {
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(self.set_search_query(query))
+        })
+    }
+
+    pub async fn get_all_songs(&self) -> Vec<Arc<Song>> {
+        let inner = self.inner.read().await;
+        inner.songs.values().cloned().collect()
+    }
+
+    pub fn get_all_songs_sync(&self) -> Vec<Arc<Song>> {
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(self.get_all_songs())
+        })
+    }
+
+    pub async fn search_all_items(
+        &self,
+        query: &str,
+    ) -> Vec<(Cuid, String, Option<String>, String)> {
+        let query_lower = query.to_lowercase();
+        let inner = self.inner.read().await;
+        let mut items = Vec::new();
+        let mut album_titles = std::collections::HashSet::new();
+
+        for album in inner.albums.values() {
+            if album.title.to_lowercase().contains(&query_lower)
+                || album
+                    .artist
+                    .as_ref()
+                    .map_or(false, |a| a.name.to_lowercase().contains(&query_lower))
+            {
+                items.push((
+                    album.id.clone(),
+                    album.title.clone(),
+                    album.cover.clone(),
+                    "Album".to_string(),
+                ));
+                album_titles.insert(album.title.to_lowercase());
+            }
+        }
+
+        for song in inner.songs.values() {
+            let song_title_lower = song.title.to_lowercase();
+            if (song_title_lower.contains(&query_lower)
+                || song
+                    .artist
+                    .as_ref()
+                    .map_or(false, |a| a.name.to_lowercase().contains(&query_lower))
+                || song
+                    .album
+                    .as_ref()
+                    .map_or(false, |a| a.title.to_lowercase().contains(&query_lower)))
+                && !album_titles.contains(&song_title_lower)
+            {
+                items.push((
+                    song.id.clone(),
+                    song.title.clone(),
+                    song.cover.clone(),
+                    "Song".to_string(),
+                ));
+            }
+        }
+
+        for artist in inner.artists.values() {
+            if artist.name.to_lowercase().contains(&query_lower) {
+                items.push((
+                    artist.id.clone(),
+                    artist.name.clone(),
+                    artist.image.clone(),
+                    "Artist".to_string(),
+                ));
+            }
+        }
+
+        for playlist in inner.playlists.values() {
+            if playlist.name.to_lowercase().contains(&query_lower) {
+                items.push((
+                    playlist.id.clone(),
+                    playlist.name.clone(),
+                    playlist.image.clone(),
+                    "Playlist".to_string(),
+                ));
+            }
+        }
+
+        items.sort_by(|a, b| {
+            let title_a_lower = a.1.to_lowercase();
+            let title_b_lower = b.1.to_lowercase();
+
+            let is_exact_a = match a.3.as_str() {
+                "Artist" | "Playlist" => title_a_lower == query_lower,
+                "Album" | "Song" => title_a_lower == query_lower,
+                _ => false,
+            };
+            let is_exact_b = match b.3.as_str() {
+                "Artist" | "Playlist" => title_b_lower == query_lower,
+                "Album" | "Song" => title_b_lower == query_lower,
+                _ => false,
+            };
+            let exact_score_a = if is_exact_a { 0 } else { 1 };
+            let exact_score_b = if is_exact_b { 0 } else { 1 };
+
+            let len_score_a = if a.1.len() <= 30 { 0 } else { 1 };
+            let len_score_b = if b.1.len() <= 30 { 0 } else { 1 };
+
+            exact_score_a
+                .cmp(&exact_score_b)
+                .then(len_score_a.cmp(&len_score_b))
+                .then(title_a_lower.cmp(&title_b_lower))
+        });
+
+        items
+    }
+
+    pub fn search_all_items_sync(
+        &self,
+        query: &str,
+    ) -> Vec<(Cuid, String, Option<String>, String)> {
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(self.search_all_items(query))
+        })
+    }
+
+    pub async fn get_search_match_counts(&self, query: &str) -> (usize, usize, usize, usize) {
+        let query_lower = query.to_lowercase();
+        let inner = self.inner.read().await;
+
+        let song_count = inner
+            .songs
+            .values()
+            .filter(|song| {
+                song.title.to_lowercase().contains(&query_lower)
+                    || song
+                        .artist
+                        .as_ref()
+                        .map_or(false, |a| a.name.to_lowercase().contains(&query_lower))
+                    || song
+                        .album
+                        .as_ref()
+                        .map_or(false, |a| a.title.to_lowercase().contains(&query_lower))
+            })
+            .count();
+
+        let album_count = inner
+            .albums
+            .values()
+            .filter(|album| {
+                album.title.to_lowercase().contains(&query_lower)
+                    || album
+                        .artist
+                        .as_ref()
+                        .map_or(false, |a| a.name.to_lowercase().contains(&query_lower))
+            })
+            .count();
+
+        let artist_count = inner
+            .artists
+            .values()
+            .filter(|artist| artist.name.to_lowercase().contains(&query_lower))
+            .count();
+
+        let playlist_count = inner
+            .playlists
+            .values()
+            .filter(|playlist| playlist.name.to_lowercase().contains(&query_lower))
+            .count();
+
+        (song_count, album_count, artist_count, playlist_count)
+    }
+
+    pub fn get_search_match_counts_sync(&self, query: &str) -> (usize, usize, usize, usize) {
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(self.get_search_match_counts(query))
+        })
     }
 
     pub async fn get_current_view(&self) -> AppView {

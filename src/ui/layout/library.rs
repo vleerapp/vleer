@@ -9,6 +9,7 @@ use crate::media::queue::Queue;
 
 use crate::ui::components::div::flex_row;
 use crate::ui::components::icons::icon::icon;
+use crate::ui::components::scrollbar::ScrollableElement;
 use crate::ui::{
     components::{
         div::flex_col,
@@ -24,6 +25,7 @@ use crate::ui::{
 pub struct Library {
     pub hovered: bool,
     search_input: Entity<TextInput>,
+    search_query: String,
 }
 
 impl Library {
@@ -33,12 +35,20 @@ impl Library {
 
         cx.subscribe(
             &search_input,
-            |_this: &mut Self, _input, event: &InputEvent, _cx| match event {
+            |this: &mut Self, _input, event: &InputEvent, cx| match event {
                 InputEvent::Change(text) => {
-                    println!("{}", text);
+                    this.search_query = text.clone();
+                    cx.update_global::<State, _>(|state, _| {
+                        state.set_search_query(text.clone());
+                    });
+                    cx.notify();
                 }
                 InputEvent::Submit(text) => {
-                    println!("{}", text);
+                    this.search_query = text.clone();
+                    cx.update_global::<State, _>(|state, _| {
+                        state.set_search_query_sync(text.clone());
+                    });
+                    cx.notify();
                 }
             },
         )
@@ -47,7 +57,13 @@ impl Library {
         Self {
             hovered: false,
             search_input,
+            search_query: String::new(),
         }
+    }
+
+    fn get_match_counts(&self, cx: &App) -> (usize, usize, usize, usize) {
+        let state = cx.global::<State>();
+        state.get_search_match_counts_sync(&self.search_query)
     }
 }
 
@@ -170,8 +186,13 @@ impl Render for Library {
         let variables = cx.global::<Variables>();
         let state = cx.global::<State>();
 
-        let pinned_items = state.get_pinned_items_sync();
-        let has_pinned = !pinned_items.is_empty();
+        let is_searching = !self.search_query.is_empty();
+        let pinned_items = if is_searching {
+            state.search_all_items_sync(&self.search_query)
+        } else {
+            state.get_pinned_items_sync()
+        };
+        let has_items = !pinned_items.is_empty();
 
         let border_color = if self.hovered {
             variables.accent
@@ -179,54 +200,95 @@ impl Render for Library {
             variables.border
         };
 
+        let (s_count, al_count, ar_count, p_count) = if is_searching {
+            self.get_match_counts(cx)
+        } else {
+            (0, 0, 0, 0)
+        };
+
         div()
+            .id("library")
             .relative()
             .size_full()
+            .min_w_0()
+            .min_h_0()
             .child(
                 flex_col()
-                    .id("library")
+                    .size_full()
+                    .min_h_0()
                     .border(px(1.0))
                     .border_color(border_color)
-                    .h_full()
-                    .overflow_y_scroll()
-                    .p(px(variables.padding_16))
+                    .pl(px(variables.padding_16))
+                    .pr(px(0.0))
+                    .pt(px(variables.padding_16))
+                    .pb(px(0.0))
                     .gap(px(variables.padding_16))
-                    .child(self.search_input.clone())
+                    .child(
+                        div()
+                            .pr(px(variables.padding_16))
+                            .child(self.search_input.clone()),
+                    )
                     .child(
                         flex_col()
-                            .gap(px(variables.padding_16))
                             .id("links")
-                            .child(NavButton::new(icons::SONGS, Some("Songs"), AppView::Songs))
+                            .pr(px(variables.padding_16))
+                            .gap(px(variables.padding_16))
+                            .flex_shrink_0()
+                            .child(NavButton::new(
+                                icons::SONGS,
+                                Some("Songs"),
+                                Some(s_count),
+                                AppView::Songs,
+                            ))
                             .child(NavButton::new(
                                 icons::ALBUM,
                                 Some("Albums"),
+                                Some(al_count),
                                 AppView::Albums,
                             ))
                             .child(NavButton::new(
                                 icons::ARTIST,
                                 Some("Artists"),
+                                Some(ar_count),
                                 AppView::Artists,
                             ))
                             .child(NavButton::new(
                                 icons::PLAYLIST,
                                 Some("Playlists"),
+                                Some(p_count),
                                 AppView::Playlists,
                             )),
                     )
-                    .when(has_pinned, |this| {
+                    .when(has_items, |this| {
                         this.child(
                             flex_col()
-                                .id("pinned")
+                                .flex_1()
+                                .min_h_0()
                                 .w_full()
-                                .gap(px(variables.padding_8))
-                                .pt(px(variables.padding_16))
-                                .border_t(px(1.0))
-                                .border_color(variables.border)
-                                .children(pinned_items.into_iter().map(
-                                    |(id, name, cover, item_type)| {
-                                        pinned_item(id, name, cover, item_type, variables)
-                                    },
-                                )),
+                                .child(
+                                    div().pr(px(variables.padding_16)).child(
+                                        div()
+                                            .w_full()
+                                            .h(px(1.0))
+                                            .bg(variables.border)
+                                            .flex_shrink_0(),
+                                    ),
+                                )
+                                .child(
+                                    div().flex_1().min_h_0().overflow_y_scrollbar().child(
+                                        flex_col()
+                                            .gap(px(variables.padding_8))
+                                            .pr(px(variables.padding_16))
+                                            .py(px(variables.padding_16))
+                                            .children(pinned_items.into_iter().take(30).map(
+                                                |(id, name, cover, item_type)| {
+                                                    pinned_item(
+                                                        id, name, cover, item_type, variables,
+                                                    )
+                                                },
+                                            )),
+                                    ),
+                                ),
                         )
                     }),
             )

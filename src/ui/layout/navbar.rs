@@ -42,10 +42,12 @@ impl Render for Navbar {
                     .child(flex_row().p(px(variables.padding_16)).child(NavButton::new(
                         HOME,
                         Some("Home"),
+                        None,
                         AppView::Home,
                     )))
                     .child(div().p(px(variables.padding_16)).child(NavButton::new(
                         SETTINGS,
+                        None,
                         None,
                         AppView::Settings,
                     ))),

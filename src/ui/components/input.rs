@@ -526,6 +526,7 @@ impl Render for TextInput {
 
         flex_row()
             .items_center()
+            .flex_shrink_0()
             .key_context("TextInput")
             .track_focus(&focus)
             .cursor(CursorStyle::IBeam)

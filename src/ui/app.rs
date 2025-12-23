@@ -80,9 +80,10 @@ impl Render for MainWindow {
             .unwrap_or_else(|| div().into_any_element());
 
         let mut element = flex_col()
-            .gap(px(variables.padding_16))
             .p(px(variables.padding_16))
+            .gap(px(variables.padding_16))
             .size_full()
+            .min_h_0()
             .bg(variables.background)
             .child(div().h(px(0.0)).when(
                 !(cfg!(target_os = "macos") || cfg!(target_os = "windows")),
@@ -91,6 +92,7 @@ impl Render for MainWindow {
             .child(
                 flex_row()
                     .flex_1()
+                    .min_h_0()
                     .size_full()
                     .gap(px(variables.padding_16))
                     .child(
@@ -98,6 +100,7 @@ impl Render for MainWindow {
                             .id("library")
                             .w(px(300.0))
                             .flex_shrink_0()
+                            .min_h_0()
                             .h_full()
                             .on_mouse_move(cx.listener(
                                 |this, _event: &MouseMoveEvent, _window: &mut Window, cx| {
@@ -109,6 +112,7 @@ impl Render for MainWindow {
                     .child(
                         flex_col()
                             .flex_1()
+                            .min_h_0()
                             .h_full()
                             .gap(px(variables.padding_16))
                             .child(
@@ -116,6 +120,7 @@ impl Render for MainWindow {
                                     .id("navbar")
                                     .h(px(48.0))
                                     .w_full()
+                                    .flex_shrink_0()
                                     .on_mouse_move(cx.listener(
                                         |this,
                                          _event: &MouseMoveEvent,
@@ -130,6 +135,7 @@ impl Render for MainWindow {
                                 div()
                                     .id("current-view")
                                     .flex_1()
+                                    .min_h_0()
                                     .size_full()
                                     .on_mouse_move(cx.listener(
                                         |this,
@@ -147,6 +153,7 @@ impl Render for MainWindow {
                 div()
                     .id("player")
                     .h(px(100.0))
+                    .flex_shrink_0()
                     .w_full()
                     .on_mouse_move(cx.listener(
                         |this, _event: &MouseMoveEvent, _window: &mut Window, cx| {
