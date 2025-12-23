@@ -58,6 +58,7 @@ impl InteractiveElement for Button {
 impl RenderOnce for Button {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         self.base
+            .id(self.id)
             .cursor_pointer()
             .p(px(8.0))
             .when_some(self.on_click, |this, on_click| {
