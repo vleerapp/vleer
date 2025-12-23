@@ -1,22 +1,13 @@
-use gpui::{prelude::FluentBuilder, *};
-use std::{
-    cell::Cell,
-    ops::Deref,
-    panic::Location,
-    rc::Rc,
-    time::{Duration, Instant},
-};
+use gpui::prelude::FluentBuilder;
+use gpui::*;
+use std::{cell::Cell, ops::Deref, panic::Location, rc::Rc, time::Instant};
+
+use crate::ui::variables::Variables;
 
 const DEFAULT_WIDTH: Pixels = px(16.);
+const THUMB_WIDTH: Pixels = px(4.);
 const MIN_THUMB_SIZE: f32 = 48.;
-const THUMB_WIDTH: Pixels = px(6.);
-const THUMB_RADIUS: Pixels = px(3.);
-const THUMB_INSET: Pixels = px(4.);
-const THUMB_ACTIVE_WIDTH: Pixels = px(8.);
-const THUMB_ACTIVE_RADIUS: Pixels = px(4.);
-const THUMB_ACTIVE_INSET: Pixels = px(4.);
 const FADE_OUT_DURATION: f32 = 3.0;
-const FADE_OUT_DELAY: f32 = 2.0;
 
 pub trait AxisExt {
     fn is_vertical(&self) -> bool;
@@ -218,8 +209,6 @@ pub struct Scrollbar {
     scroll_size: Option<Size<Pixels>>,
     max_fps: usize,
     width: Pixels,
-    thumb_color: Option<Hsla>,
-    track_color: Option<Hsla>,
 }
 impl Scrollbar {
     #[track_caller]
@@ -233,8 +222,6 @@ impl Scrollbar {
             max_fps: 120,
             scroll_size: None,
             width: DEFAULT_WIDTH,
-            thumb_color: None,
-            track_color: None,
         }
     }
     #[track_caller]
@@ -265,58 +252,26 @@ impl Scrollbar {
         self.width = width.into();
         self
     }
-    pub fn thumb_color(mut self, color: impl Into<Hsla>) -> Self {
-        self.thumb_color = Some(color.into());
-        self
-    }
-    pub fn track_color(mut self, color: impl Into<Hsla>) -> Self {
-        self.track_color = Some(color.into());
-        self
-    }
     fn get_colors(
         &self,
+        cx: &App,
         state: &ScrollbarStateInner,
         axis: Axis,
-    ) -> (Hsla, Hsla, Pixels, Pixels, Pixels) {
-        let default_thumb = self.thumb_color.unwrap_or(rgb(0x808080).into());
-        let default_track = self.track_color.unwrap_or(transparent_black());
+    ) -> (Hsla, Hsla, Pixels) {
+        let variables = cx.global::<Variables>();
+        let default_thumb = variables.accent;
+        let hover_thumb = variables.accent_hover;
+        let default_track = transparent_black();
         let is_dragged = state.dragged_axis == Some(axis);
         let is_hovered_thumb = state.hovered_on_thumb == Some(axis);
         let is_hovered_bar = state.hovered_axis == Some(axis);
-        let (thumb, track, width, inset, radius) = if is_dragged || is_hovered_thumb {
-            (
-                self.thumb_color.unwrap_or(rgb(0x606060).into()),
-                default_track,
-                THUMB_ACTIVE_WIDTH,
-                THUMB_ACTIVE_INSET,
-                THUMB_ACTIVE_RADIUS,
-            )
-        } else if is_hovered_bar {
-            (
-                default_thumb,
-                default_track,
-                THUMB_ACTIVE_WIDTH,
-                THUMB_ACTIVE_INSET,
-                THUMB_ACTIVE_RADIUS,
-            )
-        } else if state.is_scrollbar_visible() {
-            (
-                default_thumb,
-                default_track,
-                THUMB_WIDTH,
-                THUMB_INSET,
-                THUMB_RADIUS,
-            )
+        if is_dragged || is_hovered_thumb {
+            (hover_thumb.into(), default_track, THUMB_WIDTH)
+        } else if is_hovered_bar || state.is_scrollbar_visible() {
+            (default_thumb.into(), default_track, THUMB_WIDTH)
         } else {
-            (
-                transparent_black(),
-                transparent_black(),
-                THUMB_WIDTH,
-                THUMB_INSET,
-                THUMB_RADIUS,
-            )
-        };
-        (thumb, track, width, inset, radius)
+            (default_track, default_track, THUMB_WIDTH)
+        }
     }
 }
 impl IntoElement for Scrollbar {
@@ -325,6 +280,7 @@ impl IntoElement for Scrollbar {
         self
     }
 }
+
 pub struct PrepaintState {
     hitbox: Hitbox,
     scrollbar_state: ScrollbarState,
@@ -334,7 +290,6 @@ struct AxisPrepaintState {
     axis: Axis,
     bar_hitbox: Hitbox,
     bounds: Bounds<Pixels>,
-    radius: Pixels,
     track_color: Hsla,
     thumb_bounds: Bounds<Pixels>,
     thumb_fill_bounds: Bounds<Pixels>,
@@ -436,32 +391,31 @@ impl Element for Scrollbar {
                     size(hitbox.size.width, self.width)
                 },
             };
-            let (thumb_color, track_color, thumb_width, inset, radius) =
-                self.get_colors(&state.get(), axis);
-            let thumb_length = thumb_end - thumb_start - inset * 2.;
+            let (thumb_color, track_color, thumb_width) = self.get_colors(&cx, &state.get(), axis);
+            let thumb_length = thumb_end - thumb_start;
             let thumb_bounds = if is_vertical {
                 Bounds::from_corner_and_size(
                     Corner::TopRight,
-                    bounds.top_right() + point(-inset, inset + thumb_start),
+                    bounds.top_right() + point(px(0.), thumb_start),
                     size(self.width, thumb_length),
                 )
             } else {
                 Bounds::from_corner_and_size(
                     Corner::BottomLeft,
-                    bounds.bottom_left() + point(inset + thumb_start, -inset),
+                    bounds.bottom_left() + point(thumb_start, px(0.)),
                     size(thumb_length, self.width),
                 )
             };
             let thumb_fill_bounds = if is_vertical {
                 Bounds::from_corner_and_size(
                     Corner::TopRight,
-                    bounds.top_right() + point(-inset, inset + thumb_start),
+                    bounds.top_right() + point(px(0.), thumb_start),
                     size(thumb_width, thumb_length),
                 )
             } else {
                 Bounds::from_corner_and_size(
                     Corner::BottomLeft,
-                    bounds.bottom_left() + point(inset + thumb_start, -inset),
+                    bounds.bottom_left() + point(thumb_start, px(0.)),
                     size(thumb_length, thumb_width),
                 )
             };
@@ -472,7 +426,6 @@ impl Element for Scrollbar {
                 axis,
                 bar_hitbox,
                 bounds,
-                radius,
                 track_color,
                 thumb_bounds,
                 thumb_fill_bounds,
@@ -526,10 +479,7 @@ impl Element for Scrollbar {
                     window.set_cursor_style(CursorStyle::default(), &axis_state.bar_hitbox);
                     window.paint_layer(hitbox_bounds, |cx| {
                         cx.paint_quad(fill(bounds, axis_state.track_color));
-                        cx.paint_quad(
-                            fill(axis_state.thumb_fill_bounds, axis_state.thumb_color)
-                                .corner_radii(axis_state.radius),
-                        );
+                        cx.paint_quad(fill(axis_state.thumb_fill_bounds, axis_state.thumb_color));
                     });
                     window.on_mouse_event({
                         let state = state.clone();
@@ -591,7 +541,8 @@ impl Element for Scrollbar {
                         let state = state.clone();
                         let scroll_handle = self.scroll_handle.clone();
                         let safe_range = safe_range.clone();
-                        let max_fps_duration = Duration::from_millis((1000 / self.max_fps) as u64);
+                        let max_fps_duration =
+                            std::time::Duration::from_millis((1000 / self.max_fps) as u64);
                         move |event: &MouseMoveEvent, _, _, cx| {
                             let mut notify = false;
                             if bounds.contains(&event.position) {
@@ -669,7 +620,6 @@ impl Element for Scrollbar {
 }
 
 pub trait ScrollableElement: IntoElement + Sized {
-    #[track_caller]
     fn scrollbar<H: ScrollbarHandle + Clone>(
         self,
         scroll_handle: &H,
@@ -686,17 +636,14 @@ pub trait ScrollableElement: IntoElement + Sized {
             })
     }
 
-    #[track_caller]
     fn vertical_scrollbar<H: ScrollbarHandle + Clone>(self, scroll_handle: &H) -> Div {
         self.scrollbar(scroll_handle, ScrollbarAxis::Vertical)
     }
 
-    #[track_caller]
     fn horizontal_scrollbar<H: ScrollbarHandle + Clone>(self, scroll_handle: &H) -> Div {
         self.scrollbar(scroll_handle, ScrollbarAxis::Horizontal)
     }
 
-    #[track_caller]
     fn overflow_scrollbar(self) -> Scrollable<Self>
     where
         Self: InteractiveElement + Styled + ParentElement + Element,
@@ -704,7 +651,6 @@ pub trait ScrollableElement: IntoElement + Sized {
         Scrollable::new(self, ScrollbarAxis::Both)
     }
 
-    #[track_caller]
     fn overflow_x_scrollbar(self) -> Scrollable<Self>
     where
         Self: InteractiveElement + Styled + ParentElement + Element,
@@ -712,7 +658,6 @@ pub trait ScrollableElement: IntoElement + Sized {
         Scrollable::new(self, ScrollbarAxis::Horizontal)
     }
 
-    #[track_caller]
     fn overflow_y_scrollbar(self) -> Scrollable<Self>
     where
         Self: InteractiveElement + Styled + ParentElement + Element,
@@ -735,7 +680,7 @@ where
     E: InteractiveElement + Styled + ParentElement + Element,
 {
     #[track_caller]
-    fn new(element: E, axis: impl Into<ScrollbarAxis>) -> Self {
+    pub fn new(element: E, axis: impl Into<ScrollbarAxis>) -> Self {
         let caller = Location::caller();
         Self {
             id: ElementId::CodeLocation(*caller),
@@ -791,10 +736,6 @@ where
         div()
             .id(self.id)
             .size_full()
-            .map(|mut this| {
-                *this.style() = style;
-                this
-            })
             .relative()
             .child(
                 div()
@@ -810,9 +751,17 @@ where
                     .child(self.element.flex_1()),
             )
             .child(
-                Scrollbar::new(&scroll_handle)
-                    .id("scrollbar")
-                    .axis(self.axis),
+                div()
+                    .absolute()
+                    .top_0()
+                    .right_0()
+                    .bottom_0()
+                    .left_0()
+                    .child(
+                        Scrollbar::new(&scroll_handle)
+                            .id("scrollbar")
+                            .axis(self.axis),
+                    ),
             )
     }
 }
