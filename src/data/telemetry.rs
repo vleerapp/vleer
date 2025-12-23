@@ -2,7 +2,7 @@ use anyhow::Result;
 use gpui::{App, Global};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, time::Duration};
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
@@ -41,10 +41,12 @@ impl Global for Telemetry {}
 
 impl Telemetry {
     pub fn init(cx: &mut App, data_dir: PathBuf) {
-        cx.set_global(Self {
-            client: Client::new(),
-            data_dir,
-        });
+        let client = Client::builder()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .unwrap_or_else(|_| Client::new());
+
+        cx.set_global(Self { client, data_dir });
     }
 
     pub async fn submit(&self, state: &State, config: &Config) {
@@ -53,7 +55,6 @@ impl Telemetry {
             return;
         }
 
-        let song_count = state.get_all_song_ids().await.len();
         let url = if cfg!(debug_assertions) {
             "http://localhost:3000/v1/telemetry"
         } else {
@@ -62,20 +63,28 @@ impl Telemetry {
 
         let user_id = match self.get_or_create_user_id() {
             Ok(id) => id,
-            Err(e) => return error!("Telemetry failed to get user_id: {e}"),
+            Err(e) => {
+                error!("Telemetry failed to get user_id: {e}");
+                return;
+            }
         };
+
+        let song_count = state.get_all_song_ids().await.len() as i64;
 
         let payload = TelemetrySubmission {
             user_id,
             app_version: env!("CARGO_PKG_VERSION").to_string(),
             os: self.current_os(),
-            song_count: song_count as i64,
+            song_count,
         };
 
-        match self.client.post(url).json(&payload).send().await {
-            Ok(res) if !res.status().is_success() => error!("Telemetry status: {}", res.status()),
+        let res = self.client.post(url).json(&payload).send().await;
+
+        match res {
+            Ok(res) if res.status().is_success() => info!("Telemetry sent"),
+            Ok(res) => error!("Telemetry status: {}", res.status()),
+            Err(e) if cfg!(debug_assertions) => debug!("Telemetry error (debug build): {e}"),
             Err(e) => error!("Telemetry error: {e}"),
-            _ => info!("Telemetry sent"),
         }
     }
 
