@@ -227,39 +227,52 @@ impl State {
         query: &str,
     ) -> Vec<(Cuid, String, Option<String>, String)> {
         let query_lower = query.to_lowercase();
+        let query_normalized = Self::normalize_search(query_lower.as_str());
         let inner = self.inner.read().await;
         let mut items = Vec::new();
-        let mut album_titles = std::collections::HashSet::new();
+        let mut seen_titles = std::collections::HashSet::new();
 
-        for album in inner.albums.values() {
-            if album.title.to_lowercase().contains(&query_lower)
-                || album
-                    .artist
-                    .as_ref()
-                    .map_or(false, |a| a.name.to_lowercase().contains(&query_lower))
-            {
-                items.push((
-                    album.id.clone(),
-                    album.title.clone(),
-                    album.cover.clone(),
-                    "Album".to_string(),
-                ));
-                album_titles.insert(album.title.to_lowercase());
+        let mut album_song_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for song in inner.songs.values() {
+            if let Some(album) = song.album.as_ref() {
+                let album_id = album.id.to_string();
+                *album_song_counts.entry(album_id).or_insert(0) += 1;
             }
         }
 
+        let mut single_song_album_ids = std::collections::HashSet::new();
+        for (album_id, count) in &album_song_counts {
+            if *count == 1 {
+                single_song_album_ids.insert(album_id.clone());
+            }
+        }
+
+        let matches_query = |text: &str| -> bool {
+            let text_lower = text.to_lowercase();
+            let text_normalized = Self::normalize_search(&text_lower);
+
+            text_lower.contains(&query_lower)
+                || text_normalized.contains(&query_normalized)
+                || query_normalized
+                    .split_whitespace()
+                    .all(|q_part| text_normalized.contains(q_part))
+        };
+
         for song in inner.songs.values() {
             let song_title_lower = song.title.to_lowercase();
-            if (song_title_lower.contains(&query_lower)
+            let song_title_norm = Self::normalize_search(&song_title_lower);
+
+            if (matches_query(&song.title)
                 || song
                     .artist
                     .as_ref()
-                    .map_or(false, |a| a.name.to_lowercase().contains(&query_lower))
+                    .map_or(false, |a| matches_query(&a.name))
                 || song
                     .album
                     .as_ref()
-                    .map_or(false, |a| a.title.to_lowercase().contains(&query_lower)))
-                && !album_titles.contains(&song_title_lower)
+                    .map_or(false, |a| matches_query(&a.title)))
+                && seen_titles.insert(song_title_norm.clone())
             {
                 items.push((
                     song.id.clone(),
@@ -270,8 +283,35 @@ impl State {
             }
         }
 
+        for album in inner.albums.values() {
+            if single_song_album_ids.contains(&album.id.to_string()) {
+                continue;
+            }
+
+            let album_title_lower = album.title.to_lowercase();
+            let album_title_norm = Self::normalize_search(&album_title_lower);
+
+            if (matches_query(&album.title)
+                || album
+                    .artist
+                    .as_ref()
+                    .map_or(false, |a| matches_query(&a.name)))
+                && seen_titles.insert(album_title_norm.clone())
+            {
+                items.push((
+                    album.id.clone(),
+                    album.title.clone(),
+                    album.cover.clone(),
+                    "Album".to_string(),
+                ));
+            }
+        }
+
         for artist in inner.artists.values() {
-            if artist.name.to_lowercase().contains(&query_lower) {
+            let artist_name_lower = artist.name.to_lowercase();
+            let artist_name_norm = Self::normalize_search(&artist_name_lower);
+
+            if matches_query(&artist.name) && seen_titles.insert(artist_name_norm) {
                 items.push((
                     artist.id.clone(),
                     artist.name.clone(),
@@ -282,7 +322,10 @@ impl State {
         }
 
         for playlist in inner.playlists.values() {
-            if playlist.name.to_lowercase().contains(&query_lower) {
+            let playlist_name_lower = playlist.name.to_lowercase();
+            let playlist_name_norm = Self::normalize_search(&playlist_name_lower);
+
+            if matches_query(&playlist.name) && seen_titles.insert(playlist_name_norm) {
                 items.push((
                     playlist.id.clone(),
                     playlist.name.clone(),
@@ -293,29 +336,12 @@ impl State {
         }
 
         items.sort_by(|a, b| {
-            let title_a_lower = a.1.to_lowercase();
-            let title_b_lower = b.1.to_lowercase();
-
-            let is_exact_a = match a.3.as_str() {
-                "Artist" | "Playlist" => title_a_lower == query_lower,
-                "Album" | "Song" => title_a_lower == query_lower,
-                _ => false,
-            };
-            let is_exact_b = match b.3.as_str() {
-                "Artist" | "Playlist" => title_b_lower == query_lower,
-                "Album" | "Song" => title_b_lower == query_lower,
-                _ => false,
-            };
-            let exact_score_a = if is_exact_a { 0 } else { 1 };
-            let exact_score_b = if is_exact_b { 0 } else { 1 };
-
-            let len_score_a = if a.1.len() <= 30 { 0 } else { 1 };
-            let len_score_b = if b.1.len() <= 30 { 0 } else { 1 };
-
-            exact_score_a
-                .cmp(&exact_score_b)
-                .then(len_score_a.cmp(&len_score_b))
-                .then(title_a_lower.cmp(&title_b_lower))
+            let score_a = Self::compute_search_score(&a.1, &query_lower, &query_normalized);
+            let score_b = Self::compute_search_score(&b.1, &query_lower, &query_normalized);
+            score_a
+                .cmp(&score_b)
+                .reverse()
+                .then(a.1.to_lowercase().cmp(&b.1.to_lowercase()))
         });
 
         items
@@ -328,6 +354,44 @@ impl State {
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(self.search_all_items(query))
         })
+    }
+
+    fn normalize_search(text: &str) -> String {
+        text.chars()
+            .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+            .collect()
+    }
+
+    fn compute_search_score(title: &str, query_lower: &str, query_normalized: &str) -> usize {
+        let title_lower = title.to_lowercase();
+        let title_normalized = Self::normalize_search(&title_lower);
+
+        let mut score = 0;
+
+        if title_lower == *query_lower || title_normalized == *query_normalized {
+            score += 1000;
+        }
+
+        if title_lower.contains(query_lower) || title_normalized.contains(query_normalized) {
+            score += 100;
+        }
+
+        if title_lower.starts_with(query_lower) || title_normalized.starts_with(query_normalized) {
+            score += 50;
+        }
+
+        if query_normalized
+            .split_whitespace()
+            .all(|q| title_normalized.contains(q))
+        {
+            score += 20;
+        }
+
+        if title.len() <= 30 {
+            score += 10;
+        }
+
+        score
     }
 
     pub async fn get_search_match_counts(&self, query: &str) -> (usize, usize, usize, usize) {
