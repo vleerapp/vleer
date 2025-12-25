@@ -6,7 +6,7 @@ use tracing::debug;
 
 use crate::data::config::Config;
 use crate::data::types::Song;
-use crate::media::media_keys::MediaKeyHandler;
+use crate::media::media_controls::MediaKeyHandler;
 use crate::media::playback::Playback;
 
 pub struct Queue {

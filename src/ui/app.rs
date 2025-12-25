@@ -11,7 +11,7 @@ use crate::{
         state::State,
         telemetry::Telemetry,
     },
-    media::{media_keys::MediaKeyHandler, playback::Playback, queue::Queue},
+    media::{media_controls::MediaKeyHandler, playback::Playback, queue::Queue},
     ui::{
         assets::VleerAssetSource,
         components::{
@@ -222,6 +222,7 @@ pub async fn run() -> anyhow::Result<()> {
             Telemetry::init(cx, data_dir.clone());
             State::init(cx);
             Scanner::init(cx);
+            MediaKeyHandler::init(cx);
 
             find_fonts(cx)
                 .inspect_err(|e| error!(?e, "Failed to load fonts"))
@@ -242,8 +243,6 @@ pub async fn run() -> anyhow::Result<()> {
                 },
                 |window, cx| {
                     window.set_window_title("Vleer");
-
-                    MediaKeyHandler::init(cx, window);
 
                     cx.new(|cx| {
                         Playback::start_playback_monitor(window, cx);

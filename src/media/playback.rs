@@ -11,7 +11,7 @@ use tracing::debug;
 use super::equalizer::{Equalizer, EqualizerSource};
 use super::queue::Queue;
 use crate::data::config::Config;
-use crate::media::media_keys::MediaKeyHandler;
+use crate::media::media_controls::MediaKeyHandler;
 use crate::media::visualizer::{F32Converter, VisualizerSource, VisualizerState};
 
 const LOG_VOLUME_GROWTH_RATE: f32 = 6.908;
