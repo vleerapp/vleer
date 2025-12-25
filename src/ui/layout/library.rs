@@ -110,7 +110,17 @@ fn pinned_item(
         .child(
             div()
                 .size(px(36.0))
-                .map(|this| if is_artist { this.rounded_full() } else { this })
+                .map(|this| {
+                    if is_artist {
+                        this.rounded_tr(px(0.0))
+                            .rounded_br(px(0.0))
+                            .rounded_bl(px(18.0))
+                            .rounded_tl(px(18.0))
+                    } else {
+                        this.rounded_full()
+                    }
+                })
+                .rounded(px(18.0))
                 .relative()
                 .child(cover_element)
                 .when(!is_artist, |this| {
@@ -288,6 +298,29 @@ impl Render for Library {
                                                 },
                                             )),
                                     ),
+                                ),
+                        )
+                    })
+                    .when(!has_items && is_searching, |this| {
+                        this.child(
+                            flex_col()
+                                .flex_1()
+                                .min_h_0()
+                                .w_full()
+                                .child(
+                                    div().pr(px(variables.padding_16)).child(
+                                        div()
+                                            .w_full()
+                                            .h(px(0.5))
+                                            .bg(variables.border)
+                                            .flex_shrink_0(),
+                                    ),
+                                )
+                                .child(
+                                    div()
+                                        .pt(px(variables.padding_16))
+                                        .text_color(variables.text_secondary)
+                                        .child("No Results Found"),
                                 ),
                         )
                     }),
