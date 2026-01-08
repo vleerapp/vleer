@@ -63,15 +63,35 @@ where
         );
 
         if let Ok(spec) = spectrum {
+            // Raw band sums (simple grouping of a couple frequency bins)
             let b1 = spec.freq_val_exact(40.0).val() + spec.freq_val_exact(80.0).val();
             let b2 = spec.freq_val_exact(120.0).val() + spec.freq_val_exact(250.0).val();
             let b3 = spec.freq_val_exact(400.0).val() + spec.freq_val_exact(800.0).val();
             let b4 = spec.freq_val_exact(1200.0).val() + spec.freq_val_exact(2400.0).val();
 
-            let normalize = |v: f32| (v * 0.1).clamp(0.05, 1.0);
+            let gains: [f32; 4] = [0.3, 0.7, 0.9, 1.0];
 
-            let mut bands = self.state.bands.lock().unwrap();
-            *bands = [normalize(b1), normalize(b2), normalize(b3), normalize(b4)];
+            let base_mul: f32 = 0.07;
+
+            let alphas: [f32; 4] = [0.08, 0.18, 0.28, 0.35];
+
+            let targets: [f32; 4] = [
+                (b1 * gains[0] * base_mul).clamp(0.02, 1.0),
+                (b2 * gains[1] * base_mul).clamp(0.02, 1.0),
+                (b3 * gains[2] * base_mul).clamp(0.02, 1.0),
+                (b4 * gains[3] * base_mul).clamp(0.02, 1.0),
+            ];
+
+            let mut bands_guard = self.state.bands.lock().unwrap();
+            let prev = *bands_guard;
+
+            let mut new_bands = [0.0_f32; 4];
+            for i in 0..4 {
+                let alpha = alphas[i];
+                new_bands[i] = prev[i] * (1.0 - alpha) + targets[i] * alpha;
+            }
+
+            *bands_guard = new_bands;
         }
     }
 }
