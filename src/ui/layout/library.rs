@@ -39,7 +39,7 @@ impl Library {
                 InputEvent::Change(text) => {
                     this.search_query = text.clone();
                     cx.update_global::<State, _>(|state, _| {
-                        state.set_search_query(text.clone());
+                        state.set_search_query_sync(text.clone());
                     });
                     cx.notify();
                 }

@@ -7,7 +7,7 @@ use crate::{
     ui::{
         components::{
             div::flex_col,
-            song_table::{SongColumn, SongEntry, SongTable, TableSort},
+            song_table::{SongColumn, SongEntry, SongTable, SongTableEvent, TableSort},
             title::Title,
         },
         variables::Variables,
@@ -17,76 +17,79 @@ use crate::{
 
 fn get_rows(cx: &mut App, sort: Option<TableSort>) -> Vec<Cuid> {
     let state = cx.global::<State>().clone();
-    let mut song_ids = tokio::task::block_in_place(|| {
-        tokio::runtime::Handle::current().block_on(state.get_all_song_ids())
-    });
 
-    if sort.is_none() {
-        return song_ids;
-    }
+    let search_query = state.get_search_query_sync().to_lowercase();
+    let all_songs = state.get_all_songs_sync();
 
-    let sort = sort.unwrap();
+    let mut songs: Vec<_> = all_songs
+        .into_iter()
+        .filter(|s| {
+            if search_query.is_empty() {
+                return true;
+            }
+            let title_match = s.title.to_lowercase().contains(&search_query);
+            let artist_match = s
+                .artist
+                .as_ref()
+                .map_or(false, |a| a.name.to_lowercase().contains(&search_query));
+            let album_match = s
+                .album
+                .as_ref()
+                .map_or(false, |a| a.title.to_lowercase().contains(&search_query));
 
-    let mut songs: Vec<_> = song_ids
-        .iter()
-        .filter_map(|id| {
-            tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(state.get_song(id))
-            })
+            title_match || artist_match || album_match
         })
         .collect();
 
-    match sort.column {
-        SongColumn::Number => {
-            if !sort.ascending {
-                song_ids.reverse();
+    if let Some(sort) = sort {
+        match sort.column {
+            SongColumn::Number => {
+                if !sort.ascending {
+                    songs.reverse();
+                }
             }
-        }
-        SongColumn::Title => {
-            songs.sort_by(|a, b| {
-                if sort.ascending {
-                    a.title.to_lowercase().cmp(&b.title.to_lowercase())
-                } else {
-                    b.title.to_lowercase().cmp(&a.title.to_lowercase())
-                }
-            });
-            song_ids = songs.iter().map(|s| s.id.clone()).collect();
-        }
-        SongColumn::Album => {
-            songs.sort_by(|a, b| {
-                let album_a = a
-                    .album
-                    .as_ref()
-                    .map(|a| a.title.clone())
-                    .unwrap_or_default();
-                let album_b = b
-                    .album
-                    .as_ref()
-                    .map(|a| a.title.clone())
-                    .unwrap_or_default();
+            SongColumn::Title => {
+                songs.sort_by(|a, b| {
+                    if sort.ascending {
+                        a.title.to_lowercase().cmp(&b.title.to_lowercase())
+                    } else {
+                        b.title.to_lowercase().cmp(&a.title.to_lowercase())
+                    }
+                });
+            }
+            SongColumn::Album => {
+                songs.sort_by(|a, b| {
+                    let album_a = a
+                        .album
+                        .as_ref()
+                        .map(|a| a.title.clone())
+                        .unwrap_or_default();
+                    let album_b = b
+                        .album
+                        .as_ref()
+                        .map(|a| a.title.clone())
+                        .unwrap_or_default();
 
-                if sort.ascending {
-                    album_a.to_lowercase().cmp(&album_b.to_lowercase())
-                } else {
-                    album_b.to_lowercase().cmp(&album_a.to_lowercase())
-                }
-            });
-            song_ids = songs.iter().map(|s| s.id.clone()).collect();
-        }
-
-        SongColumn::Duration => {
-            songs.sort_by(|a, b| {
-                if sort.ascending {
-                    a.duration.cmp(&b.duration)
-                } else {
-                    b.duration.cmp(&a.duration)
-                }
-            });
-            song_ids = songs.iter().map(|s| s.id.clone()).collect();
+                    if sort.ascending {
+                        album_a.to_lowercase().cmp(&album_b.to_lowercase())
+                    } else {
+                        album_b.to_lowercase().cmp(&album_a.to_lowercase())
+                    }
+                });
+            }
+            SongColumn::Duration => {
+                songs.sort_by(|a, b| {
+                    if sort.ascending {
+                        a.duration.cmp(&b.duration)
+                    } else {
+                        b.duration.cmp(&a.duration)
+                    }
+                });
+            }
         }
     }
 
-    song_ids
+    songs.iter().map(|s| s.id.clone()).collect()
 }
 
 fn get_row(cx: &mut App, id: Cuid) -> Option<Arc<SongEntry>> {
@@ -144,6 +147,7 @@ fn get_row(cx: &mut App, id: Cuid) -> Option<Arc<SongEntry>> {
 pub struct SongsView {
     pub hovered: bool,
     table: Entity<SongTable>,
+    last_query: String,
 }
 
 impl SongsView {
@@ -153,9 +157,24 @@ impl SongsView {
 
         let table = SongTable::new(cx, get_rows_handler, get_row_handler, None);
 
+        cx.observe_global::<State>(|this, cx| {
+            let q = cx.global::<State>().get_search_query_sync();
+            if q == this.last_query {
+                return;
+            }
+            this.last_query = q;
+
+            let table_handle = this.table.clone();
+            cx.update_entity(&table_handle, |_table, cx| {
+                cx.emit(SongTableEvent::NewRows);
+            });
+        })
+        .detach();
+
         Self {
             hovered: false,
             table,
+            last_query: String::new(),
         }
     }
 }

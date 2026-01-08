@@ -9,7 +9,7 @@ use crate::media::playback::Playback;
 use crate::media::queue::Queue;
 use crate::ui::components::div::{flex_col, flex_row};
 use crate::ui::components::icons::icon::icon;
-use crate::ui::components::icons::icons::{ARROW_DOWN, ARROW_UP, DURATION, PAUSE, PLAY};
+use crate::ui::components::icons::icons::{ARROW_DOWN, ARROW_UP, DURATION, PLAY};
 use crate::ui::components::scrollbar::{Scrollbar, ScrollbarAxis};
 use crate::ui::variables::Variables;
 
@@ -414,7 +414,7 @@ impl Render for SongTableItem {
 }
 
 pub enum SongTableEvent {
-    _NewRows,
+    NewRows,
 }
 
 #[derive(Clone)]
@@ -483,7 +483,7 @@ impl SongTable {
 
             let get_rows_for_event = get_rows_clone;
             cx.subscribe(&cx.entity(), move |this, _, event, cx| match event {
-                SongTableEvent::_NewRows => {
+                SongTableEvent::NewRows => {
                     let sort_method = *this.sort_method.read(cx);
                     let items = Some(Arc::new((get_rows_for_event)(cx, sort_method)));
                     let (number_width, duration_width) =
