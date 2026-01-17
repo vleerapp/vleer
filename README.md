@@ -5,7 +5,7 @@
 
 A free, open-source music app powered by the OpenMusic API Spec—the open standard of music streaming. Access your local library, self-hosted servers, or any compatible source, all without subscriptions.
 
-<a href="https://openmusic.vleer.app">OpenMusic Docs</a> · <a href="https://discord.gg/invites/PEX37vvWyU">Discord</a>
+<a href="https://docs.vleer.app">Docs</a> · <a href="https://discord.gg/invites/PEX37vvWyU">Discord</a>
 
 </div>
 <br>
