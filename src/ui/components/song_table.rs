@@ -347,8 +347,7 @@ impl Render for SongTableItem {
                                                                 e
                                                             );
                                                         }
-                                                    })
-                                                    .ok();
+                                                    });
                                                 }
                                             })
                                             .detach();

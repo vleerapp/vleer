@@ -19,18 +19,14 @@ impl DiscordPresence {
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
-                let song_opt = cx
-                    .update(|app| app.try_global::<Queue>().and_then(|q| q.current().cloned()))
-                    .ok()
-                    .flatten();
-
-                let (position, is_paused) = cx
-                    .update(|app| {
-                        app.try_global::<Playback>()
-                            .map(|p| (p.get_position(), p.is_paused()))
-                            .unwrap_or((0.0f32, true))
-                    })
-                    .unwrap_or((0.0f32, true));
+                let song_opt =
+                    cx.update(|app| app.try_global::<Queue>().and_then(|q| q.current().cloned()));
+                    
+                let (position, is_paused) = cx.update(|app| {
+                    app.try_global::<Playback>()
+                        .map(|p| (p.get_position(), p.is_paused()))
+                        .unwrap_or((0.0f32, true))
+                });
 
                 let mut client = client.lock().unwrap();
 
