@@ -1597,6 +1597,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "discord-rich-presence"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ead3c5edc7e048c317c6fc4a7e24aff0c7e4c136918e2ba38106a385b2cc53a5"
+dependencies = [
+ "log",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "serde_repr",
+ "thiserror 2.0.17",
+ "uuid 0.8.2",
+]
+
+[[package]]
 name = "dispatch"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2490,7 +2505,7 @@ dependencies = [
  "usvg",
  "util",
  "util_macros",
- "uuid",
+ "uuid 1.19.0",
  "waker-fn",
  "wayland-backend",
  "wayland-client",
@@ -7074,6 +7089,15 @@ dependencies = [
 
 [[package]]
 name = "uuid"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc5cf98d8186244414c848017f0e2676b3fcb46807f6668a97dfe67359a3c4b7"
+dependencies = [
+ "getrandom 0.2.16",
+]
+
+[[package]]
+name = "uuid"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2e054861b4bd027cd373e18e8d8d8e6548085000e41290d95ce0c373a654b4a"
@@ -7157,6 +7181,7 @@ dependencies = [
  "anyhow",
  "cuid2",
  "dirs 6.0.0",
+ "discord-rich-presence",
  "futures",
  "global-hotkey",
  "gpui",
@@ -7182,7 +7207,7 @@ dependencies = [
  "tracing-subscriber",
  "unicode-segmentation",
  "url",
- "uuid",
+ "uuid 1.19.0",
  "walkdir",
 ]
 
@@ -8274,7 +8299,7 @@ dependencies = [
  "serde_repr",
  "tracing",
  "uds_windows",
- "uuid",
+ "uuid 1.19.0",
  "windows-sys 0.61.2",
  "winnow",
  "zbus_macros",

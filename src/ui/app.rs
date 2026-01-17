@@ -18,6 +18,7 @@ use crate::{
             div::{flex_col, flex_row},
             input::bind_input_keys,
         },
+        discord_presence::DiscordPresence,
         global_actions::register_actions,
         layout::{library::Library, navbar::Navbar, player::Player},
         variables::Variables,
@@ -217,6 +218,7 @@ pub async fn run() -> anyhow::Result<()> {
             Database::init(cx, pool).expect("unable to initizalize database");
             Config::init(cx, &config_dir).expect("unable to initizalize settings");
             Playback::init(cx).expect("unable to initizalize playback context");
+            DiscordPresence::init(cx);
             Queue::init(cx);
             Variables::init(cx);
             Telemetry::init(cx, data_dir.clone());
