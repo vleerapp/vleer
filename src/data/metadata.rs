@@ -130,7 +130,7 @@ pub fn extract_and_save_cover(audio_path: &Path, covers_dir: &Path) -> Result<Op
             .with_context(|| format!("Failed to save cover: {:?}", cover_path))?;
 
         if let Ok(mut img) = load_from_memory(data) {
-            const MAX_DIM: u32 = 200;
+            const MAX_DIM: u32 = 512;
             let (w, h) = img.dimensions();
             if w > MAX_DIM || h > MAX_DIM {
                 img = img.resize(MAX_DIM, MAX_DIM, FilterType::Lanczos3);

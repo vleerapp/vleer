@@ -18,7 +18,7 @@ use crate::data::state::State;
 use crate::data::telemetry::Telemetry;
 
 const SUPPORTED_EXTENSIONS: &[&str] = &["mp3", "flac", "ogg", "m4a", "aac", "wav", "mp1", "mp2"];
-const MAX_CONCURRENT_SCANS: usize = 8;
+const MAX_CONCURRENT_SCANS: usize = 16;
 
 #[derive(Debug, Clone)]
 pub struct ScanStats {

@@ -273,8 +273,9 @@ impl Render for SongTableItem {
                                 .relative()
                                 .group("cover-container")
                                 .when_some(data.cover_uri.clone(), |div, image| {
+                                    let sized_image = format!("{}?size={}", image, image_size as u32);
                                     div.child(
-                                        img(image)
+                                        img(sized_image)
                                             .size(px(image_size))
                                             .object_fit(ObjectFit::Cover),
                                     )

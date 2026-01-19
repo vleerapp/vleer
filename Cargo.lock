@@ -3448,6 +3448,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "lru"
+version = "0.16.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1dc47f592c06f33f8e3aea9591776ec7c9f9e4124778ff8a3c3b87159f7e593"
+dependencies = [
+ "hashbrown 0.16.1",
+]
+
+[[package]]
 name = "lru-slab"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7309,7 +7318,9 @@ dependencies = [
  "gpui_macros 0.1.0 (git+https://github.com/zed-industries/zed)",
  "image",
  "indexmap",
+ "lazy_static",
  "lofty",
+ "lru",
  "mpris-server",
  "notify",
  "notify-debouncer-full",

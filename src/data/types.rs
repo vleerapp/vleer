@@ -162,18 +162,12 @@ pub struct EventContext {
 
 impl Song {
     pub fn cover_uri(&self) -> Option<String> {
-        self.cover.as_ref().map(|cover_filename| {
-            let filename = if cover_filename.ends_with(".jpg") {
-                cover_filename.clone()
-            } else {
-                format!("{}.jpg", cover_filename)
-            };
-
+        self.cover.as_ref().map(|filename| {
             let cover_path = dirs::data_dir()
                 .expect("couldn't get data directory")
                 .join("vleer")
                 .join("covers")
-                .join(filename.trim_end_matches('/'));
+                .join(format!("{}.jpg", filename.trim_end_matches('/')));
 
             format!(
                 "file:///{}",

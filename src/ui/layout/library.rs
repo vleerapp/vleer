@@ -1,12 +1,7 @@
-use gpui::prelude::FluentBuilder;
-use gpui::*;
-use std::sync::Arc;
-
 use crate::data::state::State;
 use crate::data::types::{Cuid, Song};
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
-
 use crate::ui::components::div::flex_row;
 use crate::ui::components::icons::icon::icon;
 use crate::ui::components::scrollbar::ScrollableElement;
@@ -21,6 +16,9 @@ use crate::ui::{
     variables::Variables,
     views::AppView,
 };
+use gpui::prelude::FluentBuilder;
+use gpui::*;
+use std::sync::Arc;
 
 pub struct Library {
     pub hovered: bool,
@@ -84,16 +82,20 @@ fn pinned_item(
         .join("covers");
 
     let cover_uri = image_hash.and_then(|hash| {
-        let cover_path = covers_dir.join(hash);
-        if cover_path.exists() {
-            Some(format!("!file://{}", cover_path.to_string_lossy()))
-        } else {
-            None
-        }
+        let cover_path = covers_dir.join(format!("{}.jpg", hash.trim()));
+        format!(
+            "file:///{}",
+            cover_path
+                .canonicalize()
+                .unwrap_or(cover_path)
+                .to_string_lossy()
+                .trim_start_matches('/')
+        )
+        .into()
     });
 
     let cover_element = if let Some(uri) = cover_uri {
-        img(uri)
+        img(format!("{}?size=50", uri))
             .size_full()
             .object_fit(ObjectFit::Cover)
             .into_any_element()

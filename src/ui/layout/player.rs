@@ -161,7 +161,7 @@ impl Render for Player {
                 .gap(px(variables.padding_8))
                 .items_center()
                 .child(if let Some(uri) = cover_uri {
-                    img(uri)
+                    img(format!("{}?size=50", uri))
                         .size(px(36.0))
                         .object_fit(ObjectFit::Cover)
                         .into_any_element()

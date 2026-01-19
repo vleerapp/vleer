@@ -17,7 +17,6 @@ pub async fn create_pool(path: impl AsRef<Path>) -> Result<SqlitePool, sqlx::Err
         .optimize_on_close(true, None)
         .synchronous(SqliteSynchronous::Normal)
         .journal_mode(SqliteJournalMode::Wal)
-        .statement_cache_capacity(0)
         .create_if_missing(true);
 
     let pool = SqlitePool::connect_with(options).await?;

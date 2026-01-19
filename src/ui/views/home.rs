@@ -302,7 +302,7 @@ impl Render for HomeView {
                     };
 
                     let cover_element = if let Some(uri) = cover_uri {
-                        img(uri)
+                        img(format!("{}?size=180", uri))
                             .id(ElementId::Name(format!("recent-cover-{}", idx).into()))
                             .size(px(cover_size))
                             .object_fit(ObjectFit::Cover)
