@@ -45,7 +45,7 @@ gpg --verify vleer_setup.msi.asc vleer_setup.msi
 
 <details>
   <summary><kbd>macOS</kbd></summary>
-  When you try to open the app, you'll get a warning that the app is damaged. Open the terminal and run this command `xattr -dr com.apple.quarantine /Applications/Vleer.app` after that it should open without any problems. 
+  When you try to open the app, you'll get a warning that the app is damaged. Open the terminal and run this command <code>xattr -dr com.apple.quarantine /Applications/Vleer.app</code> after that it should open without any problems. 
 </details>
 
 <details>
