@@ -73,16 +73,36 @@ jobs:
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
 
-      - name: Sign binaries
+      - name: Sign binaries (platform-appropriate)
         shell: bash
         run: |
+          # macOS: ad-hoc signing
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            codesign --force --deep --sign - target/release/bundles/*.app
+          fi
+
+          # All platforms: GPG signatures for verification
           for file in target/release/bundles/*; do
-            if [[ -f "$file" ]]; then
-              echo "Signing $file"
+            if [[ -f "$file" && ! "$file" =~ \.asc$ ]]; then
+              echo "GPG signing $file"
               gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" \
                 --detach-sign --armor --output "${file}.asc" "$file"
             fi
           done
+        env:
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Create SHA256SUMS with GPG signature
+        shell: bash
+        run: |
+          cd target/release/bundles
+          sha256sum *.{dmg,msi,deb,AppImage,tar.gz} 2>/dev/null > SHA256SUMS || true
+          gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" \
+            --clearsign SHA256SUMS
+          mv SHA256SUMS.asc SHA256SUMS.gpg
+          
+          # Keep plain SHA256SUMS too for non-GPG users
+          sha256sum *.{dmg,msi,deb,AppImage,tar.gz} 2>/dev/null > SHA256SUMS.txt || true
         env:
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
 
