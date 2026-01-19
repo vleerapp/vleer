@@ -45,7 +45,7 @@ gpg --verify vleer_setup.msi.asc vleer_setup.msi
 
 <details>
   <summary><kbd>macOS</kbd></summary>
-  When you try to open the app, you'll get a warning. Go to System Settings → Privacy & Security, scroll down to the Security section, and click "Open Anyway". You'll need to enter your password to confirm.
+  When you try to open the app, you'll get a warning that the app is damaged. Open the terminal and run this command `xattr -dr com.apple.quarantine /Applications/Vleer.app` after that it should open without any problems. 
 </details>
 
 <details>
