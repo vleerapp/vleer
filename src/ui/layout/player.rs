@@ -1,7 +1,7 @@
 use gpui::{prelude::FluentBuilder, *};
 
 use crate::{
-    data::config::Config,
+    data::{config::Config, state::State},
     media::{
         playback::Playback,
         queue::{Queue, RepeatMode},
@@ -40,24 +40,20 @@ impl Render for Player {
         };
 
         let current_track = cx.global::<Queue>().current().map(|song| {
+            let state = cx.global::<State>();
+
             let artist_name = song
-                .artist
+                .artist_id
                 .as_ref()
+                .and_then(|id| {
+                    tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current().block_on(state.get_artist(id))
+                    })
+                })
                 .map(|a| a.name.clone())
                 .unwrap_or_else(|| "Unknown Artist".to_string());
 
-            let cover_uri = song.cover.as_ref().and_then(|cover_hash| {
-                let covers_dir = dirs::data_dir()
-                    .expect("couldn't get data directory")
-                    .join("vleer")
-                    .join("covers");
-                let cover_path = covers_dir.join(cover_hash);
-                if cover_path.exists() {
-                    Some(format!("!file://{}", cover_path.to_string_lossy()))
-                } else {
-                    None
-                }
-            });
+            let cover_uri = song.cover_uri();
 
             (song.title.clone(), artist_name, cover_uri)
         });

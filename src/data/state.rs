@@ -103,59 +103,36 @@ impl State {
             })
             .collect();
 
-        let artist_map: HashMap<Cuid, Arc<Artist>> = artists
-            .iter()
-            .map(|a| (a.id.clone(), Arc::new(a.clone())))
-            .collect();
-
         let albums: Vec<Album> = db_albums
             .into_iter()
-            .map(|a| {
-                let artist = a.artist.as_ref().and_then(|id| artist_map.get(id).cloned());
-                Album {
-                    id: a.id,
-                    title: a.title,
-                    artist,
-                    cover: a.cover,
-                    favorite: a.favorite,
-                    pinned: a.pinned,
-                }
+            .map(|a| Album {
+                id: a.id,
+                title: a.title,
+                artist_id: a.artist,
+                cover: a.cover,
+                favorite: a.favorite,
+                pinned: a.pinned,
             })
-            .collect();
-
-        let album_map: HashMap<Cuid, Arc<Album>> = albums
-            .iter()
-            .map(|a| (a.id.clone(), Arc::new(a.clone())))
             .collect();
 
         let songs: Vec<Song> = db_songs
             .into_iter()
-            .map(|db_song| {
-                let artist = db_song
-                    .artist_id
-                    .as_ref()
-                    .and_then(|id| artist_map.get(id).cloned());
-                let album = db_song
-                    .album_id
-                    .as_ref()
-                    .and_then(|id| album_map.get(id).cloned());
-
-                Song {
-                    id: db_song.id,
-                    title: db_song.title,
-                    artist,
-                    album,
-                    file_path: db_song.file_path,
-                    genre: db_song.genre,
-                    date: db_song.date,
-                    duration: db_song.duration,
-                    cover: db_song.cover,
-                    track_number: db_song.track_number,
-                    favorite: db_song.favorite,
-                    track_lufs: db_song.track_lufs,
-                    pinned: db_song.pinned,
-                    date_added: db_song.date_added,
-                }
+            .map(|db_song| Song {
+                id: db_song.id,
+                title: db_song.title,
+                artist_id: db_song.artist_id,
+                album_id: db_song.album_id,
+                file_path: db_song.file_path,
+                genre: db_song.genre,
+                date: db_song.date,
+                duration: db_song.duration,
+                cover: db_song.cover,
+                track_number: db_song.track_number,
+                favorite: db_song.favorite,
+                track_lufs: db_song.track_lufs,
+                pinned: db_song.pinned,
+                date_added: db_song.date_added,
+                date_updated: db_song.date_updated,
             })
             .collect();
 
@@ -232,12 +209,11 @@ impl State {
         let mut items = Vec::new();
         let mut seen_titles = std::collections::HashSet::new();
 
-        let mut album_song_counts: std::collections::HashMap<String, usize> =
+        let mut album_song_counts: std::collections::HashMap<Cuid, usize> =
             std::collections::HashMap::new();
         for song in inner.songs.values() {
-            if let Some(album) = song.album.as_ref() {
-                let album_id = album.id.to_string();
-                *album_song_counts.entry(album_id).or_insert(0) += 1;
+            if let Some(album_id) = &song.album_id {
+                *album_song_counts.entry(album_id.clone()).or_insert(0) += 1;
             }
         }
 
@@ -263,15 +239,19 @@ impl State {
             let song_title_lower = song.title.to_lowercase();
             let song_title_norm = Self::normalize_search(&song_title_lower);
 
-            if (matches_query(&song.title)
-                || song
-                    .artist
-                    .as_ref()
-                    .map_or(false, |a| matches_query(&a.name))
-                || song
-                    .album
-                    .as_ref()
-                    .map_or(false, |a| matches_query(&a.title)))
+            let artist_matches = song
+                .artist_id
+                .as_ref()
+                .and_then(|id| inner.artists.get(id))
+                .map_or(false, |a| matches_query(&a.name));
+
+            let album_matches = song
+                .album_id
+                .as_ref()
+                .and_then(|id| inner.albums.get(id))
+                .map_or(false, |a| matches_query(&a.title));
+
+            if (matches_query(&song.title) || artist_matches || album_matches)
                 && seen_titles.insert(song_title_norm.clone())
             {
                 items.push((
@@ -284,18 +264,20 @@ impl State {
         }
 
         for album in inner.albums.values() {
-            if single_song_album_ids.contains(&album.id.to_string()) {
+            if single_song_album_ids.contains(&album.id) {
                 continue;
             }
 
             let album_title_lower = album.title.to_lowercase();
             let album_title_norm = Self::normalize_search(&album_title_lower);
 
-            if (matches_query(&album.title)
-                || album
-                    .artist
-                    .as_ref()
-                    .map_or(false, |a| matches_query(&a.name)))
+            let artist_matches = album
+                .artist_id
+                .as_ref()
+                .and_then(|id| inner.artists.get(id))
+                .map_or(false, |a| matches_query(&a.name));
+
+            if (matches_query(&album.title) || artist_matches)
                 && seen_titles.insert(album_title_norm.clone())
             {
                 items.push((
@@ -404,12 +386,14 @@ impl State {
             .filter(|song| {
                 song.title.to_lowercase().contains(&query_lower)
                     || song
-                        .artist
+                        .artist_id
                         .as_ref()
+                        .and_then(|id| inner.artists.get(id))
                         .map_or(false, |a| a.name.to_lowercase().contains(&query_lower))
                     || song
-                        .album
+                        .album_id
                         .as_ref()
+                        .and_then(|id| inner.albums.get(id))
                         .map_or(false, |a| a.title.to_lowercase().contains(&query_lower))
             })
             .count();
@@ -420,8 +404,9 @@ impl State {
             .filter(|album| {
                 album.title.to_lowercase().contains(&query_lower)
                     || album
-                        .artist
+                        .artist_id
                         .as_ref()
+                        .and_then(|id| inner.artists.get(id))
                         .map_or(false, |a| a.name.to_lowercase().contains(&query_lower))
             })
             .count();
@@ -617,7 +602,7 @@ impl State {
         let mut songs: Vec<Arc<Song>> = inner
             .songs
             .values()
-            .filter(|song| song.album.as_ref().map(|a| &a.id) == Some(id))
+            .filter(|song| song.album_id.as_ref() == Some(id))
             .cloned()
             .collect();
 

@@ -121,7 +121,7 @@ where
 
 #[derive(Clone)]
 pub struct SongTableItem {
-    data: Option<SongEntry>,
+    data: Option<Arc<SongEntry>>,
     on_select: Option<OnSelectHandler>,
     number_width: f32,
     duration_width: f32,
@@ -144,7 +144,7 @@ impl SongTableItem {
         let data = get_row(cx, id);
 
         cx.new(|_| Self {
-            data: data.as_ref().map(|arc| (**arc).clone()),
+            data: data.clone(),
             on_select,
             number_width,
             duration_width,

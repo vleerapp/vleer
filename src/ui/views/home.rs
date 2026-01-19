@@ -1,7 +1,4 @@
-use std::path::PathBuf;
-
 use gpui::{prelude::FluentBuilder, *};
-
 use std::collections::HashMap;
 
 use crate::{
@@ -39,7 +36,6 @@ pub struct HomeView {
     pub hovered: bool,
     recently_added: Vec<RecentItem>,
     recently_added_offset: usize,
-    covers_dir: PathBuf,
     container_width: Option<f32>,
 }
 
@@ -49,16 +45,10 @@ const GAP_SIZE: f32 = 16.0;
 
 impl HomeView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let covers_dir = dirs::data_dir()
-            .expect("couldn't get data directory")
-            .join("vleer")
-            .join("covers");
-
         let mut view = Self {
             hovered: false,
             recently_added: Vec::new(),
             recently_added_offset: 0,
-            covers_dir,
             container_width: None,
         };
 
@@ -68,7 +58,6 @@ impl HomeView {
 
     fn load_recently_added(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let state = cx.global::<State>().clone();
-        let covers_dir = self.covers_dir.clone();
 
         cx.spawn_in(
             window,
@@ -76,19 +65,20 @@ impl HomeView {
                 let mut cx = cx.clone();
                 async move {
                     let song_ids = state.get_all_song_ids().await;
-                    let mut songs: Vec<Song> = Vec::new();
+                    let mut songs: Vec<std::sync::Arc<Song>> = Vec::new();
 
                     for id in song_ids {
                         if let Some(song) = state.get_song(&id).await {
-                            songs.push((*song).clone());
+                            songs.push(song);
                         }
                     }
 
                     songs.sort_by(|a, b| b.date_added.cmp(&a.date_added));
                     songs.truncate(100);
 
-                    let mut cover_groups: HashMap<String, Vec<Song>> = HashMap::new();
-                    let mut no_cover_songs: Vec<Song> = Vec::new();
+                    let mut cover_groups: HashMap<String, Vec<std::sync::Arc<Song>>> =
+                        HashMap::new();
+                    let mut no_cover_songs: Vec<std::sync::Arc<Song>> = Vec::new();
 
                     for song in songs {
                         if let Some(cover) = &song.cover {
@@ -100,7 +90,7 @@ impl HomeView {
 
                     let mut recent_items: Vec<(String, String, RecentItem)> = Vec::new();
 
-                    for (_cover_hash, group_songs) in cover_groups {
+                    for (_cover, group_songs) in cover_groups {
                         let first_song = &group_songs[0];
                         let most_recent = group_songs
                             .iter()
@@ -108,21 +98,32 @@ impl HomeView {
                             .max()
                             .unwrap_or_default();
 
-                        let artist_name = first_song.artist.as_ref().map(|a| a.name.clone());
+                        let artist_name = first_song
+                            .artist_id
+                            .as_ref()
+                            .and_then(|id| {
+                                tokio::task::block_in_place(|| {
+                                    tokio::runtime::Handle::current().block_on(state.get_artist(id))
+                                })
+                            })
+                            .map(|a| a.name.clone());
 
-                        let cover_uri = first_song.cover.as_ref().and_then(|cover_hash| {
-                            let cover_path = covers_dir.join(cover_hash);
-                            if cover_path.exists() {
-                                Some(format!("!file://{}", cover_path.to_string_lossy()))
-                            } else {
-                                None
-                            }
-                        });
+                        let cover_uri = first_song.cover_uri();
 
                         let year = first_song.date.clone();
 
                         if group_songs.len() > 1 {
-                            let album_title = first_song.album.as_ref().map(|a| a.title.clone());
+                            let album_title = first_song
+                                .album_id
+                                .as_ref()
+                                .and_then(|id| {
+                                    tokio::task::block_in_place(|| {
+                                        tokio::runtime::Handle::current()
+                                            .block_on(state.get_album(id))
+                                    })
+                                })
+                                .map(|a| a.title.clone());
+
                             let title = album_title.unwrap_or_else(|| "Unknown Album".to_string());
 
                             recent_items.push((
@@ -150,7 +151,15 @@ impl HomeView {
 
                     for song in no_cover_songs {
                         let date_added = song.date_added.clone();
-                        let artist_name = song.artist.as_ref().map(|a| a.name.clone());
+                        let artist_name = song
+                            .artist_id
+                            .as_ref()
+                            .and_then(|id| {
+                                tokio::task::block_in_place(|| {
+                                    tokio::runtime::Handle::current().block_on(state.get_artist(id))
+                                })
+                            })
+                            .map(|a| a.name.clone());
 
                         recent_items.push((
                             date_added,

@@ -77,20 +77,10 @@ impl Database {
 
     pub async fn get_all_songs(&self) -> Result<Vec<types::db::Song>, sqlx::Error> {
         sqlx::query_as::<_, types::db::Song>(
-            "SELECT id, title, artist_id, album_id, file_path, genre, date, duration, cover, track_number, favorite, track_lufs, pinned, date_added
+            "SELECT id, title, artist_id, album_id, file_path, genre, date, duration, cover, track_number, favorite, track_lufs, pinned, date_added, date_updated
              FROM songs"
         )
         .fetch_all(&self.pool)
-        .await
-    }
-
-    pub async fn get_song(&self, id: &Cuid) -> Result<types::db::Song, sqlx::Error> {
-        sqlx::query_as::<_, types::db::Song>(
-            "SELECT id, title, artist_id, album_id, file_path, genre, date, duration, cover, track_number, favorite, track_lufs, pinned, date_added
-             FROM songs WHERE id = ?"
-        )
-        .bind(id)
-        .fetch_one(&self.pool)
         .await
     }
 
@@ -99,7 +89,7 @@ impl Database {
         file_path: &str,
     ) -> Result<Option<types::db::Song>, sqlx::Error> {
         sqlx::query_as::<_, types::db::Song>(
-            "SELECT id, title, artist_id, album_id, file_path, genre, date, duration, cover, track_number, favorite, track_lufs, pinned, date_added
+            "SELECT id, title, artist_id, album_id, file_path, genre, date, duration, cover, track_number, favorite, track_lufs, pinned, date_added, date_updated
              FROM songs WHERE file_path = ?"
         )
         .bind(file_path)
@@ -110,14 +100,6 @@ impl Database {
     pub async fn delete_song(&self, id: &Cuid) -> Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM songs WHERE id = ?")
             .bind(id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    pub async fn delete_song_by_path(&self, file_path: &str) -> Result<(), sqlx::Error> {
-        sqlx::query("DELETE FROM songs WHERE file_path = ?")
-            .bind(file_path)
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -174,7 +156,7 @@ impl Database {
         limit: i32,
     ) -> Result<Vec<types::db::Song>, sqlx::Error> {
         sqlx::query_as::<_, types::db::Song>(
-            "SELECT id, title, artist_id, album_id, file_path, genre, date, duration, cover, track_number, favorite, track_lufs, pinned, date_added
+            "SELECT id, title, artist_id, album_id, file_path, genre, date, duration, cover, track_number, favorite, track_lufs, pinned, date_added, date_updated
              FROM songs
              ORDER BY date_added DESC
              LIMIT ?"

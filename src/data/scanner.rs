@@ -1,12 +1,12 @@
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Duration;
-
 use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
 use futures::stream::{self, StreamExt};
 use gpui::App;
-use notify::{EventKind, RecursiveMode, event::ModifyKind};
-use notify_debouncer_full::{DebounceEventResult, new_debouncer};
+use notify::{EventKind, RecursiveMode};
+use notify_debouncer_full::{DebounceEventResult, Debouncer, RecommendedCache, new_debouncer};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Duration, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 use walkdir::WalkDir;
@@ -18,7 +18,7 @@ use crate::data::state::State;
 use crate::data::telemetry::Telemetry;
 
 const SUPPORTED_EXTENSIONS: &[&str] = &["mp3", "flac", "ogg", "m4a", "aac", "wav", "mp1", "mp2"];
-const MAX_CONCURRENT_SCANS: usize = 16;
+const MAX_CONCURRENT_SCANS: usize = 8;
 
 #[derive(Debug, Clone)]
 pub struct ScanStats {
@@ -39,7 +39,7 @@ enum SaveAction {
 pub struct ScannedTrack {
     pub path: PathBuf,
     pub metadata: AudioMetadata,
-    pub cover_path: Option<PathBuf>,
+    pub cover: Option<String>,
 }
 
 pub struct Scanner {
@@ -93,7 +93,6 @@ impl Scanner {
                             State::refresh(&db_clone, &state_clone).await;
                             telemetry_clone.submit(&state_clone, &config_clone).await;
                         }
-
                     }
                 });
 
@@ -128,86 +127,6 @@ impl Scanner {
         }
     }
 
-    pub async fn scan(&self) -> Result<Vec<ScannedTrack>> {
-        let mut all_tracks = Vec::new();
-
-        for path in &self.scan_paths {
-            info!("Scanning directory: {:?}", path);
-
-            if !path.exists() {
-                warn!("Scan path does not exist: {:?}", path);
-                continue;
-            }
-
-            if !path.is_dir() {
-                warn!("Scan path is not a directory: {:?}", path);
-                continue;
-            }
-
-            match self.scan_directory(path).await {
-                Ok(mut found_tracks) => {
-                    all_tracks.append(&mut found_tracks);
-                }
-                Err(e) => {
-                    error!("Error scanning directory {:?}: {}", path, e);
-                }
-            }
-        }
-
-        info!("Scan complete. Found {} total tracks", all_tracks.len());
-        Ok(all_tracks)
-    }
-
-    async fn scan_directory(&self, path: &Path) -> Result<Vec<ScannedTrack>> {
-        let path = path.to_path_buf();
-
-        let audio_files = tokio::task::spawn_blocking(move || {
-            let mut files = Vec::new();
-            for entry in WalkDir::new(&path)
-                .follow_links(true)
-                .into_iter()
-                .filter_map(|e| e.ok())
-            {
-                let path = entry.path();
-                if path.is_file() && Self::is_audio_file(path) {
-                    files.push(path.to_path_buf());
-                }
-            }
-            files
-        })
-        .await
-        .context("Failed to walk directory")?;
-
-        debug!("Found {} audio files to scan", audio_files.len());
-
-        let covers_dir = self.covers_dir.clone();
-        let tracks: Vec<ScannedTrack> = stream::iter(audio_files)
-            .map(|path| {
-                let covers_dir = covers_dir.clone();
-                async move {
-                    let path_clone = path.clone();
-                    tokio::task::spawn_blocking(move || Self::read_metadata(&path, &covers_dir))
-                        .await
-                        .ok()
-                        .and_then(|result| {
-                            result
-                                .map_err(|e| {
-                                    warn!("Failed to read metadata from {:?}: {}", path_clone, e);
-                                    e
-                                })
-                                .ok()
-                        })
-                }
-            })
-            .buffer_unordered(MAX_CONCURRENT_SCANS)
-            .filter_map(|track| async move { track })
-            .collect()
-            .await;
-
-        debug!("Successfully scanned {} tracks", tracks.len());
-        Ok(tracks)
-    }
-
     fn is_audio_file(path: &Path) -> bool {
         path.extension()
             .and_then(|ext| ext.to_str())
@@ -215,32 +134,30 @@ impl Scanner {
             .unwrap_or(false)
     }
 
-    fn read_metadata(path: &Path, covers_dir: &Path) -> Result<ScannedTrack> {
-        let metadata = AudioMetadata::from_path(path)?;
+    fn could_be_audio_file(path: &Path) -> bool {
+        path.extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| SUPPORTED_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
+            .unwrap_or(false)
+    }
 
-        let cover_path = match extract_and_save_cover(path, covers_dir) {
-            Ok(path) => path,
+    fn read_metadata_only(path: &Path) -> Result<AudioMetadata> {
+        AudioMetadata::from_path_with_options(path, false)
+    }
+
+    fn extract_cover_only(path: &Path, covers_dir: &Path) -> Option<String> {
+        match extract_and_save_cover(path, covers_dir) {
+            Ok(hash) => hash,
             Err(e) => {
                 debug!("Failed to extract cover from {:?}: {}", path, e);
                 None
             }
-        };
-
-        Ok(ScannedTrack {
-            path: path.to_path_buf(),
-            metadata,
-            cover_path,
-        })
+        }
     }
 
     pub async fn scan_and_save(&self, db: &Database) -> Result<ScanStats> {
-        let tracks = self.scan().await?;
-        let scanned_count = tracks.len();
-
-        debug!("Processing {} scanned tracks", scanned_count);
-
         let mut stats = ScanStats {
-            _scanned: scanned_count,
+            _scanned: 0,
             added: 0,
             updated: 0,
             removed: 0,
@@ -248,32 +165,203 @@ impl Scanner {
 
         let mut found_paths = std::collections::HashSet::new();
 
-        for track in tracks {
-            let path_str = track.path.to_string_lossy().to_string();
-            found_paths.insert(path_str.clone());
+        for root in &self.scan_paths {
+            if !root.exists() || !root.is_dir() {
+                continue;
+            }
 
-            match self.save_or_update_track(db, &track).await {
-                Ok(action) => match action {
-                    SaveAction::Added => stats.added += 1,
-                    SaveAction::Updated => stats.updated += 1,
-                    SaveAction::Unchanged => {}
-                },
-                Err(e) => {
-                    error!("Failed to save track {:?}: {}", track.path, e);
+            let audio_files = tokio::task::spawn_blocking({
+                let root = root.clone();
+                move || {
+                    WalkDir::new(&root)
+                        .follow_links(true)
+                        .into_iter()
+                        .filter_map(|e| e.ok())
+                        .filter(|e| e.file_type().is_file() && Scanner::is_audio_file(e.path()))
+                        .map(|e| e.path().to_path_buf())
+                        .collect::<Vec<_>>()
+                }
+            })
+            .await
+            .context("walkdir failed")?;
+
+            stats._scanned += audio_files.len();
+
+            let covers_dir = self.covers_dir.clone();
+            let tracks_stream = stream::iter(audio_files)
+                .map(|path: PathBuf| {
+                    let path_str = path.to_string_lossy().to_string();
+                    let db = db.clone();
+                    let covers_dir = covers_dir.clone();
+
+                    async move {
+                        let mtime = path.metadata().and_then(|m| m.modified()).ok();
+                        let existing = db.get_song_by_path(&path_str).await.ok().flatten();
+
+                        let needs_scan = match (&existing, mtime) {
+                            (Some(song), Some(mod_time)) => {
+                                if let Ok(dt) = DateTime::parse_from_rfc3339(&song.date_updated) {
+                                    (dt.with_timezone(&Utc).timestamp() as u64)
+                                        < mod_time
+                                            .duration_since(UNIX_EPOCH)
+                                            .unwrap_or(Duration::ZERO)
+                                            .as_secs()
+                                } else {
+                                    true
+                                }
+                            }
+                            _ => true,
+                        };
+
+                        if !needs_scan {
+                            return None;
+                        }
+
+                        let metadata = tokio::task::spawn_blocking({
+                            let path = path.clone();
+                            move || Self::read_metadata_only(&path)
+                        })
+                        .await
+                        .ok()
+                        .and_then(|r| r.ok())?;
+
+                        let needs_cover = existing.is_none()
+                            || existing.as_ref().and_then(|s| s.cover.as_ref()).is_none();
+
+                        let cover = if needs_cover {
+                            tokio::task::spawn_blocking({
+                                let path = path.clone();
+                                let covers_dir = covers_dir.clone();
+                                move || Self::extract_cover_only(&path, &covers_dir)
+                            })
+                            .await
+                            .ok()
+                            .flatten()
+                        } else {
+                            existing.as_ref().and_then(|s| s.cover.clone())
+                        };
+
+                        Some((
+                            ScannedTrack {
+                                path,
+                                metadata,
+                                cover,
+                            },
+                            path_str,
+                        ))
+                    }
+                })
+                .buffer_unordered(MAX_CONCURRENT_SCANS)
+                .filter_map(|item| async move { item });
+
+            futures::pin_mut!(tracks_stream);
+
+            while let Some((track, path_str)) = tracks_stream.next().await {
+                found_paths.insert(path_str.clone());
+
+                if let Ok(action) = self.save_or_update_track(db, &track).await {
+                    match action {
+                        SaveAction::Added => stats.added += 1,
+                        SaveAction::Updated => stats.updated += 1,
+                        _ => {}
+                    }
                 }
             }
         }
 
-        debug!("Checking for songs to remove from database");
-        match self.remove_missing_songs(db, &found_paths).await {
-            Ok(removed) => {
-                stats.removed = removed;
-                if removed > 0 {
-                    debug!("Removed {} songs that no longer exist", removed);
+        stats.removed = self
+            .remove_missing_songs(db, &found_paths)
+            .await
+            .unwrap_or(0);
+
+        if stats.removed > 0 {
+            let _ = db.cleanup_orphaned_artists().await;
+            let _ = db.cleanup_orphaned_albums().await;
+        }
+
+        Ok(stats)
+    }
+
+    pub async fn process_changed_files(
+        &self,
+        db: &Database,
+        changed_paths: Vec<PathBuf>,
+    ) -> Result<ScanStats> {
+        let mut stats = ScanStats {
+            _scanned: changed_paths.len(),
+            added: 0,
+            updated: 0,
+            removed: 0,
+        };
+
+        let covers_dir = self.covers_dir.clone();
+
+        for path in changed_paths {
+            let path_clone = path.clone();
+
+            if path.exists() && path.is_file() && Self::is_audio_file(&path) {
+                let path_str = path.to_string_lossy().to_string();
+                let existing = db.get_song_by_path(&path_str).await.ok().flatten();
+
+                let metadata = match tokio::task::spawn_blocking({
+                    let path = path.clone();
+                    move || Self::read_metadata_only(&path)
+                })
+                .await
+                {
+                    Ok(Ok(m)) => m,
+                    Ok(Err(e)) => {
+                        warn!("Failed to read metadata from {:?}: {}", path_clone, e);
+                        continue;
+                    }
+                    Err(e) => {
+                        error!("Task failed for {:?}: {}", path_clone, e);
+                        continue;
+                    }
+                };
+
+                let needs_cover = existing.is_none()
+                    || existing.as_ref().and_then(|s| s.cover.as_ref()).is_none();
+
+                let cover = if needs_cover {
+                    tokio::task::spawn_blocking({
+                        let path = path.clone();
+                        let covers_dir = covers_dir.clone();
+                        move || Self::extract_cover_only(&path, &covers_dir)
+                    })
+                    .await
+                    .ok()
+                    .flatten()
+                } else {
+                    existing.as_ref().and_then(|s| s.cover.clone())
+                };
+
+                let track = ScannedTrack {
+                    path: path.clone(),
+                    metadata,
+                    cover,
+                };
+
+                match self.save_or_update_track(db, &track).await {
+                    Ok(SaveAction::Added) => stats.added += 1,
+                    Ok(SaveAction::Updated) => stats.updated += 1,
+                    Ok(SaveAction::Unchanged) => {}
+                    Err(e) => error!("Failed to save track {:?}: {}", path_clone, e),
                 }
-            }
-            Err(e) => {
-                error!("Failed to remove missing songs: {}", e);
+            } else if !path.exists() {
+                let path_str = path.to_string_lossy().to_string();
+                match db.get_song_by_path(&path_str).await {
+                    Ok(Some(song)) => {
+                        if let Err(e) = db.delete_song(&song.id).await {
+                            error!("Failed to delete song {:?}: {}", song.id, e);
+                        } else {
+                            stats.removed += 1;
+                            debug!("Removed deleted song: {:?}", path);
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => error!("Failed to check song existence: {}", e),
+                }
             }
         }
 
@@ -287,10 +375,6 @@ impl Scanner {
             }
         }
 
-        info!(
-            "Scan complete - Added: {}, Updated: {}, Removed: {}",
-            stats.added, stats.updated, stats.removed
-        );
         Ok(stats)
     }
 
@@ -313,10 +397,7 @@ impl Scanner {
             None
         };
 
-        let cover_hash = track
-            .cover_path
-            .as_ref()
-            .and_then(|p| p.file_name().map(|f| f.to_string_lossy().to_string()));
+        let cover = track.cover.as_deref();
 
         let album_id = if let Some(album_name) = &meta.album {
             Some(
@@ -325,7 +406,7 @@ impl Scanner {
                     artist_id.as_ref(),
                     meta.year,
                     meta.genre.as_deref(),
-                    cover_hash.as_deref(),
+                    cover.as_deref(),
                 )
                 .await?,
             )
@@ -345,7 +426,7 @@ impl Scanner {
                 || existing.track_number != track_number
                 || existing.date != meta.year.map(|y| y.to_string())
                 || existing.genre.as_deref() != meta.genre.as_deref()
-                || existing.cover.as_deref() != cover_hash.as_deref()
+                || existing.cover.as_deref() != cover.as_deref()
                 || existing.track_lufs != meta.track_lufs;
             if metadata_changed {
                 db.update_song_metadata(
@@ -357,7 +438,7 @@ impl Scanner {
                     track_number,
                     meta.year,
                     meta.genre.as_deref(),
-                    cover_hash.as_deref(),
+                    cover.as_deref(),
                     meta.track_lufs,
                 )
                 .await?;
@@ -376,7 +457,7 @@ impl Scanner {
                 track_number,
                 meta.year,
                 meta.genre.as_deref(),
-                cover_hash.as_deref(),
+                cover.as_deref(),
                 meta.track_lufs,
             )
             .await?;
@@ -430,6 +511,7 @@ pub fn expand_scan_paths(paths: &[String]) -> Vec<PathBuf> {
 pub struct MusicWatcher {
     _scanner: Arc<Scanner>,
     _db: Arc<Database>,
+    _debouncer: Debouncer<notify::RecommendedWatcher, RecommendedCache>,
 }
 
 impl MusicWatcher {
@@ -448,35 +530,42 @@ impl MusicWatcher {
             None,
             move |result: DebounceEventResult| match result {
                 Ok(events) => {
-                    let has_audio_changes = events.iter().any(|event| {
+                    let mut changed_audio_files = Vec::new();
+
+                    for event in events {
+                        debug!("File event: {:?} - {:?}", event.kind, event.paths);
+
                         let is_meaningful_event = matches!(
                             event.kind,
-                            EventKind::Create(_)
-                                | EventKind::Modify(ModifyKind::Data(_))
-                                | EventKind::Remove(_)
+                            EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
                         );
 
-                        is_meaningful_event
-                            && event.paths.iter().any(|path| Scanner::is_audio_file(path))
-                    });
+                        if is_meaningful_event {
+                            for path in &event.paths {
+                                if Scanner::is_audio_file(path) || (!path.exists() && Scanner::could_be_audio_file(path)) {
+                                    changed_audio_files.push(path.clone());
+                                }
+                            }
+                        }
+                    }
 
-                    if has_audio_changes {
-                        info!("Detected meaningful changes in music files, triggering rescan");
+                    if !changed_audio_files.is_empty() {
+                        info!("Detected {} changed audio files, processing incrementally", changed_audio_files.len());
                         let scanner = scanner_clone.clone();
                         let db = db_clone.clone();
                         let tx = tx.clone();
 
                         runtime_handle.spawn(async move {
-                            match scanner.scan_and_save(&db).await {
+                            match scanner.process_changed_files(&db, changed_audio_files).await {
                                 Ok(stats) => {
                                     info!(
-                                        "Auto-scan complete - Added: {}, Updated: {}, Removed: {}",
+                                        "Incremental scan complete - Added: {}, Updated: {}, Removed: {}",
                                         stats.added, stats.updated, stats.removed
                                     );
                                     let _ = tx.send(stats).await;
                                 }
                                 Err(e) => {
-                                    error!("Auto-scan failed: {}", e);
+                                    error!("Incremental scan failed: {}", e);
                                 }
                             }
                         });
@@ -501,6 +590,7 @@ impl MusicWatcher {
         let watcher = Self {
             _scanner: scanner,
             _db: db,
+            _debouncer: debouncer,
         };
 
         Ok((watcher, rx))

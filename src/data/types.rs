@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use sqlx::prelude::FromRow;
-use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(transparent)]
@@ -43,6 +42,7 @@ pub mod db {
         pub track_lufs: Option<f32>,
         pub pinned: bool,
         pub date_added: String,
+        pub date_updated: String,
     }
 
     #[derive(Debug, Clone, FromRow)]
@@ -77,8 +77,8 @@ pub mod db {
 pub struct Song {
     pub id: Cuid,
     pub title: String,
-    pub artist: Option<Arc<Artist>>,
-    pub album: Option<Arc<Album>>,
+    pub artist_id: Option<Cuid>,
+    pub album_id: Option<Cuid>,
     pub file_path: String,
     pub genre: Option<String>,
     pub date: Option<String>,
@@ -89,6 +89,7 @@ pub struct Song {
     pub track_lufs: Option<f32>,
     pub pinned: bool,
     pub date_added: String,
+    pub date_updated: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,7 +105,7 @@ pub struct Artist {
 pub struct Album {
     pub id: Cuid,
     pub title: String,
-    pub artist: Option<Arc<Artist>>,
+    pub artist_id: Option<Cuid>,
     pub cover: Option<String>,
     pub favorite: bool,
     pub pinned: bool,
@@ -157,4 +158,31 @@ pub struct EventContext {
     pub song_id: Option<Cuid>,
     pub playlist_id: Option<Cuid>,
     pub date_created: String,
+}
+
+impl Song {
+    pub fn cover_uri(&self) -> Option<String> {
+        self.cover.as_ref().map(|cover_filename| {
+            let filename = if cover_filename.ends_with(".jpg") {
+                cover_filename.clone()
+            } else {
+                format!("{}.jpg", cover_filename)
+            };
+
+            let cover_path = dirs::data_dir()
+                .expect("couldn't get data directory")
+                .join("vleer")
+                .join("covers")
+                .join(filename.trim_end_matches('/'));
+
+            format!(
+                "file:///{}",
+                cover_path
+                    .canonicalize()
+                    .unwrap_or(cover_path)
+                    .to_string_lossy()
+                    .trim_start_matches('/')
+            )
+        })
+    }
 }

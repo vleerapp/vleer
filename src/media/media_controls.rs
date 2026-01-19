@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::{debug, error, warn};
 
+use crate::data::state::State;
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
 
@@ -279,13 +280,35 @@ impl MediaKeyHandler {
 
             if *last_id != current_song_id {
                 if let Some(song) = song {
+                    let state = cx.global::<State>();
+
+                    let artist_name = song
+                        .artist_id
+                        .as_ref()
+                        .and_then(|id| {
+                            tokio::task::block_in_place(|| {
+                                tokio::runtime::Handle::current().block_on(state.get_artist(id))
+                            })
+                        })
+                        .map(|a| a.name.clone());
+
+                    let album_title = song
+                        .album_id
+                        .as_ref()
+                        .and_then(|id| {
+                            tokio::task::block_in_place(|| {
+                                tokio::runtime::Handle::current().block_on(state.get_album(id))
+                            })
+                        })
+                        .map(|a| a.title.clone());
+
                     let duration = Duration::from_secs_f32(song.duration as f32);
                     let cover_url = resolve_cover_url(song.cover.as_deref());
 
                     if let Err(e) = handler.set_metadata(
                         Some(&song.title),
-                        song.artist.as_ref().map(|a| a.name.as_str()),
-                        song.album.as_ref().map(|a| a.title.as_str()),
+                        artist_name.as_deref(),
+                        album_title.as_deref(),
                         Some(duration),
                         cover_url.as_deref(),
                     ) {

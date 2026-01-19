@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS songs (
     track_lufs REAL,
     pinned BOOLEAN DEFAULT FALSE,
     date_added TEXT DEFAULT (DATETIME('now')),
+    date_updated TEXT DEFAULT (DATETIME('now')),
     FOREIGN KEY (artist_id) REFERENCES artists(id) ON DELETE CASCADE,
     FOREIGN KEY (album_id) REFERENCES albums(id) ON DELETE CASCADE
 );

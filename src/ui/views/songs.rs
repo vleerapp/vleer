@@ -17,7 +17,6 @@ use crate::{
 
 fn get_rows(cx: &mut App, sort: Option<TableSort>) -> Vec<Cuid> {
     let state = cx.global::<State>().clone();
-
     let search_query = state.get_search_query_sync().to_lowercase();
     let all_songs = state.get_all_songs_sync();
 
@@ -28,13 +27,25 @@ fn get_rows(cx: &mut App, sort: Option<TableSort>) -> Vec<Cuid> {
                 return true;
             }
             let title_match = s.title.to_lowercase().contains(&search_query);
+
             let artist_match = s
-                .artist
+                .artist_id
                 .as_ref()
+                .and_then(|id| {
+                    tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current().block_on(state.get_artist(id))
+                    })
+                })
                 .map_or(false, |a| a.name.to_lowercase().contains(&search_query));
+
             let album_match = s
-                .album
+                .album_id
                 .as_ref()
+                .and_then(|id| {
+                    tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current().block_on(state.get_album(id))
+                    })
+                })
                 .map_or(false, |a| a.title.to_lowercase().contains(&search_query));
 
             title_match || artist_match || album_match
@@ -60,13 +71,24 @@ fn get_rows(cx: &mut App, sort: Option<TableSort>) -> Vec<Cuid> {
             SongColumn::Album => {
                 songs.sort_by(|a, b| {
                     let album_a = a
-                        .album
+                        .album_id
                         .as_ref()
+                        .and_then(|id| {
+                            tokio::task::block_in_place(|| {
+                                tokio::runtime::Handle::current().block_on(state.get_album(id))
+                            })
+                        })
                         .map(|a| a.title.clone())
                         .unwrap_or_default();
+
                     let album_b = b
-                        .album
+                        .album_id
                         .as_ref()
+                        .and_then(|id| {
+                            tokio::task::block_in_place(|| {
+                                tokio::runtime::Handle::current().block_on(state.get_album(id))
+                            })
+                        })
                         .map(|a| a.title.clone())
                         .unwrap_or_default();
 
@@ -94,7 +116,6 @@ fn get_rows(cx: &mut App, sort: Option<TableSort>) -> Vec<Cuid> {
 
 fn get_row(cx: &mut App, id: Cuid) -> Option<Arc<SongEntry>> {
     let state = cx.global::<State>().clone();
-    let covers_dir = dirs::data_dir().unwrap().join("vleer").join("covers");
 
     let song = tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current().block_on(state.get_song(&id))
@@ -102,37 +123,36 @@ fn get_row(cx: &mut App, id: Cuid) -> Option<Arc<SongEntry>> {
 
     if let Some(song) = song {
         let artist = song
-            .artist
+            .artist_id
             .as_ref()
+            .and_then(|id| {
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(state.get_artist(id))
+                })
+            })
             .map(|a| a.name.clone())
             .unwrap_or_else(|| "Unknown".to_string());
+
         let album = song
-            .album
+            .album_id
             .as_ref()
+            .and_then(|id| {
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(state.get_album(id))
+                })
+            })
             .map(|a| a.title.clone())
             .unwrap_or_else(|| "Unknown".to_string());
 
-        let cover_uri = song.cover.as_ref().and_then(|cover_hash| {
-            let cover_path = covers_dir.join(cover_hash);
-            if cover_path.exists() {
-                Some(format!("!file://{}", cover_path.to_string_lossy()))
-            } else {
-                None
-            }
-        });
+        let cover_uri = song.cover_uri();
 
         let minutes = song.duration / 60;
         let seconds = song.duration % 60;
         let duration_str = format!("{}:{:02}", minutes, seconds);
 
-        let song_ids = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(state.get_all_song_ids())
-        });
-        let number = song_ids.iter().position(|sid| sid == &id).unwrap_or(0) + 1;
-
         Some(Arc::new(SongEntry {
             id: song.id.clone(),
-            number,
+            number: 0,
             title: song.title.clone(),
             artist,
             album,

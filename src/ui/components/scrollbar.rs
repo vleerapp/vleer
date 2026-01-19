@@ -730,7 +730,6 @@ where
             .read(cx)
             .clone();
 
-        let style = self.element.style().clone();
         *self.element.style() = StyleRefinement::default();
 
         div()

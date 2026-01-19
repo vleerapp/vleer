@@ -1,3 +1,4 @@
+use crate::data::state::State;
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
 use discord_rich_presence::{DiscordIpc, DiscordIpcClient, activity};
@@ -21,7 +22,7 @@ impl DiscordPresence {
 
                 let song_opt =
                     cx.update(|app| app.try_global::<Queue>().and_then(|q| q.current().cloned()));
-                    
+
                 let (position, is_paused) = cx.update(|app| {
                     app.try_global::<Playback>()
                         .map(|p| (p.get_position(), p.is_paused()))
@@ -42,14 +43,26 @@ impl DiscordPresence {
                 let end = unix_now_i64() + remaining_secs;
                 let start = end - total_secs as i64;
 
+                let artist_name = cx.update(|app| {
+                    song.artist_id
+                        .as_ref()
+                        .and_then(|id| {
+                            let state = app.try_global::<State>()?;
+                            tokio::task::block_in_place(|| {
+                                tokio::runtime::Handle::current().block_on(state.get_artist(id))
+                            })
+                        })
+                        .map(|a| a.name.clone())
+                });
+
                 let mut act = activity::Activity::new()
                     .details(&song.title)
                     .state("Playing")
                     .activity_type(activity::ActivityType::Listening)
                     .timestamps(activity::Timestamps::new().start(start).end(end));
 
-                if let Some(artist) = &song.artist {
-                    act = act.state(&artist.name);
+                if let Some(ref name) = artist_name {
+                    act = act.state(name);
                 }
 
                 let _ = client.set_activity(act);

@@ -63,7 +63,6 @@ where
         );
 
         if let Ok(spec) = spectrum {
-            // Raw band sums (simple grouping of a couple frequency bins)
             let b1 = spec.freq_val_exact(40.0).val() + spec.freq_val_exact(80.0).val();
             let b2 = spec.freq_val_exact(120.0).val() + spec.freq_val_exact(250.0).val();
             let b3 = spec.freq_val_exact(400.0).val() + spec.freq_val_exact(800.0).val();
