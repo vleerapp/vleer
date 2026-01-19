@@ -61,6 +61,8 @@ impl RenderOnce for NavButton {
             .id(group_name.clone())
             .justify_between()
             .cursor_pointer()
+            .text_color(default_color)
+            .group_hover(group_name.clone(), |s| s.text_color(hover_color))
             .child(
                 flex_row()
                     .gap(px(variables.padding_8))
@@ -69,16 +71,11 @@ impl RenderOnce for NavButton {
                             .text_color(default_color)
                             .group_hover(group_name.clone(), |s| s.text_color(hover_color)),
                     )
-                    .when_some(label, |this, label_text| {
-                        this.child(label_text.clone())
-                            .text_color(default_color)
-                            .group_hover(group_name.clone(), |s| s.text_color(hover_color))
-                    }),
+                    .when_some(label, |this, label_text| this.child(label_text)),
             )
-            .when_some(count, |this, count| {
-                if count != 0 {
-                    this.child(count.to_string())
-                        .text_color(variables.text)
+            .when_some(count, |this, count_val| {
+                if count_val != 0 {
+                    this.child(count_val.to_string())
                 } else {
                     this
                 }
