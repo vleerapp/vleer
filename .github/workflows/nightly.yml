@@ -64,8 +64,10 @@ jobs:
         run: cargo packager --release
 
       - name: Import GPG key
+        shell: bash
         run: |
-          echo -n "$GPG_PRIVATE_KEY" | base64 --decode | gpg --batch --import
+          printf '%s' "$GPG_PRIVATE_KEY" | base64 -d | gpg --batch --import
+          mkdir -p ~/.gnupg
           echo "allow-loopback-pinentry" >> ~/.gnupg/gpg-agent.conf
           gpg-connect-agent reloadagent /bye
         env:
