@@ -32,7 +32,7 @@ A free, open-source music app powered by the OpenMusic API Spec—the open stand
 
 ```bash
 # Import our signing key (Key ID: 852407171261C8A4)
-gpg --recv-keys 852407171261C8A4
+gpg --locate-keys hello@vleer.app
 
 # Verify the fingerprint matches: 7E48 1786 6409 4A19 EF60  EEC8 8524 0717 1261 C8A4
 gpg --fingerprint 852407171261C8A4
