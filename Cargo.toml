@@ -43,6 +43,7 @@ spectrum-analyzer = "1.7.0"
 discord-rich-presence = "1.0.0"
 chrono = "0.4.43"
 dhat = "0.3.3"
+core-text = "=21.0.0"
 
 [profile.release]
 debug = true
