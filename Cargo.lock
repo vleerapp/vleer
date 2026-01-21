@@ -2564,7 +2564,7 @@ dependencies = [
 [[package]]
 name = "gpui_macros"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed#8e48a161931f673478d9e3e72405ce1344dd6d71"
+source = "git+https://github.com/zed-industries/zed#ff35da22fbe67a65632a8009827f114262c76e4d"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -4235,9 +4235,9 @@ dependencies = [
 
 [[package]]
 name = "openssl-probe"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f50d9b3dabb09ecd771ad0aa242ca6894994c130308ca3d7684634df8037391"
+checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
 name = "option-ext"
