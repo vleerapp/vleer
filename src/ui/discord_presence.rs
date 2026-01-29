@@ -1,3 +1,4 @@
+use crate::data::config::Config;
 use crate::data::state::State;
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
@@ -19,6 +20,18 @@ impl DiscordPresence {
         cx.spawn(async move |cx| {
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+                let discord_enabled = cx.update(|app| {
+                    app.try_global::<Config>()
+                        .map(|c| c.get().discord_rpc)
+                        .unwrap_or(false)
+                });
+
+                if !discord_enabled {
+                    let mut client = client.lock().unwrap();
+                    let _ = client.clear_activity();
+                    continue;
+                }
 
                 let song_opt =
                     cx.update(|app| app.try_global::<Queue>().and_then(|q| q.current().cloned()));

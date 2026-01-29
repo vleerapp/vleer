@@ -60,6 +60,7 @@ pub struct SettingsConfig {
     #[serde(default = "default_version")]
     pub version: u32,
     pub telemetry: bool,
+    pub discord_rpc: bool,
     pub equalizer: EqualizerSettings,
     pub scan: ScanSettings,
     pub audio: AudioSettings,
@@ -74,6 +75,7 @@ impl Default for SettingsConfig {
         Self {
             version: default_version(),
             telemetry: true,
+            discord_rpc: false,
             equalizer: EqualizerSettings::default(),
             scan: ScanSettings::default(),
             audio: AudioSettings::default(),
