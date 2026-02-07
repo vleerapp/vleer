@@ -45,7 +45,10 @@ chrono = "0.4.43"
 dhat = "0.3.3"
 
 [profile.release]
-debug = true
+strip = true
+debug = false
+lto = true
+codegen-units = 1
 
 [target.'cfg(target_os = "linux")'.dependencies]
 mpris-server = "0.9.0"
