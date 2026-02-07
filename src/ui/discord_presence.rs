@@ -12,7 +12,7 @@ pub struct DiscordPresence {}
 impl DiscordPresence {
     pub fn init(cx: &mut App) {
         let app_id = Arc::new("1194990403963858984".to_string());
-        let client = Arc::new(Mutex::new(DiscordIpcClient::new(&app_id)));
+        let client = Arc::new(Mutex::new(DiscordIpcClient::new(&*app_id)));
         let _ = client.lock().unwrap().connect();
 
         let client = Arc::clone(&client);
