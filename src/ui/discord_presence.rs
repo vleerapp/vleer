@@ -1,5 +1,5 @@
 use crate::data::config::Config;
-use crate::data::state::State;
+use crate::data::db::repo::Database;
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
 use discord_rich_presence::{DiscordIpc, DiscordIpcClient, activity};
@@ -12,7 +12,7 @@ pub struct DiscordPresence {}
 impl DiscordPresence {
     pub fn init(cx: &mut App) {
         let app_id = Arc::new("1194990403963858984".to_string());
-        let client = Arc::new(Mutex::new(DiscordIpcClient::new(&app_id)));
+        let client = Arc::new(Mutex::new(DiscordIpcClient::new(&*app_id)));
         let _ = client.lock().unwrap().connect();
 
         let client = Arc::clone(&client);
@@ -33,12 +33,22 @@ impl DiscordPresence {
                     continue;
                 }
 
-                let song_opt =
-                    cx.update(|app| app.try_global::<Queue>().and_then(|q| q.current().cloned()));
+                let song_id = cx.update(|app| {
+                    app.try_global::<Queue>()
+                        .and_then(|q| q.get_current_song(app).map(|s| s.id))
+                });
+
+                let song_opt = song_id.and_then(|id| {
+                    cx.update(|app| {
+                        app.try_global::<Database>().and_then(|db| {
+                            futures::executor::block_on(db.get_song(id)).ok().flatten()
+                        })
+                    })
+                });
 
                 let (position, is_paused) = cx.update(|app| {
                     app.try_global::<Playback>()
-                        .map(|p| (p.get_position(), p.is_paused()))
+                        .map(|p| (p.get_position(), p.get_paused()))
                         .unwrap_or((0.0f32, true))
                 });
 
@@ -60,12 +70,13 @@ impl DiscordPresence {
                     song.artist_id
                         .as_ref()
                         .and_then(|id| {
-                            let state = app.try_global::<State>()?;
-                            tokio::task::block_in_place(|| {
-                                tokio::runtime::Handle::current().block_on(state.get_artist(id))
+                            app.try_global::<Database>().and_then(|db| {
+                                futures::executor::block_on(db.get_artist(id.clone()))
+                                    .ok()
+                                    .flatten()
                             })
                         })
-                        .map(|a| a.name.clone())
+                        .map(|a| a.name)
                 });
 
                 let mut act = activity::Activity::new()

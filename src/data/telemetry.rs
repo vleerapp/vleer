@@ -6,7 +6,7 @@ use std::{fs, path::PathBuf, time::Duration};
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
-use crate::data::{config::Config, state::State};
+use crate::data::{config::Config, db::repo::Database};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Os {
@@ -49,7 +49,7 @@ impl Telemetry {
         cx.set_global(Self { client, data_dir });
     }
 
-    pub async fn submit(&self, state: &State, config: &Config) {
+    pub async fn submit(&self, db: &Database, config: &Config) {
         if !config.get().telemetry {
             debug!("Telemetry disabled in settings, skipping submission.");
             return;
@@ -69,13 +69,11 @@ impl Telemetry {
             }
         };
 
-        let song_count = state.get_all_song_ids().await.len() as i64;
-
         let payload = TelemetrySubmission {
             user_id,
             app_version: env!("CARGO_PKG_VERSION").to_string(),
             os: self.current_os(),
-            song_count,
+            song_count: db.get_songs_count().await.unwrap_or(0),
         };
 
         let res = self.client.post(url).json(&payload).send().await;

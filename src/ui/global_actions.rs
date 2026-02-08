@@ -1,32 +1,28 @@
 use gpui::{App, BorrowAppContext, KeyBinding, actions};
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 use crate::{
     data::config::Config,
     media::{playback::Playback, queue::Queue},
-    data::state::State,
 };
 
-actions!(vleer, [Quit, ReloadConfig, ReloadState]);
+actions!(vleer, [Quit, ReloadConfig]);
 actions!(player, [PlayPause, Next, Previous]);
 
 pub fn register_actions(cx: &mut App) {
-    debug!("Registering Actions");
     cx.on_action(quit);
     cx.on_action(play_pause);
     cx.on_action(next);
     cx.on_action(previous);
     cx.on_action(reload_config);
-    cx.on_action(reload_state);
 
     cx.bind_keys([KeyBinding::new("secondary-w", Quit, None)]);
     cx.bind_keys([KeyBinding::new("secondary-q", Quit, None)]);
     cx.bind_keys([KeyBinding::new("alt-right", Next, None)]);
     cx.bind_keys([KeyBinding::new("alt-left", Previous, None)]);
-    cx.bind_keys([KeyBinding::new("space", PlayPause, Some("!TextInput"))]);
+    cx.bind_keys([KeyBinding::new("space", PlayPause, None)]);
 
     cx.bind_keys([KeyBinding::new("secondary-alt-r", ReloadConfig, None)]);
-    cx.bind_keys([KeyBinding::new("secondary-r", ReloadState, None)]);
     debug!("Actions: {:?}", cx.all_action_names());
 }
 
@@ -49,23 +45,21 @@ fn play_pause(_: &PlayPause, cx: &mut App) {
 }
 
 fn previous(_: &Previous, cx: &mut App) {
-    if let Err(e) = Queue::previous(cx) {
-        tracing::error!("Failed to go to previous track: {}", e);
-    }
+    cx.update_global::<Queue, _>(|queue, cx| {
+        queue.previous(cx);
+    });
 }
 
 fn next(_: &Next, cx: &mut App) {
-    if let Err(e) = Queue::next(cx) {
-        tracing::error!("Failed to go to next track: {}", e);
-    }
+    cx.update_global::<Queue, _>(|queue, cx| {
+        queue.next(cx);
+    });
 }
 
 fn reload_config(_: &ReloadConfig, cx: &mut App) {
-    if let Err(e) = Config::reload(cx) {
-        tracing::error!("Failed to reload config: {}", e);
-    }
-}
-
-fn reload_state(_: &ReloadState, cx: &mut App) {
-    State::prepare(cx)
+    cx.update_global::<Config, _>(|config, _cx| {
+        if let Err(e) = config.reload() {
+            error!("Failed to reload config: {}", e);
+        }
+    });
 }

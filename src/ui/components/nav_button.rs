@@ -1,10 +1,8 @@
-use crate::{
-    data::state::State,
-    ui::{
-        components::{div::flex_row, icons::icon::icon},
-        variables::Variables,
-        views::AppView,
-    },
+use crate::ui::{
+    app::MainWindow,
+    components::{div::flex_row, icons::icon::icon},
+    variables::Variables,
+    views::AppView,
 };
 use gpui::prelude::FluentBuilder;
 use gpui::*;
@@ -36,9 +34,10 @@ impl NavButton {
 impl RenderOnce for NavButton {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let variables = cx.global::<Variables>();
-        let state = cx.global::<State>();
-        let current_view = state.get_current_view_sync();
-        let is_active = current_view == self.target_view;
+        let is_active = _window
+            .root::<MainWindow>()
+            .and_then(|root| root.map(|root| root.read(cx).current_view() == self.target_view))
+            .unwrap_or(false);
         let target_view = self.target_view;
         let icon_path = self.icon;
         let label = self.label;
@@ -81,9 +80,11 @@ impl RenderOnce for NavButton {
                 }
             })
             .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
-                let state = cx.global::<State>().clone();
-                state.set_current_view_sync(target_view);
-                window.refresh();
+                if let Some(Some(root)) = window.root::<MainWindow>() {
+                    root.update(cx, |view, cx| {
+                        view.set_current_view(target_view, window, cx);
+                    });
+                }
             })
     }
 }

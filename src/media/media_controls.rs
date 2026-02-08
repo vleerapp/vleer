@@ -1,3 +1,4 @@
+use base64::Engine;
 use gpui::{App, AsyncApp, BorrowAppContext, Global};
 use souvlaki::{
     MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig,
@@ -8,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::{debug, error, warn};
 
-use crate::data::state::State;
+use crate::data::db::repo::Database;
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
 
@@ -227,10 +228,10 @@ impl MediaKeyHandler {
                 cx.update_global::<Playback, _>(|p: &mut Playback, cx: &mut App| p.play_pause(cx));
             }
             MediaKeyEvent::Next => {
-                let _ = Queue::next(cx);
+                cx.update_global::<Queue, _>(|queue, cx| queue.next(cx));
             }
             MediaKeyEvent::Previous => {
-                let _ = Queue::previous(cx);
+                cx.update_global::<Queue, _>(|queue, cx| queue.previous(cx));
             }
             MediaKeyEvent::Stop => {
                 cx.update_global::<Playback, _>(|p: &mut Playback, cx: &mut App| p.pause(cx));
@@ -242,11 +243,11 @@ impl MediaKeyHandler {
     pub fn update_playback(cx: &mut App) {
         let (song, is_playing, progress_seconds) = cx.update_global::<Queue, _>(|queue, cx| {
             let (playing, pos) = if let Some(p) = cx.try_global::<Playback>() {
-                (p.is_playing(), Some(p.get_position()))
+                (p.get_playing(), Some(p.get_position()))
             } else {
                 (false, None)
             };
-            (queue.current().cloned(), playing, pos)
+            (queue.get_current_song(cx), playing, pos)
         });
 
         if let Some(global_handler) = cx.try_global::<MediaKeyHandler>() {
@@ -280,14 +281,17 @@ impl MediaKeyHandler {
 
             if *last_id != current_song_id {
                 if let Some(song) = song {
-                    let state = cx.global::<State>();
+                    let db = cx.global::<Database>();
 
                     let artist_name = song
                         .artist_id
                         .as_ref()
                         .and_then(|id| {
                             tokio::task::block_in_place(|| {
-                                tokio::runtime::Handle::current().block_on(state.get_artist(id))
+                                tokio::runtime::Handle::current()
+                                    .block_on(db.get_artist(id.clone()))
+                                    .ok()
+                                    .flatten()
                             })
                         })
                         .map(|a| a.name.clone());
@@ -297,13 +301,19 @@ impl MediaKeyHandler {
                         .as_ref()
                         .and_then(|id| {
                             tokio::task::block_in_place(|| {
-                                tokio::runtime::Handle::current().block_on(state.get_album(id))
+                                tokio::runtime::Handle::current()
+                                    .block_on(db.get_album(id.clone()))
+                                    .ok()
+                                    .flatten()
                             })
                         })
                         .map(|a| a.title.clone());
 
                     let duration = Duration::from_secs_f32(song.duration as f32);
-                    let cover_url = resolve_cover_url(song.cover.as_deref());
+                    let cover_url = song
+                        .image_id
+                        .as_deref()
+                        .and_then(|id| resolve_cover_url_from_db(&db, id));
 
                     if let Err(e) = handler.set_metadata(
                         Some(&song.title),
@@ -327,16 +337,14 @@ impl MediaKeyHandler {
     }
 }
 
-fn resolve_cover_url(path: Option<&str>) -> Option<String> {
-    let path = path?;
-    if path.starts_with("http") || path.starts_with("file://") {
-        Some(path.to_string())
-    } else if !path.starts_with("/") {
-        dirs::data_dir().map(|base_dir| {
-            let full_path = base_dir.join("vleer").join("covers").join(path);
-            format!("file://{}", full_path.to_string_lossy())
-        })
-    } else {
-        Some(format!("file://{}", path))
-    }
+fn resolve_cover_url_from_db(db: &Database, image_id: &str) -> Option<String> {
+    let image = tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current()
+            .block_on(db.get_image(image_id))
+            .ok()
+            .flatten()
+    })?;
+
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&image.data);
+    Some(format!("data:image/jpeg;base64,{}", encoded))
 }

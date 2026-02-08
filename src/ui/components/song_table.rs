@@ -1,10 +1,4 @@
-use gpui::{prelude::*, *};
-use rustc_hash::FxHashMap;
-use std::rc::Rc;
-use std::sync::Arc;
-
-use crate::data::state::State;
-use crate::data::types::{Cuid, Song};
+use crate::data::models::Cuid;
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
 use crate::ui::components::div::{flex_col, flex_row};
@@ -12,6 +6,10 @@ use crate::ui::components::icons::icon::icon;
 use crate::ui::components::icons::icons::{ARROW_DOWN, ARROW_UP, DURATION, PLAY};
 use crate::ui::components::scrollbar::{Scrollbar, ScrollbarAxis};
 use crate::ui::variables::Variables;
+use gpui::{prelude::*, *};
+use rustc_hash::FxHashMap;
+use std::rc::Rc;
+use std::sync::Arc;
 
 const ANIMATION_FPS: f32 = 60.0;
 
@@ -187,8 +185,8 @@ impl Render for SongTableItem {
             });
 
         if let Some(data) = &self.data {
-            let is_playing = if let Some(current_song) = cx.global::<Queue>().current() {
-                current_song.id == data.id && cx.global::<Playback>().is_playing()
+            let is_playing = if let Some(current_song) = cx.global::<Queue>().get_current_song(cx) {
+                current_song.id == data.id && cx.global::<Playback>().get_playing()
             } else {
                 false
             };
@@ -211,9 +209,9 @@ impl Render for SongTableItem {
                                     |this: &mut SongTableItem, cx: &mut Context<SongTableItem>| {
                                         let still_playing = if let Some(data) = &this.data {
                                             cx.global::<Queue>()
-                                                .current()
+                                                .get_current_song(cx)
                                                 .map_or(false, |s| s.id == data.id)
-                                                && cx.global::<Playback>().is_playing()
+                                                && cx.global::<Playback>().get_playing()
                                         } else {
                                             false
                                         };
@@ -273,7 +271,8 @@ impl Render for SongTableItem {
                                 .relative()
                                 .group("cover-container")
                                 .when_some(data.cover_uri.clone(), |div, image| {
-                                    let sized_image = format!("{}?size={}", image, image_size as u32);
+                                    let sized_image =
+                                        format!("{}?size={}", image, image_size as u32);
                                     div.child(
                                         img(sized_image)
                                             .size(px(image_size))
@@ -315,30 +314,22 @@ impl Render for SongTableItem {
                                     move |_event, _window, cx| {
                                         if let Some(all_items) = &items {
                                             let items_clone = all_items.clone();
-                                            let state = cx.global::<State>().clone();
                                             let start_index = row_number - 1;
 
                                             cx.spawn(move |cx: &mut gpui::AsyncApp| {
                                                 let cx = cx.clone();
                                                 async move {
-                                                    let songs: Vec<Arc<Song>> = {
-                                                        let mut result = Vec::new();
-                                                        for cuid in
-                                                            items_clone.iter().skip(start_index)
-                                                        {
-                                                            if let Some(song) =
-                                                                state.get_song(cuid).await
-                                                            {
-                                                                result.push(song);
-                                                            }
-                                                        }
-                                                        result
-                                                    };
+                                                    let song_ids: Vec<Cuid> = items_clone
+                                                        .iter()
+                                                        .skip(start_index)
+                                                        .cloned()
+                                                        .collect();
 
                                                     cx.update(|cx| {
                                                         cx.update_global::<Queue, _>(
                                                             |queue, _cx| {
-                                                                queue.clear_and_queue_songs(&songs);
+                                                                queue.clear();
+                                                                queue.add_songs(song_ids);
                                                             },
                                                         );
 
