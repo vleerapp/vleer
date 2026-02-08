@@ -3,16 +3,21 @@
     windows_subsystem = "windows"
 )]
 
+use std::sync::LazyLock;
+
 mod data;
 mod media;
 mod ui;
 
-#[global_allocator]
-static ALLOC: dhat::Alloc = dhat::Alloc;
+static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .worker_threads(1)
+        .build()
+        .unwrap()
+});
 
 fn main() -> anyhow::Result<()> {
-    let _profiler = dhat::Profiler::new_heap();
-
     tracing_subscriber::fmt::init();
     tracing::info!("Starting application");
 
