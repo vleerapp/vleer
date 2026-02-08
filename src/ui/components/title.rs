@@ -24,7 +24,7 @@ impl RenderOnce for Title {
         let variables = cx.global::<Variables>();
 
         div()
-            .group(self.hover_group.clone())
+            .id(self.hover_group.clone())
             .absolute()
             .top(px(-6.0))
             .left(px(6.0))

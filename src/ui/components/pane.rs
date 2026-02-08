@@ -40,9 +40,10 @@ impl RenderOnce for Pane {
             .size_full()
             .min_w_0()
             .min_h_0()
+            .group(self.id.clone())
             .child(
                 div()
-                    .id(self.id)
+                    .id(self.id.clone())
                     .size_full()
                     .min_h_0()
                     .border(px(1.0))
