@@ -122,6 +122,7 @@ pub enum RecentItem {
     },
 }
 
+#[derive(Clone)]
 pub struct PinnedItem {
     pub id: Cuid,
     pub name: String,

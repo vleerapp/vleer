@@ -20,11 +20,11 @@ use gpui::prelude::FluentBuilder;
 use gpui::*;
 
 #[derive(Default)]
-pub struct SearchState {
+pub struct Search {
     pub query: SharedString,
 }
 
-impl Global for SearchState {}
+impl Global for Search {}
 
 pub struct Library {
     search_input: Entity<TextInput>,
@@ -55,13 +55,13 @@ impl Library {
             let text = match event {
                 InputEvent::Change(text) | InputEvent::Submit(text) => text,
             };
-            cx.update_global::<SearchState, _>(|s, _cx| {
+            cx.update_global::<Search, _>(|s, _cx| {
                 s.query = text.clone().into();
             });
         })
         .detach();
 
-        cx.observe_global::<SearchState>(|_this, cx| cx.notify())
+        cx.observe_global::<Search>(|_this, cx| cx.notify())
             .detach();
 
         Self {
@@ -179,7 +179,7 @@ fn pinned_item(
 impl Render for Library {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
-        let search = cx.global::<SearchState>();
+        let search = cx.global::<Search>();
         let query = search.query.to_string();
         let is_searching = !query.is_empty();
 
@@ -194,13 +194,30 @@ impl Render for Library {
             (0, 0, 0, 0)
         };
 
-        let total_matches = s_count + al_count + ar_count + p_count;
-        let has_items = !self.pinned_items.is_empty();
-        let show_pinned = !is_searching && has_items;
-        let show_no_results = is_searching && total_matches == 0;
+        let displayed_items: Vec<PinnedItem> = if is_searching {
+            let db = cx.global::<Database>().clone();
+            let query_clone = query.clone();
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current()
+                    .block_on(db.search_library(&query_clone))
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(id, name, image_id, item_type)| PinnedItem {
+                        id,
+                        name,
+                        image_id,
+                        item_type,
+                    })
+                    .collect()
+            })
+        } else {
+            self.pinned_items.clone()
+        };
+
+        let has_display = !displayed_items.is_empty();
 
         div()
-            .image_cache(vleer_cache("library-image-cache", 200))
+            .image_cache(vleer_cache("library-image-cache", 20))
             .size_full()
             .min_w_0()
             .min_h_0()
@@ -251,7 +268,7 @@ impl Render for Library {
                                 AppView::Playlists,
                             )),
                     )
-                    .when(show_pinned || show_no_results, |this| {
+                    .when(has_display || (is_searching && !has_display), |this| {
                         this.child(
                             flex_col()
                                 .flex_1()
@@ -261,18 +278,12 @@ impl Render for Library {
                                     div().pr(px(variables.padding_16)).child(
                                         div()
                                             .w_full()
-                                            .h(if show_no_results { px(0.5) } else { px(1.0) })
+                                            .h(px(1.0))
                                             .bg(variables.border)
                                             .flex_shrink_0(),
                                     ),
                                 )
-                                .child(if show_no_results {
-                                    div()
-                                        .pt(px(variables.padding_16))
-                                        .text_color(variables.text_secondary)
-                                        .child("No Results Found")
-                                        .into_any_element()
-                                } else {
+                                .child(if has_display {
                                     div()
                                         .flex_1()
                                         .min_h_0()
@@ -282,7 +293,7 @@ impl Render for Library {
                                                 .gap(px(variables.padding_8))
                                                 .pr(px(variables.padding_16))
                                                 .py(px(variables.padding_16))
-                                                .children(self.pinned_items.iter().take(30).map(
+                                                .children(displayed_items.iter().take(30).map(
                                                     |item| {
                                                         pinned_item(
                                                             item.id.clone(),
@@ -295,30 +306,13 @@ impl Render for Library {
                                                 )),
                                         )
                                         .into_any_element()
-                                }),
-                        )
-                    })
-                    .when(!has_items && is_searching, |this| {
-                        this.child(
-                            flex_col()
-                                .flex_1()
-                                .min_h_0()
-                                .w_full()
-                                .child(
-                                    div().pr(px(variables.padding_16)).child(
-                                        div()
-                                            .w_full()
-                                            .h(px(0.5))
-                                            .bg(variables.border)
-                                            .flex_shrink_0(),
-                                    ),
-                                )
-                                .child(
+                                } else {
                                     div()
                                         .pt(px(variables.padding_16))
                                         .text_color(variables.text_secondary)
-                                        .child("No Results Found"),
-                                ),
+                                        .child("No Results Found")
+                                        .into_any_element()
+                                }),
                         )
                     }),
             )
