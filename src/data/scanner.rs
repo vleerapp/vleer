@@ -3,6 +3,7 @@ use futures::stream::{self, StreamExt};
 use gpui::App;
 use notify::{EventKind, RecursiveMode};
 use notify_debouncer_full::{DebounceEventResult, Debouncer, RecommendedCache, new_debouncer};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,6 +23,9 @@ const MAX_CONCURRENT_SCANS: usize = 16;
 #[derive(Debug, Clone)]
 pub struct ScanStats {
     pub scanned: usize,
+    pub added: usize,
+    pub updated: usize,
+    pub removed: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -60,7 +64,10 @@ impl Scanner {
                 tokio::spawn(async move {
                     let _watcher = watcher;
                     while let Some(stats) = rx.recv().await {
-                        info!("Library scan completed - Scanned: {}", stats.scanned);
+                        info!(
+                            "Library scan completed - Scanned: {}, Added: {}, Updated: {}, Removed: {}",
+                            stats.scanned, stats.added, stats.updated, stats.removed
+                        );
 
                         if stats.scanned > 0 {
                             telemetry_clone.submit(&db_clone, &config_clone).await;
@@ -76,7 +83,10 @@ impl Scanner {
                     info!("Starting initial library scan...");
                     match scanner_clone.scan_and_save(&db_clone).await {
                         Ok(stats) => {
-                            info!("Initial scan complete - Scanned: {}", stats.scanned);
+                            info!(
+                                "Initial scan complete - Scanned: {}, Added: {}, Updated: {}, Removed: {}",
+                                stats.scanned, stats.added, stats.updated, stats.removed
+                            );
 
                             if stats.scanned > 0 {
                                 telemetry_clone.submit(&db_clone, &config_clone).await;
@@ -124,6 +134,8 @@ impl Scanner {
 
     pub async fn scan_and_save(&self, db: &Database) -> Result<ScanStats> {
         let mut scanned = 0;
+        let mut added = 0;
+        let mut updated = 0;
 
         for root in &self.scan_paths {
             if !root.exists() || !root.is_dir() {
@@ -168,7 +180,10 @@ impl Scanner {
                                 .map(|d| d.as_secs() as i64)
                                 .unwrap_or(0);
 
-                            if let Ok(Some(existing)) = db.get_song_by_path(&file_path).await {
+                            let existing = db.get_song_by_path(&file_path).await.ok().flatten();
+                            let is_new = existing.is_none();
+
+                            if let Some(existing) = existing {
                                 if existing.file_size == file_size
                                     && existing.file_modified == file_modified
                                 {
@@ -192,13 +207,16 @@ impl Scanner {
                             .ok()
                             .flatten();
 
-                            Some(ScannedTrack {
-                                path,
-                                file_size,
-                                file_modified,
-                                metadata,
-                                image_data,
-                            })
+                            Some((
+                                ScannedTrack {
+                                    path,
+                                    file_size,
+                                    file_modified,
+                                    metadata,
+                                    image_data,
+                                },
+                                is_new,
+                            ))
                         }
                     }
                 })
@@ -207,14 +225,24 @@ impl Scanner {
 
             futures::pin_mut!(tracks_stream);
 
-            while let Some(track) = tracks_stream.next().await {
+            while let Some((track, is_new)) = tracks_stream.next().await {
                 if let Ok(()) = self.save_track(db, &track).await {
                     scanned += 1;
+                    if is_new {
+                        added += 1;
+                    } else {
+                        updated += 1;
+                    }
                 }
             }
         }
 
-        Ok(ScanStats { scanned })
+        Ok(ScanStats {
+            scanned,
+            added,
+            updated,
+            removed: 0,
+        })
     }
 
     pub async fn process_changed_files(
@@ -223,6 +251,8 @@ impl Scanner {
         changed_paths: Vec<PathBuf>,
     ) -> Result<ScanStats> {
         let mut scanned = 0;
+        let mut added = 0;
+        let mut updated = 0;
 
         for path in changed_paths {
             let path_clone = path.clone();
@@ -268,10 +298,15 @@ impl Scanner {
                     .map(|d| d.as_secs() as i64)
                     .unwrap_or(0);
 
-                if let Ok(Some(existing)) = db
+                let existing = db
                     .get_song_by_path(path_clone.to_string_lossy().as_ref())
                     .await
-                {
+                    .ok()
+                    .flatten();
+
+                let is_new = existing.is_none();
+
+                if let Some(existing) = existing {
                     if existing.file_size == file_size && existing.file_modified == file_modified {
                         continue;
                     }
@@ -288,6 +323,11 @@ impl Scanner {
                 match self.save_track(db, &track).await {
                     Ok(()) => {
                         scanned += 1;
+                        if is_new {
+                            added += 1;
+                        } else {
+                            updated += 1;
+                        }
                         debug!("Updated track: {:?}", path_clone);
                     }
                     Err(e) => error!("Failed to save track {:?}: {}", path_clone, e),
@@ -295,14 +335,18 @@ impl Scanner {
             }
         }
 
-        Ok(ScanStats { scanned })
+        Ok(ScanStats {
+            scanned,
+            added,
+            updated,
+            removed: 0,
+        })
     }
 
     async fn save_track(&self, db: &Database, track: &ScannedTrack) -> Result<()> {
         let path_str = track.path.to_string_lossy().to_string();
         let meta = &track.metadata;
 
-        // First, save image if present (deduplication happens via hash ID)
         let image_id = if let Some(image) = &track.image_data {
             db.upsert_image(&image.id, &image.data).await?;
             Some(image.id.clone())
@@ -385,7 +429,7 @@ impl MusicWatcher {
             None,
             move |result: DebounceEventResult| match result {
                 Ok(events) => {
-                    let mut changed_audio_files = Vec::new();
+                    let changed_audio_files = Vec::new();
 
                     for event in events {
                         debug!("File event: {:?} - {:?}", event.kind, event.paths);
@@ -396,14 +440,69 @@ impl MusicWatcher {
                         );
 
                         if is_meaningful_event {
-                            for path in &event.paths {
-                                if Scanner::is_audio_file(path)
-                                    || (!path.exists() && Scanner::could_be_audio_file(path))
-                                {
-                                    changed_audio_files.push(path.clone());
-                                }
-                            }
-                        }
+
+    let mut changed_audio_files = Vec::new();
+    let mut removed_files = Vec::new();
+
+    for path in &event.paths {
+        if path.exists() {
+            if Scanner::could_be_audio_file(path) {
+                changed_audio_files.push(path.clone());
+            }
+        } else {
+            if Scanner::could_be_audio_file(path) {
+                removed_files.push(path.clone());
+            }
+        }
+    }
+
+    for path in removed_files {
+        let path_str = path.to_string_lossy().to_string();
+        let db = db_clone.clone();
+        let tx = tx.clone();
+        runtime_handle.spawn(async move {
+            if let Err(e) = db.delete_song_by_path(&path_str).await {
+                error!("Failed to remove deleted track {}: {}", path_str, e);
+            } else {
+                let stats = ScanStats {
+                    scanned: 0,
+                    added: 0,
+                    updated: 0,
+                    removed: 1,
+                };
+                let _ = tx.send(stats).await;
+            }
+        });
+    }
+
+    let changed_audio_files: Vec<_> = changed_audio_files.into_iter().collect::<HashSet<_>>().into_iter().collect();
+
+    if !changed_audio_files.is_empty() {
+        info!(
+            "Detected {} changed audio files, processing incrementally",
+            changed_audio_files.len()
+        );
+        let scanner = scanner_clone.clone();
+        let db = db_clone.clone();
+        let tx = tx.clone();
+
+        runtime_handle.spawn(async move {
+            match scanner.process_changed_files(&db, changed_audio_files).await {
+                Ok(stats) => {
+                    info!(
+                        "Incremental scan complete - Scanned: {}, Added: {}, Updated: {}, Removed: {}",
+                        stats.scanned, stats.added, stats.updated, stats.removed
+                    );
+                    let _ = tx.send(stats).await;
+                }
+                Err(e) => {
+                    error!("Incremental scan failed: {}", e);
+                }
+            }
+        });
+    }
+}
+
                     }
 
                     if !changed_audio_files.is_empty() {
@@ -421,7 +520,6 @@ impl MusicWatcher {
                                 .await
                             {
                                 Ok(stats) => {
-                                    info!("Incremental scan complete - Scanned: {}", stats.scanned);
                                     let _ = tx.send(stats).await;
                                 }
                                 Err(e) => {

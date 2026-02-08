@@ -65,6 +65,10 @@ impl Database {
         queries::delete_song(&self.pool, id).await
     }
 
+    pub async fn delete_song_by_path(&self, file_path: &str) -> sqlx::Result<()> {
+        queries::delete_song_by_path(&self.pool, file_path).await
+    }
+
     pub async fn get_songs_count(&self) -> sqlx::Result<i64> {
         queries::get_songs_count(&self.pool).await
     }

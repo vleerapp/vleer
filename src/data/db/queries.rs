@@ -11,10 +11,7 @@ pub async fn get_song(pool: &SqlitePool, id: Cuid) -> sqlx::Result<Option<SongRo
         .await
 }
 
-pub async fn get_song_by_path(
-    pool: &SqlitePool,
-    file_path: &str,
-) -> sqlx::Result<Option<SongRow>> {
+pub async fn get_song_by_path(pool: &SqlitePool, file_path: &str) -> sqlx::Result<Option<SongRow>> {
     sqlx::query_as::<_, SongRow>("SELECT * FROM songs WHERE file_path = ?")
         .bind(file_path)
         .fetch_optional(pool)
@@ -76,6 +73,14 @@ pub async fn upsert_song(
 pub async fn delete_song(pool: &SqlitePool, id: &Cuid) -> sqlx::Result<()> {
     sqlx::query("DELETE FROM songs WHERE id = ?")
         .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn delete_song_by_path(pool: &SqlitePool, file_path: &str) -> sqlx::Result<()> {
+    sqlx::query("DELETE FROM songs WHERE file_path = ?")
+        .bind(file_path)
         .execute(pool)
         .await?;
     Ok(())
