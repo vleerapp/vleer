@@ -766,7 +766,7 @@ pub async fn get_recently_added_items(
             s.date as first_year,
             ig.album_id,
             al.title as album_title,
-            ar.name as artist_name,
+            ar.name as artist_name
         FROM image_groups ig
         JOIN songs s ON ig.first_song_id = s.id
         LEFT JOIN albums al ON ig.album_id = al.id
