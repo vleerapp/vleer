@@ -1,82 +1,64 @@
 use anyhow::Ok;
 use gpui::{prelude::FluentBuilder, *};
-use std::{collections::HashMap, fs};
+use sqlx::{
+    SqlitePool,
+    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous},
+};
+use std::{collections::HashMap, fs, sync::Arc};
 use tracing::{debug, error};
 
 use crate::{
-    data::{
-        config::Config,
-        db::{Database, create_pool},
-        scanner::Scanner,
-        state::State,
-        telemetry::Telemetry,
-    },
+    data::{config::Config, db::repo::Database, scanner::Scanner, telemetry::Telemetry},
     media::{media_controls::MediaKeyHandler, playback::Playback, queue::Queue},
     ui::{
         assets::VleerAssetSource,
         components::{
             div::{flex_col, flex_row},
             input::bind_input_keys,
+            pane::pane,
         },
         discord_presence::DiscordPresence,
         global_actions::register_actions,
-        layout::{library::Library, navbar::Navbar, player::Player},
+        layout::{
+            library::{Library, SearchState},
+            navbar::Navbar,
+            player::Player,
+        },
         variables::Variables,
         views::{AppView, ViewRegistry},
     },
 };
 
-struct MainWindow {
+pub(crate) struct MainWindow {
     library: Entity<Library>,
     navbar: Entity<Navbar>,
     player: Entity<Player>,
     views: HashMap<AppView, AnyView>,
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum HoverTarget {
-    Library,
-    Navbar,
-    Content,
-    Player,
+    current_view: AppView,
 }
 
 impl MainWindow {
-    fn set_hover(&mut self, target: HoverTarget, cx: &mut Context<Self>) {
-        self.library.update(cx, |library, cx| {
-            library.hovered = target == HoverTarget::Library;
-            cx.notify();
-        });
-        self.navbar.update(cx, |navbar, cx| {
-            navbar.hovered = target == HoverTarget::Navbar;
-            cx.notify();
-        });
-        self.player.update(cx, |player, cx| {
-            player.hovered = target == HoverTarget::Player;
-            cx.notify();
-        });
+    pub fn current_view(&self) -> AppView {
+        self.current_view
+    }
 
-        let state = cx.global::<State>();
-        let current_view = state.get_current_view_sync();
-
-        for (view_type, entity) in &self.views {
-            let is_current = *view_type == current_view;
-            let should_hover = is_current && target == HoverTarget::Content;
-
-            ViewRegistry::set_hovered(*view_type, entity, should_hover, cx);
+    pub fn set_current_view(&mut self, view: AppView, window: &mut Window, cx: &mut Context<Self>) {
+        if self.current_view == view {
+            return;
         }
+        self.current_view = view;
+        window.refresh();
+        cx.notify();
     }
 }
 
 impl Render for MainWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
-        let state = cx.global::<State>();
-        let current_view = state.get_current_view_sync();
 
         let content: AnyElement = self
             .views
-            .get(&current_view)
+            .get(&self.current_view)
             .map(|view| view.clone().into_any_element())
             .unwrap_or_else(|| div().into_any_element());
 
@@ -98,17 +80,12 @@ impl Render for MainWindow {
                     .gap(px(variables.padding_16))
                     .child(
                         div()
-                            .id("library")
+                            .id("library-container")
                             .w(px(300.0))
                             .flex_shrink_0()
                             .min_h_0()
                             .h_full()
-                            .on_mouse_move(cx.listener(
-                                |this, _event: &MouseMoveEvent, _window: &mut Window, cx| {
-                                    this.set_hover(HoverTarget::Library, cx);
-                                },
-                            ))
-                            .child(self.library.clone()),
+                            .child(pane("library").title("Library").child(self.library.clone())),
                     )
                     .child(
                         flex_col()
@@ -118,50 +95,40 @@ impl Render for MainWindow {
                             .gap(px(variables.padding_16))
                             .child(
                                 div()
-                                    .id("navbar")
+                                    .id("navbar-container")
                                     .h(px(48.0))
                                     .w_full()
                                     .flex_shrink_0()
-                                    .on_mouse_move(cx.listener(
-                                        |this,
-                                         _event: &MouseMoveEvent,
-                                         _window: &mut Window,
-                                         cx| {
-                                            this.set_hover(HoverTarget::Navbar, cx);
-                                        },
-                                    ))
-                                    .child(self.navbar.clone()),
+                                    .child(
+                                        pane("navbar").title("Navbar").child(self.navbar.clone()),
+                                    ),
                             )
                             .child(
                                 div()
-                                    .id("current-view")
+                                    .id("current-view-container")
                                     .flex_1()
                                     .min_h_0()
                                     .size_full()
-                                    .on_mouse_move(cx.listener(
-                                        |this,
-                                         _event: &MouseMoveEvent,
-                                         _window: &mut Window,
-                                         cx| {
-                                            this.set_hover(HoverTarget::Content, cx);
-                                        },
-                                    ))
-                                    .child(content),
+                                    .child(
+                                        pane("current-view")
+                                            .title(self.current_view.title())
+                                            .child(content),
+                                    ),
                             ),
                     ),
             )
             .child(
                 div()
-                    .id("player")
+                    .id("player-container")
                     .h(px(100.0))
                     .flex_shrink_0()
                     .w_full()
-                    .on_mouse_move(cx.listener(
-                        |this, _event: &MouseMoveEvent, _window: &mut Window, cx| {
-                            this.set_hover(HoverTarget::Player, cx);
-                        },
-                    ))
-                    .child(self.player.clone()),
+                    .child(
+                        pane("player")
+                            .title("Player")
+                            .child(self.player.clone())
+                            .into_any_element(),
+                    ),
             );
 
         let text_styles = element.text_style();
@@ -210,19 +177,31 @@ pub async fn run() -> anyhow::Result<()> {
         )
     })?;
 
-    let pool = create_pool(data_dir.join("library.db")).await?;
+    let pool = {
+        let options = SqliteConnectOptions::new()
+            .filename(data_dir.join("library.db"))
+            .optimize_on_close(true, None)
+            .synchronous(SqliteSynchronous::Normal)
+            .journal_mode(SqliteJournalMode::Wal)
+            .create_if_missing(true);
+
+        let pool = SqlitePool::connect_with(options).await?;
+        sqlx::migrate!("./migrations").run(&pool).await?;
+        Arc::new(pool)
+    };
 
     Application::new()
-        .with_assets(VleerAssetSource::new())
+        .with_assets(VleerAssetSource::new(pool.clone()))
         .run(move |cx| {
-            Database::init(cx, pool).expect("unable to initizalize database");
+            cx.set_global(Database { pool: pool.clone() });
+            cx.set_global(SearchState::default());
+
             Config::init(cx, &config_dir).expect("unable to initizalize settings");
             Playback::init(cx).expect("unable to initizalize playback context");
             DiscordPresence::init(cx);
             Queue::init(cx);
             Variables::init(cx);
             Telemetry::init(cx, data_dir.clone());
-            State::init(cx);
             Scanner::init(cx);
             MediaKeyHandler::init(cx);
 
@@ -247,15 +226,20 @@ pub async fn run() -> anyhow::Result<()> {
                     window.set_window_title("Vleer");
 
                     cx.new(|cx| {
-                        Playback::start_playback_monitor(window, cx);
+                        Playback::start_monitor(window, cx);
+
+                        let library_entity = cx.new(|cx| Library::new(cx));
+                        let navbar_entity = cx.new(|_cx| Navbar::new());
+                        let player_entity = cx.new(|_cx| Player::new());
 
                         let views = ViewRegistry::register_all(window, cx);
 
                         MainWindow {
-                            library: cx.new(|cx| Library::new(cx)),
-                            navbar: cx.new(|_cx| Navbar::new()),
-                            player: cx.new(|_cx| Player::new()),
+                            library: library_entity,
+                            navbar: navbar_entity,
+                            player: player_entity,
                             views,
+                            current_view: AppView::Home,
                         }
                     })
                 },

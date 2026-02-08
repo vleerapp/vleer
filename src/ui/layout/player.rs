@@ -1,31 +1,29 @@
 use gpui::{prelude::FluentBuilder, *};
 
 use crate::{
-    data::{config::Config, state::State},
+    data::{config::Config, db::repo::Database},
     media::{
         playback::Playback,
         queue::{Queue, RepeatMode},
     },
     ui::{
+        assets::image_cache::vleer_cache,
         components::{
             button::Button,
             div::{flex_col, flex_row},
             icons::{icon::icon, icons::*},
             progress_bar::progress_slider,
             slider::slider,
-            title::Title,
         },
         variables::Variables,
     },
 };
 
-pub struct Player {
-    pub hovered: bool,
-}
+pub struct Player {}
 
 impl Player {
     pub fn new() -> Self {
-        Self { hovered: false }
+        Self {}
     }
 }
 
@@ -33,35 +31,33 @@ impl Render for Player {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
 
-        let border_color = if self.hovered {
-            variables.accent
-        } else {
-            variables.border
-        };
+        let current_song = cx.global::<Queue>().get_current_song(cx).and_then(|song| {
+            let db = cx.global::<Database>();
 
-        let current_track = cx.global::<Queue>().current().map(|song| {
-            let state = cx.global::<State>();
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    let artist_name = if let Some(artist_id) = song.artist_id {
+                        db.get_artist(artist_id)
+                            .await
+                            .ok()
+                            .flatten()
+                            .map(|a| a.name)
+                            .unwrap_or_else(|| "Unknown Artist".to_string())
+                    } else {
+                        "Unknown Artist".to_string()
+                    };
 
-            let artist_name = song
-                .artist_id
-                .as_ref()
-                .and_then(|id| {
-                    tokio::task::block_in_place(|| {
-                        tokio::runtime::Handle::current().block_on(state.get_artist(id))
-                    })
+                    let cover_uri = song.image_id.map(|id| format!("!image://{}", id));
+
+                    Some((song.title, artist_name, cover_uri))
                 })
-                .map(|a| a.name.clone())
-                .unwrap_or_else(|| "Unknown Artist".to_string());
-
-            let cover_uri = song.cover_uri();
-
-            (song.title.clone(), artist_name, cover_uri)
+            })
         });
 
-        let is_playing = cx.global::<Playback>().is_playing();
+        let is_playing = cx.global::<Playback>().get_playing();
         let volume = cx.global::<Playback>().get_volume();
-        let repeat_mode = cx.global::<Queue>().repeat_mode();
-        let is_shuffle = cx.global::<Queue>().is_shuffle();
+        let repeat_mode = cx.global::<Queue>().get_repeat_mode();
+        let is_shuffle = cx.global::<Queue>().get_shuffle();
 
         let play_button = Button::new("play_pause")
             .group("playpause-button")
@@ -81,9 +77,9 @@ impl Render for Player {
             .group("previous-button")
             .child(icon(PREVIOUS).group_hover("previous-button", |s| s.text_color(variables.text)))
             .on_click(cx.listener(|_this, _event, _window, cx| {
-                if let Err(e) = Queue::previous(cx) {
-                    tracing::error!("Failed to play previous: {}", e);
-                }
+                cx.update_global::<Queue, _>(|queue, cx| {
+                    queue.previous(cx);
+                });
                 cx.notify();
             }));
 
@@ -91,9 +87,9 @@ impl Render for Player {
             .group("next-button")
             .child(icon(NEXT).group_hover("next-button", |s| s.text_color(variables.text)))
             .on_click(cx.listener(|_this, _event, _window, cx| {
-                if let Err(e) = Queue::next(cx) {
-                    tracing::error!("Failed to play next: {}", e);
-                }
+                cx.update_global::<Queue, _>(|queue, cx| {
+                    queue.next(cx);
+                });
                 cx.notify();
             }));
 
@@ -112,7 +108,7 @@ impl Render for Player {
             )
             .on_click(cx.listener(|_this, _event, _window, cx| {
                 cx.update_global::<Queue, _>(|queue, _cx| {
-                    queue.toggle_shuffle();
+                    queue.set_shuffle(queue.get_shuffle() ^ true);
                 });
                 cx.notify();
             }));
@@ -141,7 +137,7 @@ impl Render for Player {
             )
             .on_click(cx.listener(|_this, _event, _window, cx| {
                 cx.update_global::<Queue, _>(|queue, _cx| {
-                    queue.cycle_repeat();
+                    queue.cycle_repeat_mode();
                 });
                 cx.notify();
             }));
@@ -156,7 +152,7 @@ impl Render for Player {
             .child(next_button)
             .child(repeat_button);
 
-        let track_info = if let Some((title, artist, cover_uri)) = current_track {
+        let track_info = if let Some((title, artist, cover_uri)) = current_song {
             flex_row()
                 .gap(px(variables.padding_8))
                 .items_center()
@@ -233,59 +229,55 @@ impl Render for Player {
                     }),
             );
 
-        div()
-            .relative()
-            .size_full()
+        flex_col()
+            .image_cache(vleer_cache("player-image-cache", 100))
+            .border(px(1.0))
+            .border_color(variables.border)
+            .group_hover("player", |s| s.border_color(variables.accent))
+            .h_full()
+            .p(px(variables.padding_16))
+            .gap(px(variables.padding_16))
             .child(
-                flex_col()
-                    .border(px(1.0))
-                    .border_color(border_color)
-                    .h_full()
-                    .p(px(variables.padding_16))
+                flex_row()
+                    .h(px(36.0))
+                    .w_full()
+                    .items_center()
                     .gap(px(variables.padding_16))
-                    .child(
-                        flex_row()
-                            .h(px(36.0))
-                            .w_full()
-                            .items_center()
-                            .gap(px(variables.padding_16))
-                            .child(div().flex_1().min_w_0().child(track_info))
-                            .child(div().flex_1().child(controls))
-                            .child(div().flex_1().min_w_0().child(volume_display)),
-                    )
-                    .child(
-                        progress_slider()
-                            .id("playback-progress")
-                            .w_full()
-                            .h(px(16.0))
-                            .current_time(cx.global::<Playback>().get_position())
-                            .duration(
-                                cx.global::<Queue>()
-                                    .current()
-                                    .map(|s| s.duration as f32)
-                                    .unwrap_or(0.0),
-                            )
-                            .on_seek(|value, window, cx| {
-                                let duration = cx
-                                    .global::<Queue>()
-                                    .current()
-                                    .map(|s| s.duration as f32)
-                                    .unwrap_or(0.0);
-
-                                if duration > 0.0 {
-                                    let seek_time = value * duration;
-
-                                    cx.update_global::<Playback, _>(|playback, _cx| {
-                                        if let Err(e) = playback.seek(seek_time) {
-                                            tracing::error!("Failed to seek: {}", e);
-                                        }
-                                    });
-
-                                    window.refresh();
-                                }
-                            }),
-                    ),
+                    .child(div().flex_1().min_w_0().child(track_info))
+                    .child(div().flex_1().child(controls))
+                    .child(div().flex_1().min_w_0().child(volume_display)),
             )
-            .child(Title::new("Player", self.hovered))
+            .child(
+                progress_slider()
+                    .id("playback-progress")
+                    .w_full()
+                    .h(px(16.0))
+                    .current_time(cx.global::<Playback>().get_position())
+                    .duration(
+                        cx.global::<Queue>()
+                            .get_current_song(cx)
+                            .map(|s| s.duration as f32)
+                            .unwrap_or(0.0),
+                    )
+                    .on_seek(|value, window, cx| {
+                        let duration = cx
+                            .global::<Queue>()
+                            .get_current_song(cx)
+                            .map(|s| s.duration as f32)
+                            .unwrap_or(0.0);
+
+                        if duration > 0.0 {
+                            let seek_time = value * duration;
+
+                            cx.update_global::<Playback, _>(|playback, _cx| {
+                                if let Err(e) = playback.seek(seek_time) {
+                                    tracing::error!("Failed to seek: {}", e);
+                                }
+                            });
+
+                            window.refresh();
+                        }
+                    }),
+            )
     }
 }

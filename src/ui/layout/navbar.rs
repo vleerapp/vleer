@@ -5,53 +5,40 @@ use crate::ui::{
         div::flex_row,
         icons::icons::{HOME, SETTINGS},
         nav_button::NavButton,
-        title::Title,
     },
     variables::Variables,
     views::AppView,
 };
 
-pub struct Navbar {
-    pub hovered: bool,
-}
+pub struct Navbar {}
 
 impl Navbar {
     pub fn new() -> Self {
-        Self { hovered: false }
+        Self {}
     }
 }
 
 impl Render for Navbar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
-        let border_color = if self.hovered {
-            variables.accent
-        } else {
-            variables.border
-        };
 
-        div()
-            .relative()
-            .size_full()
-            .child(
-                flex_row()
-                    .border(px(1.0))
-                    .border_color(border_color)
-                    .h_full()
-                    .justify_between()
-                    .child(flex_row().p(px(variables.padding_16)).child(NavButton::new(
-                        HOME,
-                        Some("Home"),
-                        None,
-                        AppView::Home,
-                    )))
-                    .child(div().p(px(variables.padding_16)).child(NavButton::new(
-                        SETTINGS,
-                        None,
-                        None,
-                        AppView::Settings,
-                    ))),
-            )
-            .child(Title::new("NavBar", self.hovered))
+        flex_row()
+            .border(px(1.0))
+            .border_color(variables.border)
+            .group_hover("navbar", |s| s.border_color(variables.accent))
+            .h_full()
+            .justify_between()
+            .child(flex_row().p(px(variables.padding_16)).child(NavButton::new(
+                HOME,
+                Some("Home"),
+                None,
+                AppView::Home,
+            )))
+            .child(div().p(px(variables.padding_16)).child(NavButton::new(
+                SETTINGS,
+                None,
+                None,
+                AppView::Settings,
+            )))
     }
 }

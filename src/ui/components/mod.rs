@@ -8,3 +8,4 @@ pub mod scrollbar;
 pub mod slider;
 pub mod song_table;
 pub mod title;
+pub mod pane;

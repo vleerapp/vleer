@@ -23,16 +23,23 @@ pub enum AppView {
     Playlists,
 }
 
+impl AppView {
+    pub fn title(&self) -> &'static str {
+        match self {
+            AppView::Home => "Home",
+            AppView::Songs => "Songs",
+            AppView::Settings => "Settings",
+            AppView::Albums => "Albums",
+            AppView::Artists => "Artists",
+            AppView::Playlists => "Playlists",
+        }
+    }
+}
+
 impl Default for AppView {
     fn default() -> Self {
         Self::Home
     }
-}
-
-pub trait HoverableView {
-    fn set_hovered(&mut self, hovered: bool, cx: &mut Context<Self>)
-    where
-        Self: Sized;
 }
 
 pub struct ViewRegistry;
@@ -69,52 +76,5 @@ impl ViewRegistry {
         );
 
         views
-    }
-
-    pub fn set_hovered(view_type: AppView, view: &AnyView, hovered: bool, cx: &mut App) {
-        match view_type {
-            AppView::Home => {
-                if let Ok(entity) = view.clone().downcast::<HomeView>() {
-                    entity.update(cx, |v, cx| {
-                        v.set_hovered(hovered, cx);
-                    });
-                }
-            }
-            AppView::Songs => {
-                if let Ok(entity) = view.clone().downcast::<SongsView>() {
-                    entity.update(cx, |v, cx| {
-                        v.set_hovered(hovered, cx);
-                    });
-                }
-            }
-            AppView::Settings => {
-                if let Ok(entity) = view.clone().downcast::<SettingsView>() {
-                    entity.update(cx, |v, cx| {
-                        v.set_hovered(hovered, cx);
-                    });
-                }
-            }
-            AppView::Albums => {
-                if let Ok(entity) = view.clone().downcast::<AlbumsView>() {
-                    entity.update(cx, |v, cx| {
-                        v.set_hovered(hovered, cx);
-                    });
-                }
-            }
-            AppView::Artists => {
-                if let Ok(entity) = view.clone().downcast::<ArtistsView>() {
-                    entity.update(cx, |v, cx| {
-                        v.set_hovered(hovered, cx);
-                    });
-                }
-            }
-            AppView::Playlists => {
-                if let Ok(entity) = view.clone().downcast::<PlaylistsView>() {
-                    entity.update(cx, |v, cx| {
-                        v.set_hovered(hovered, cx);
-                    });
-                }
-            }
-        }
     }
 }

@@ -1,39 +1,20 @@
-use gpui::{prelude::FluentBuilder, *};
-use std::collections::HashMap;
-
 use crate::{
-    data::{state::State, types::Song},
+    data::{db::repo::Database, models::RecentItem},
     ui::{
+        assets::image_cache::vleer_cache,
         components::{
             div::{flex_col, flex_row},
             icons::{
                 icon::icon,
                 icons::{ARROW_LEFT, ARROW_RIGHT},
             },
-            title::Title,
         },
         variables::Variables,
-        views::HoverableView,
     },
 };
-
-#[derive(Clone)]
-enum RecentItem {
-    Song {
-        title: String,
-        artist_name: Option<String>,
-        cover_uri: Option<String>,
-    },
-    Album {
-        title: String,
-        artist_name: Option<String>,
-        cover_uri: Option<String>,
-        year: Option<String>,
-    },
-}
+use gpui::{prelude::FluentBuilder, *};
 
 pub struct HomeView {
-    pub hovered: bool,
     recently_added: Vec<RecentItem>,
     recently_added_offset: usize,
     container_width: Option<f32>,
@@ -46,7 +27,6 @@ const GAP_SIZE: f32 = 16.0;
 impl HomeView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut view = Self {
-            hovered: false,
             recently_added: Vec::new(),
             recently_added_offset: 0,
             container_width: None,
@@ -57,128 +37,14 @@ impl HomeView {
     }
 
     fn load_recently_added(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let state = cx.global::<State>().clone();
+        let db = cx.global::<Database>().clone();
 
         cx.spawn_in(
             window,
             |this: WeakEntity<Self>, cx: &mut AsyncWindowContext| {
                 let mut cx = cx.clone();
                 async move {
-                    let song_ids = state.get_all_song_ids().await;
-                    let mut songs: Vec<std::sync::Arc<Song>> = Vec::new();
-
-                    for id in song_ids {
-                        if let Some(song) = state.get_song(&id).await {
-                            songs.push(song);
-                        }
-                    }
-
-                    songs.sort_by(|a, b| b.date_added.cmp(&a.date_added));
-                    songs.truncate(100);
-
-                    let mut cover_groups: HashMap<String, Vec<std::sync::Arc<Song>>> =
-                        HashMap::new();
-                    let mut no_cover_songs: Vec<std::sync::Arc<Song>> = Vec::new();
-
-                    for song in songs {
-                        if let Some(cover) = &song.cover {
-                            cover_groups.entry(cover.clone()).or_default().push(song);
-                        } else {
-                            no_cover_songs.push(song);
-                        }
-                    }
-
-                    let mut recent_items: Vec<(String, String, RecentItem)> = Vec::new();
-
-                    for (_cover, group_songs) in cover_groups {
-                        let first_song = &group_songs[0];
-                        let most_recent = group_songs
-                            .iter()
-                            .map(|s| s.date_added.clone())
-                            .max()
-                            .unwrap_or_default();
-
-                        let artist_name = first_song
-                            .artist_id
-                            .as_ref()
-                            .and_then(|id| {
-                                tokio::task::block_in_place(|| {
-                                    tokio::runtime::Handle::current().block_on(state.get_artist(id))
-                                })
-                            })
-                            .map(|a| a.name.clone());
-
-                        let cover_uri = first_song.cover_uri();
-
-                        let year = first_song.date.clone();
-
-                        if group_songs.len() > 1 {
-                            let album_title = first_song
-                                .album_id
-                                .as_ref()
-                                .and_then(|id| {
-                                    tokio::task::block_in_place(|| {
-                                        tokio::runtime::Handle::current()
-                                            .block_on(state.get_album(id))
-                                    })
-                                })
-                                .map(|a| a.title.clone());
-
-                            let title = album_title.unwrap_or_else(|| "Unknown Album".to_string());
-
-                            recent_items.push((
-                                most_recent,
-                                title.clone(),
-                                RecentItem::Album {
-                                    title,
-                                    artist_name,
-                                    cover_uri,
-                                    year,
-                                },
-                            ));
-                        } else {
-                            recent_items.push((
-                                most_recent,
-                                first_song.title.clone(),
-                                RecentItem::Song {
-                                    title: first_song.title.clone(),
-                                    artist_name,
-                                    cover_uri,
-                                },
-                            ));
-                        }
-                    }
-
-                    for song in no_cover_songs {
-                        let date_added = song.date_added.clone();
-                        let artist_name = song
-                            .artist_id
-                            .as_ref()
-                            .and_then(|id| {
-                                tokio::task::block_in_place(|| {
-                                    tokio::runtime::Handle::current().block_on(state.get_artist(id))
-                                })
-                            })
-                            .map(|a| a.name.clone());
-
-                        recent_items.push((
-                            date_added,
-                            song.title.clone(),
-                            RecentItem::Song {
-                                title: song.title.clone(),
-                                artist_name,
-                                cover_uri: None,
-                            },
-                        ));
-                    }
-
-                    recent_items.sort_by(|a, b| match b.0.cmp(&a.0) {
-                        std::cmp::Ordering::Equal => a.1.cmp(&b.1),
-                        other => other,
-                    });
-
-                    let items: Vec<RecentItem> =
-                        recent_items.into_iter().map(|(_, _, item)| item).collect();
+                    let items = db.get_recently_added_items(100).await.unwrap_or_default();
 
                     this.update(&mut cx, |this, cx| {
                         this.recently_added = items;
@@ -232,11 +98,6 @@ impl HomeView {
 impl Render for HomeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
-        let border_color = if self.hovered {
-            variables.accent
-        } else {
-            variables.border
-        };
 
         let bounds = window.bounds();
         let window_width: f32 = bounds.size.width.into();
@@ -276,17 +137,17 @@ impl Render for HomeView {
                         RecentItem::Song {
                             title,
                             artist_name,
-                            cover_uri,
+                            image_id,
                         } => {
                             let artist = artist_name
                                 .clone()
                                 .unwrap_or_else(|| "Unknown Artist".to_string());
-                            (title.clone(), artist, cover_uri.clone())
+                            (title.clone(), artist, image_id.clone())
                         }
                         RecentItem::Album {
                             title,
                             artist_name,
-                            cover_uri,
+                            image_id,
                             year,
                         } => {
                             let artist = artist_name
@@ -297,12 +158,12 @@ impl Render for HomeView {
                             } else {
                                 artist
                             };
-                            (title.clone(), subtitle, cover_uri.clone())
+                            (title.clone(), subtitle, image_id.clone())
                         }
                     };
 
                     let cover_element = if let Some(uri) = cover_uri {
-                        img(format!("{}?size=180", uri))
+                        img(format!("!image://{}", uri))
                             .id(ElementId::Name(format!("recent-cover-{}", idx).into()))
                             .size(px(cover_size))
                             .object_fit(ObjectFit::Cover)
@@ -458,61 +319,49 @@ impl Render for HomeView {
             .gap(px(variables.padding_16));
 
         div()
-            .id("home-view")
-            .relative()
+            .image_cache(vleer_cache("home-image-cache", 200))
+            .id("home-wrapper")
             .size_full()
+            .overflow_hidden()
             .child(
                 div()
-                    .id("home-wrapper")
+                    .id("home-container")
+                    .flex()
+                    .flex_col()
+                    .border(px(1.0))
+                    .border_color(variables.border)
+                    .group_hover("home-view", |s| s.border_color(variables.accent))
                     .size_full()
-                    .overflow_hidden()
+                    .p(px(variables.padding_24))
                     .child(
                         div()
-                            .id("home-container")
-                            .flex()
-                            .flex_col()
-                            .border(px(1.0))
-                            .border_color(border_color)
+                            .id("home-scroll-container")
+                            .flex_1()
                             .size_full()
-                            .p(px(variables.padding_24))
+                            .min_h_0()
+                            .overflow_y_scroll()
                             .child(
-                                div()
-                                    .id("home-scroll-container")
-                                    .flex_1()
-                                    .size_full()
-                                    .min_h_0()
-                                    .overflow_y_scroll()
+                                flex_col()
+                                    .id("home-content")
+                                    .gap(px(variables.padding_24))
                                     .child(
-                                        flex_col()
-                                            .id("home-content")
-                                            .gap(px(variables.padding_24))
-                                            .child(
-                                                flex_row()
-                                                    .id("home-welcome")
-                                                    .w_full()
-                                                    .text_color(variables.accent)
-                                                    .child(div().h(px(100.0)).child(
-                                                        r"
+                                        flex_row()
+                                            .id("home-welcome")
+                                            .w_full()
+                                            .text_color(variables.accent)
+                                            .child(div().h(px(100.0)).child(
+                                                r"
                 __
  _      _____  / /________  ____ ___  ___
 | | /| / / _ \/ / ___/ __ \/ __ `__ \/ _ \
 | |/ |/ /  __/ / /__/ /_/ / / / / / /  __/
 |__/|__/\___/_/\___/\____/_/ /_/ /_/\___/ ",
-                                                    )),
-                                            )
-                                            .child(recently_played)
-                                            .child(recently_added),
-                                    ),
+                                            )),
+                                    )
+                                    .child(recently_played)
+                                    .child(recently_added),
                             ),
                     ),
             )
-            .child(Title::new("Home", self.hovered))
-    }
-}
-
-impl HoverableView for HomeView {
-    fn set_hovered(&mut self, hovered: bool, cx: &mut Context<Self>) {
-        self.hovered = hovered;
-        cx.notify();
     }
 }

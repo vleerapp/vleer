@@ -1,29 +1,34 @@
-use crate::data::state::State;
-use crate::data::types::{Cuid, Song};
+use crate::data::db::repo::Database;
+use crate::data::models::{Cuid, PinnedItem};
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
 use crate::ui::components::div::flex_row;
 use crate::ui::components::icons::icon::icon;
 use crate::ui::components::scrollbar::ScrollableElement;
 use crate::ui::{
+    assets::image_cache::vleer_cache,
     components::{
         div::flex_col,
         icons::icons::{self, PLAY},
         input::{InputEvent, TextInput},
         nav_button::NavButton,
-        title::Title,
     },
     variables::Variables,
     views::AppView,
 };
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use std::sync::Arc;
+
+#[derive(Default)]
+pub struct SearchState {
+    pub query: SharedString,
+}
+
+impl Global for SearchState {}
 
 pub struct Library {
-    pub hovered: bool,
     search_input: Entity<TextInput>,
-    search_query: String,
+    pinned_items: Vec<PinnedItem>,
 }
 
 impl Library {
@@ -31,44 +36,45 @@ impl Library {
         let search_input =
             cx.new(|cx| TextInput::new(cx, "Search Library").with_icon(icons::SEARCH));
 
-        cx.subscribe(
-            &search_input,
-            |this: &mut Self, _input, event: &InputEvent, cx| match event {
-                InputEvent::Change(text) => {
-                    this.search_query = text.clone();
-                    cx.update_global::<State, _>(|state, _| {
-                        state.set_search_query_sync(text.clone());
-                    });
+        let db = cx.global::<Database>().clone();
+
+        cx.spawn(async move |this, cx: &mut AsyncApp| {
+            let items = db.get_pinned_items().await;
+
+            cx.update(|cx| {
+                this.update(cx, |lib, cx| {
+                    lib.pinned_items = items;
                     cx.notify();
-                }
-                InputEvent::Submit(text) => {
-                    this.search_query = text.clone();
-                    cx.update_global::<State, _>(|state, _| {
-                        state.set_search_query_sync(text.clone());
-                    });
-                    cx.notify();
-                }
-            },
-        )
+                })
+            })
+            .ok();
+        })
         .detach();
 
-        Self {
-            hovered: false,
-            search_input,
-            search_query: String::new(),
-        }
-    }
+        cx.subscribe(&search_input, |_, _, event: &InputEvent, cx| {
+            let text = match event {
+                InputEvent::Change(text) | InputEvent::Submit(text) => text,
+            };
+            cx.update_global::<SearchState, _>(|s, _cx| {
+                s.query = text.clone().into();
+            });
+        })
+        .detach();
 
-    fn get_match_counts(&self, cx: &App) -> (usize, usize, usize, usize) {
-        let state = cx.global::<State>();
-        state.get_search_match_counts_sync(&self.search_query)
+        cx.observe_global::<SearchState>(|_this, cx| cx.notify())
+            .detach();
+
+        Self {
+            search_input,
+            pinned_items: Vec::new(),
+        }
     }
 }
 
 fn pinned_item(
     id: Cuid,
     name: String,
-    image_hash: Option<String>,
+    image_id: Option<String>,
     item_type: String,
     variables: &Variables,
 ) -> impl IntoElement {
@@ -76,26 +82,8 @@ fn pinned_item(
     let item_type_clone = item_type.clone();
     let id_clone = id.clone();
 
-    let covers_dir = dirs::data_dir()
-        .expect("couldn't get data directory")
-        .join("vleer")
-        .join("covers");
-
-    let cover_uri = image_hash.and_then(|hash| {
-        let cover_path = covers_dir.join(format!("{}.jpg", hash.trim()));
-        format!(
-            "file:///{}",
-            cover_path
-                .canonicalize()
-                .unwrap_or(cover_path)
-                .to_string_lossy()
-                .trim_start_matches('/')
-        )
-        .into()
-    });
-
-    let cover_element = if let Some(uri) = cover_uri {
-        img(format!("{}?size=50", uri))
+    let cover_element = if let Some(uri) = image_id {
+        img(format!("!image://{}", uri))
             .size_full()
             .object_fit(ObjectFit::Cover)
             .into_any_element()
@@ -141,41 +129,37 @@ fn pinned_item(
                             .on_mouse_down(MouseButton::Left, move |_event, _window, cx| {
                                 let item_type = item_type_clone.clone();
                                 let id = id_clone.clone();
-                                let state = cx.global::<State>().clone();
+                                let db = cx.global::<Database>().clone();
 
-                                cx.spawn(move |cx: &mut gpui::AsyncApp| {
-                                    let cx = cx.clone();
-                                    async move {
-                                        let songs: Vec<Arc<Song>> = match item_type.as_str() {
-                                            "Album" => {
-                                                state.get_album_songs(&id).await.unwrap_or_default()
-                                            }
-                                            "Playlist" => state
-                                                .get_playlist_songs(&id)
-                                                .await
-                                                .unwrap_or_default(),
-                                            "Song" => state
-                                                .get_song(&id)
-                                                .await
-                                                .map(|s| vec![s])
-                                                .unwrap_or_default(),
-                                            _ => Vec::new(),
-                                        };
+                                cx.spawn(async move |cx: &mut AsyncApp| {
+                                    let song_ids = match item_type.as_str() {
+                                        "Album" => db
+                                            .get_album_songs(&id)
+                                            .await
+                                            .unwrap_or_default()
+                                            .into_iter()
+                                            .map(|s| s.id)
+                                            .collect(),
+                                        "Playlist" => db
+                                            .get_playlist_songs(&id)
+                                            .await
+                                            .unwrap_or_default()
+                                            .into_iter()
+                                            .map(|pt| pt.song.id)
+                                            .collect(),
+                                        "Song" => vec![id],
+                                        _ => Vec::new(),
+                                    };
 
-                                        if !songs.is_empty() {
-                                            cx.update(|cx| {
-                                                cx.update_global::<Queue, _>(|queue, _cx| {
-                                                    queue.clear_and_queue_songs(&songs);
-                                                });
-
-                                                if let Err(e) = Playback::play_queue(cx) {
-                                                    tracing::error!(
-                                                        "Failed to start playback: {}",
-                                                        e
-                                                    );
-                                                }
+                                    if !song_ids.is_empty() {
+                                        cx.update(|cx| {
+                                            cx.update_global::<Queue, _>(|queue, _| {
+                                                queue.clear();
+                                                queue.add_songs(song_ids);
                                             });
-                                        }
+
+                                            let _ = Playback::play_queue(cx);
+                                        })
                                     }
                                 })
                                 .detach();
@@ -195,40 +179,37 @@ fn pinned_item(
 impl Render for Library {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
-        let state = cx.global::<State>();
-
-        let is_searching = !self.search_query.is_empty();
-        let pinned_items = if is_searching {
-            state.search_all_items_sync(&self.search_query)
-        } else {
-            state.get_pinned_items_sync()
-        };
-        let has_items = !pinned_items.is_empty();
-
-        let border_color = if self.hovered {
-            variables.accent
-        } else {
-            variables.border
-        };
+        let search = cx.global::<SearchState>();
+        let query = search.query.to_string();
+        let is_searching = !query.is_empty();
 
         let (s_count, al_count, ar_count, p_count) = if is_searching {
-            self.get_match_counts(cx)
+            let db = cx.global::<Database>().clone();
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current()
+                    .block_on(db.get_search_match_counts(&query))
+                    .unwrap_or((0, 0, 0, 0))
+            })
         } else {
             (0, 0, 0, 0)
         };
 
+        let total_matches = s_count + al_count + ar_count + p_count;
+        let has_items = !self.pinned_items.is_empty();
+        let show_pinned = !is_searching && has_items;
+        let show_no_results = is_searching && total_matches == 0;
+
         div()
-            .id("library")
-            .relative()
+            .image_cache(vleer_cache("library-image-cache", 200))
             .size_full()
             .min_w_0()
             .min_h_0()
+            .group("library")
             .child(
                 flex_col()
                     .size_full()
                     .min_h_0()
-                    .border(px(1.0))
-                    .border_color(border_color)
+                    .group_hover("library", |s| s.border_color(variables.accent))
                     .pl(px(variables.padding_16))
                     .pr(px(0.0))
                     .pt(px(variables.padding_16))
@@ -270,7 +251,7 @@ impl Render for Library {
                                 AppView::Playlists,
                             )),
                     )
-                    .when(has_items, |this| {
+                    .when(show_pinned || show_no_results, |this| {
                         this.child(
                             flex_col()
                                 .flex_1()
@@ -280,26 +261,41 @@ impl Render for Library {
                                     div().pr(px(variables.padding_16)).child(
                                         div()
                                             .w_full()
-                                            .h(px(1.0))
+                                            .h(if show_no_results { px(0.5) } else { px(1.0) })
                                             .bg(variables.border)
                                             .flex_shrink_0(),
                                     ),
                                 )
-                                .child(
-                                    div().flex_1().min_h_0().overflow_y_scrollbar().child(
-                                        flex_col()
-                                            .gap(px(variables.padding_8))
-                                            .pr(px(variables.padding_16))
-                                            .py(px(variables.padding_16))
-                                            .children(pinned_items.into_iter().take(30).map(
-                                                |(id, name, cover, item_type)| {
-                                                    pinned_item(
-                                                        id, name, cover, item_type, variables,
-                                                    )
-                                                },
-                                            )),
-                                    ),
-                                ),
+                                .child(if show_no_results {
+                                    div()
+                                        .pt(px(variables.padding_16))
+                                        .text_color(variables.text_secondary)
+                                        .child("No Results Found")
+                                        .into_any_element()
+                                } else {
+                                    div()
+                                        .flex_1()
+                                        .min_h_0()
+                                        .overflow_y_scrollbar()
+                                        .child(
+                                            flex_col()
+                                                .gap(px(variables.padding_8))
+                                                .pr(px(variables.padding_16))
+                                                .py(px(variables.padding_16))
+                                                .children(self.pinned_items.iter().take(30).map(
+                                                    |item| {
+                                                        pinned_item(
+                                                            item.id.clone(),
+                                                            item.name.clone(),
+                                                            item.image_id.clone(),
+                                                            item.item_type.clone(),
+                                                            variables,
+                                                        )
+                                                    },
+                                                )),
+                                        )
+                                        .into_any_element()
+                                }),
                         )
                     })
                     .when(!has_items && is_searching, |this| {
@@ -326,6 +322,5 @@ impl Render for Library {
                         )
                     }),
             )
-            .child(Title::new("Library", self.hovered))
     }
 }
