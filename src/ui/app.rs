@@ -20,7 +20,7 @@ use crate::{
         discord_presence::DiscordPresence,
         global_actions::register_actions,
         layout::{
-            library::{Library, SearchState},
+            library::{Library, Search},
             navbar::Navbar,
             player::Player,
         },
@@ -194,7 +194,7 @@ pub async fn run() -> anyhow::Result<()> {
         .with_assets(VleerAssetSource::new(pool.clone()))
         .run(move |cx| {
             cx.set_global(Database { pool: pool.clone() });
-            cx.set_global(SearchState::default());
+            cx.set_global(Search::default());
 
             Config::init(cx, &config_dir).expect("unable to initizalize settings");
             Playback::init(cx).expect("unable to initizalize playback context");

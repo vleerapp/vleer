@@ -23,9 +23,6 @@ impl Render for Navbar {
         let variables = cx.global::<Variables>();
 
         flex_row()
-            .border(px(1.0))
-            .border_color(variables.border)
-            .group_hover("navbar", |s| s.border_color(variables.accent))
             .h_full()
             .justify_between()
             .child(flex_row().p(px(variables.padding_16)).child(NavButton::new(

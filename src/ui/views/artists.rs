@@ -16,9 +16,6 @@ impl Render for ArtistsView {
         let variables = cx.global::<Variables>();
 
         flex_col()
-            .border(px(1.0))
-            .border_color(variables.border)
-            .group_hover("artists-view", |s| s.border_color(variables.accent))
             .size_full()
             .p(px(variables.padding_24))
     }

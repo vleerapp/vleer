@@ -231,9 +231,6 @@ impl Render for Player {
 
         flex_col()
             .image_cache(vleer_cache("player-image-cache", 100))
-            .border(px(1.0))
-            .border_color(variables.border)
-            .group_hover("player", |s| s.border_color(variables.accent))
             .h_full()
             .p(px(variables.padding_16))
             .gap(px(variables.padding_16))

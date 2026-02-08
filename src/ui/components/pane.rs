@@ -47,6 +47,7 @@ impl RenderOnce for Pane {
                     .min_h_0()
                     .border(px(1.0))
                     .border_color(Hsla::from(variables.border))
+                    .group_hover(title_id.clone(), |s| s.border_color(variables.accent))
                     .child(self.content),
             )
             .when_some(self.title, |this, title| {

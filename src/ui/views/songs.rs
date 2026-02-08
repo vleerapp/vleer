@@ -13,14 +13,14 @@ use crate::{
                 TableSort,
             },
         },
-        layout::library::SearchState,
+        layout::library::Search,
         variables::Variables,
     },
 };
 
 fn get_rows(cx: &mut App, sort: Option<TableSort>) -> Vec<Cuid> {
     let db = cx.global::<Database>().clone();
-    let search_query = cx.global::<SearchState>().query.to_string().to_lowercase();
+    let search_query = cx.global::<Search>().query.to_string().to_lowercase();
 
     let all_songs = tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current()
@@ -199,8 +199,8 @@ impl SongsView {
 
         let table = SongTable::new(cx, get_rows_handler, get_row_handler, None);
 
-        cx.observe_global::<SearchState>(|this, cx| {
-            let q = cx.global::<SearchState>().query.to_string();
+        cx.observe_global::<Search>(|this, cx| {
+            let q = cx.global::<Search>().query.to_string();
             if q == this.last_query {
                 return;
             }
@@ -224,20 +224,11 @@ impl Render for SongsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
 
-        div()
-            .image_cache(vleer_cache("songs-image-cache", 300))
-            .id("songs-container")
+        flex_col()
+            .image_cache(vleer_cache("songs-image-cache", 20))
+            .id("songs-border")
             .size_full()
-            .overflow_hidden()
-            .child(
-                flex_col()
-                    .id("songs-border")
-                    .border(px(1.0))
-                    .border_color(variables.border)
-                    .group_hover("songs-view", |s| s.border_color(variables.accent))
-                    .size_full()
-                    .p(px(variables.padding_24))
-                    .child(self.table.clone()),
-            )
+            .p(px(variables.padding_24))
+            .child(self.table.clone())
     }
 }

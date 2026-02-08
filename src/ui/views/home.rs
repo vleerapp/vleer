@@ -319,48 +319,39 @@ impl Render for HomeView {
             .gap(px(variables.padding_16));
 
         div()
-            .image_cache(vleer_cache("home-image-cache", 200))
-            .id("home-wrapper")
+            .image_cache(vleer_cache("home-image-cache", 20))
+            .id("home-container")
+            .flex()
+            .flex_col()
             .size_full()
-            .overflow_hidden()
+            .p(px(variables.padding_24))
             .child(
                 div()
-                    .id("home-container")
-                    .flex()
-                    .flex_col()
-                    .border(px(1.0))
-                    .border_color(variables.border)
-                    .group_hover("home-view", |s| s.border_color(variables.accent))
+                    .id("home-scroll-container")
+                    .flex_1()
                     .size_full()
-                    .p(px(variables.padding_24))
+                    .min_h_0()
+                    .overflow_y_scroll()
                     .child(
-                        div()
-                            .id("home-scroll-container")
-                            .flex_1()
-                            .size_full()
-                            .min_h_0()
-                            .overflow_y_scroll()
+                        flex_col()
+                            .id("home-content")
+                            .gap(px(variables.padding_24))
                             .child(
-                                flex_col()
-                                    .id("home-content")
-                                    .gap(px(variables.padding_24))
-                                    .child(
-                                        flex_row()
-                                            .id("home-welcome")
-                                            .w_full()
-                                            .text_color(variables.accent)
-                                            .child(div().h(px(100.0)).child(
-                                                r"
+                                flex_row()
+                                    .id("home-welcome")
+                                    .w_full()
+                                    .text_color(variables.accent)
+                                    .child(div().h(px(100.0)).child(
+                                        r"
                 __
  _      _____  / /________  ____ ___  ___
 | | /| / / _ \/ / ___/ __ \/ __ `__ \/ _ \
 | |/ |/ /  __/ / /__/ /_/ / / / / / /  __/
 |__/|__/\___/_/\___/\____/_/ /_/ /_/\___/ ",
-                                            )),
-                                    )
-                                    .child(recently_played)
-                                    .child(recently_added),
-                            ),
+                                    )),
+                            )
+                            .child(recently_played)
+                            .child(recently_added),
                     ),
             )
     }
