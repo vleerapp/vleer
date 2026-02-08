@@ -11,8 +11,7 @@ use std::time::Instant;
 use unicode_segmentation::*;
 
 use crate::ui::{
-    components::{div::flex_row, icons::icon::icon},
-    variables::Variables,
+    components::{div::flex_row, icons::icon::icon}, global_actions::PlayPause, variables::Variables
 };
 
 actions!(
@@ -181,6 +180,10 @@ impl TextInput {
             self.select_to(self.previous_boundary(self.cursor_offset()), cx)
         }
         self.replace_text_in_range(None, "", window, cx)
+    }
+
+    fn space(&mut self, _: &PlayPause, window: &mut Window, cx: &mut Context<Self>) {
+        self.replace_text_in_range(None, " ", window, cx)
     }
 
     fn delete(&mut self, _: &Delete, window: &mut Window, cx: &mut Context<Self>) {
@@ -531,6 +534,7 @@ impl Render for TextInput {
             .track_focus(&focus)
             .cursor(CursorStyle::IBeam)
             .on_action(cx.listener(Self::backspace))
+            .on_action(cx.listener(Self::space))
             .on_action(cx.listener(Self::delete))
             .on_action(cx.listener(Self::delete_to_previous_word))
             .on_action(cx.listener(Self::left))
