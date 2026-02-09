@@ -58,9 +58,9 @@ impl AudioMetadata {
 
             let lufs = tag.get_string(ItemKey::ReplayGainTrackGain).and_then(|s| {
                 s.trim_end_matches(" dB")
-                    .parse::<f64>()
+                    .parse::<f32>()
                     .ok()
-                    .map(|gain| (-18.0 + gain) as f32)
+                    .map(|gain| -18.0 - (gain))
             });
 
             (title, artist, album, genre, year, track_number, lufs)
