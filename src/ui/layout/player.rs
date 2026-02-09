@@ -1,7 +1,7 @@
 use gpui::{prelude::FluentBuilder, *};
 
 use crate::{
-    data::{config::Config, db::repo::Database},
+    data::{config::Config, db::repo::Database, models::Cuid},
     media::{
         playback::Playback,
         queue::{Queue, RepeatMode},
@@ -19,11 +19,15 @@ use crate::{
     },
 };
 
-pub struct Player {}
+pub struct Player {
+    cached_song_data: Option<(Cuid, String, String, Option<String>)>,
+}
 
 impl Player {
     pub fn new() -> Self {
-        Self {}
+        Self {
+            cached_song_data: None,
+        }
     }
 }
 
@@ -31,28 +35,66 @@ impl Render for Player {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
 
-        let current_song = cx.global::<Queue>().get_current_song(cx).and_then(|song| {
-            let db = cx.global::<Database>();
-
-            tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    let artist_name = if let Some(artist_id) = song.artist_id {
-                        db.get_artist(artist_id)
-                            .await
-                            .ok()
-                            .flatten()
-                            .map(|a| a.name)
-                            .unwrap_or_else(|| "Unknown Artist".to_string())
-                    } else {
-                        "Unknown Artist".to_string()
-                    };
-
-                    let cover_uri = song.image_id.map(|id| format!("!image://{}", id));
-
-                    Some((song.title, artist_name, cover_uri))
-                })
-            })
-        });
+        let current_song = if let Some(song) = cx.global::<Queue>().get_current_song(cx) {
+            if let Some((cached_id, title, artist, cover)) = &self.cached_song_data {
+                if cached_id == &song.id {
+                    Some((title.clone(), artist.clone(), cover.clone()))
+                } else {
+                    let db = cx.global::<Database>();
+                    let data = tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current().block_on(async {
+                            let artist_name = if let Some(artist_id) = song.artist_id {
+                                db.get_artist(artist_id)
+                                    .await
+                                    .ok()
+                                    .flatten()
+                                    .map(|a| a.name)
+                                    .unwrap_or_else(|| "Unknown Artist".to_string())
+                            } else {
+                                "Unknown Artist".to_string()
+                            };
+                            let cover_uri = song.image_id.map(|id| format!("!image://{}", id));
+                            (song.title.clone(), artist_name, cover_uri)
+                        })
+                    });
+                    self.cached_song_data = Some((
+                        song.id.clone(),
+                        data.0.clone(),
+                        data.1.clone(),
+                        data.2.clone(),
+                    ));
+                    Some(data)
+                }
+            } else {
+                let db = cx.global::<Database>();
+                let data = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        let artist_name = if let Some(artist_id) = song.artist_id {
+                            db.get_artist(artist_id)
+                                .await
+                                .ok()
+                                .flatten()
+                                .map(|a| a.name)
+                                .unwrap_or_else(|| "Unknown Artist".to_string())
+                        } else {
+                            "Unknown Artist".to_string()
+                        };
+                        let cover_uri = song.image_id.map(|id| format!("!image://{}", id));
+                        (song.title.clone(), artist_name, cover_uri)
+                    })
+                });
+                self.cached_song_data = Some((
+                    song.id.clone(),
+                    data.0.clone(),
+                    data.1.clone(),
+                    data.2.clone(),
+                ));
+                Some(data)
+            }
+        } else {
+            self.cached_song_data = None;
+            None
+        };
 
         let is_playing = cx.global::<Playback>().get_playing();
         let volume = cx.global::<Playback>().get_volume();
@@ -219,8 +261,8 @@ impl Render for Player {
                     .h(px(16.0))
                     .value(volume)
                     .on_change(|value, _window, cx| {
-                        cx.update_global::<Playback, _>(|playback, _cx| {
-                            playback.set_volume(value);
+                        cx.update_global::<Playback, _>(|playback, cx| {
+                            playback.set_volume(value, cx);
                         });
 
                         cx.update_global::<Config, _>(|config, _cx| {

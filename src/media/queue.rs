@@ -3,6 +3,7 @@ use crate::data::{
     models::{Cuid, Song},
 };
 use gpui::{App, Global};
+use std::cell::RefCell;
 use tracing::debug;
 
 pub struct Queue {
@@ -10,6 +11,7 @@ pub struct Queue {
     current_index: Option<usize>,
     shuffle: bool,
     repeat_mode: RepeatMode,
+    current_song: RefCell<Option<(Cuid, Song)>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -28,6 +30,7 @@ impl Queue {
             current_index: None,
             shuffle: false,
             repeat_mode: RepeatMode::Off,
+            current_song: RefCell::new(None),
         }
     }
 
@@ -61,18 +64,27 @@ impl Queue {
         let song_id = self
             .current_index
             .and_then(|idx| self.items.get(idx).cloned())?;
-        let db = cx.global::<Database>();
 
-        tokio::task::block_in_place(|| {
+        {
+            let cache: std::cell::Ref<'_, Option<(Cuid, Song)>> = self.current_song.borrow();
+            if let Some((cached_id, cached_song)) = cache.as_ref() {
+                if cached_id == &song_id {
+                    return Some(cached_song.clone());
+                }
+            }
+        }
+
+        let db = cx.global::<Database>();
+        let song = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current()
-                .block_on(db.get_song(song_id))
+                .block_on(db.get_song(song_id.clone()))
                 .ok()
                 .flatten()
-        })
-    }
+        })?;
 
-    pub fn get_current_index(&self) -> Option<usize> {
-        self.current_index
+        *self.current_song.borrow_mut() = Some((song_id, song.clone()));
+
+        Some(song)
     }
 
     pub fn next(&mut self, cx: &App) -> Option<Song> {
@@ -103,6 +115,7 @@ impl Queue {
             }
         }
         debug!("Moved to next song. Index: {:?}", self.current_index);
+        *self.current_song.borrow_mut() = None;
         self.get_current_song(cx)
     }
 
@@ -138,6 +151,7 @@ impl Queue {
             }
         }
         debug!("Moved to previous song. Index: {:?}", self.current_index);
+        *self.current_song.borrow_mut() = None;
         self.get_current_song(cx)
     }
 
@@ -145,6 +159,7 @@ impl Queue {
         if index < self.items.len() {
             self.current_index = Some(index);
             debug!("Set current index to {}", index);
+            *self.current_song.borrow_mut() = None;
             self.get_current_song(cx)
         } else {
             None
