@@ -1,7 +1,7 @@
 use super::equalizer::{Equalizer, EqualizerSource};
+use super::media_controls::controllers::MediaControllerHandle;
 use super::queue::Queue;
 use crate::data::config::Config;
-use crate::media::media_controls::MediaKeyHandler;
 use crate::media::visualizer::{F32Converter, VisualizerSource, VisualizerState};
 use anyhow::{Context, Result};
 use gpui::{App, AsyncWindowContext, BorrowAppContext, Global, Window};
@@ -118,7 +118,10 @@ impl Playback {
                 sink.play();
                 self.paused = false;
                 debug!("Started playback");
-                MediaKeyHandler::update_playback(cx);
+
+                if let Some(mc) = cx.try_global::<MediaControllerHandle>() {
+                    mc.send_playback_state(true);
+                }
             }
         }
     }
@@ -129,7 +132,10 @@ impl Playback {
                 sink.pause();
                 self.paused = true;
                 debug!("Paused playback");
-                MediaKeyHandler::update_playback(cx);
+
+                if let Some(mc) = cx.try_global::<MediaControllerHandle>() {
+                    mc.send_playback_state(false);
+                }
             }
         }
     }
@@ -173,13 +179,18 @@ impl Playback {
         Ok(())
     }
 
-    pub fn set_volume(&mut self, volume: f32) {
+    pub fn set_volume(&mut self, volume: f32, cx: &mut App) {
         self.volume = volume.clamp(0.0, 1.0);
         let log_volume = Self::compute_log_volume(self.volume);
 
         if let Some(sink) = &self.sink {
             sink.set_volume(log_volume);
         }
+
+        if let Some(mc) = cx.try_global::<MediaControllerHandle>() {
+            mc.send_volume(self.volume as f64);
+        }
+
         debug!("Volume: {:.2} (log: {:.2})", self.volume, log_volume);
     }
 
@@ -272,7 +283,7 @@ impl Playback {
 
     pub fn apply_config(&mut self, config: &Config) {
         let settings = config.get();
-        self.set_volume(settings.audio.volume);
+        self.volume = settings.audio.volume;
         self.set_normalization(settings.audio.normalization);
 
         let mut eq = self.equalizer.lock().unwrap();
@@ -295,6 +306,10 @@ impl Playback {
                 playback.play(cx);
                 debug!("Started queue playback");
             });
+
+            if let Some(mc) = cx.try_global::<MediaControllerHandle>() {
+                mc.send_song(song);
+            }
         }
 
         Ok(())
@@ -312,9 +327,12 @@ impl Playback {
                     return;
                 }
                 playback.play(cx);
-                MediaKeyHandler::update_playback(cx);
                 debug!("Next track");
             });
+
+            if let Some(mc) = cx.try_global::<MediaControllerHandle>() {
+                mc.send_song(song);
+            }
         }
         Ok(())
     }
@@ -331,9 +349,12 @@ impl Playback {
                     return;
                 }
                 playback.play(cx);
-                MediaKeyHandler::update_playback(cx);
                 debug!("Previous track");
             });
+
+            if let Some(mc) = cx.try_global::<MediaControllerHandle>() {
+                mc.send_song(song);
+            }
         }
         Ok(())
     }
