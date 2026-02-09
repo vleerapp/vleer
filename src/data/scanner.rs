@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use futures::stream::{self, StreamExt};
-use gpui::App;
+use gpui::{App, Global};
 use notify::{EventKind, RecursiveMode};
 use notify_debouncer_full::{DebounceEventResult, Debouncer, RecommendedCache, new_debouncer};
 use std::collections::HashSet;
@@ -17,7 +17,7 @@ use crate::data::db::repo::Database;
 use crate::data::metadata::{AudioMetadata, ImageData, extract_image_data};
 use crate::data::telemetry::Telemetry;
 
-const SUPPORTED_EXTENSIONS: &[&str] = &["mp3", "flac", "ogg", "m4a", "aac", "wav", "mp1", "mp2"];
+const SUPPORTED_EXTENSIONS: &[&str] = &["mp3", "flac", "ogg", "m4a", "wav"];
 const MAX_CONCURRENT_SCANS: usize = 16;
 
 #[derive(Debug, Clone)]
@@ -37,9 +37,22 @@ pub struct ScannedTrack {
     pub image_data: Option<ImageData>,
 }
 
+struct ScanOptions {
+    force: bool,
+}
+
+impl Default for ScanOptions {
+    fn default() -> Self {
+        Self { force: false }
+    }
+}
+
+#[derive(Clone)]
 pub struct Scanner {
     scan_paths: Vec<PathBuf>,
 }
+
+impl Global for Scanner {}
 
 impl Scanner {
     pub fn new(scan_paths: Vec<PathBuf>) -> Self {
@@ -52,7 +65,11 @@ impl Scanner {
         let telemetry = cx.global::<Telemetry>().clone();
 
         let scan_paths = expand_scan_paths(&config.get().scan.paths);
-        let scanner = Arc::new(Scanner::new(scan_paths));
+        let scanner = Scanner::new(scan_paths);
+
+        cx.set_global(scanner.clone());
+
+        let scanner = Arc::new(scanner);
         let scanner_clone = scanner.clone();
 
         match MusicWatcher::new(scanner.clone(), Arc::new(db.clone())) {
@@ -81,7 +98,7 @@ impl Scanner {
 
                 tokio::spawn(async move {
                     info!("Starting initial library scan...");
-                    match scanner_clone.scan_and_save(&db_clone).await {
+                    match scanner_clone.scan(&db_clone).await {
                         Ok(stats) => {
                             info!(
                                 "Initial scan complete - Scanned: {}, Added: {}, Updated: {}, Removed: {}",
@@ -111,13 +128,6 @@ impl Scanner {
             .unwrap_or(false)
     }
 
-    fn could_be_audio_file(path: &Path) -> bool {
-        path.extension()
-            .and_then(|ext| ext.to_str())
-            .map(|ext| SUPPORTED_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
-            .unwrap_or(false)
-    }
-
     fn read_metadata(path: &Path) -> Result<AudioMetadata> {
         AudioMetadata::from_path_with_options(path, false)
     }
@@ -132,17 +142,25 @@ impl Scanner {
         }
     }
 
-    pub async fn scan_and_save(&self, db: &Database) -> Result<ScanStats> {
-        let mut scanned = 0;
-        let mut added = 0;
-        let mut updated = 0;
+    fn should_process_file(
+        existing_size: i64,
+        existing_modified: i64,
+        current_size: i64,
+        current_modified: i64,
+        force: bool,
+    ) -> bool {
+        force || existing_size != current_size || existing_modified != current_modified
+    }
+
+    async fn collect_audio_files(&self) -> Result<Vec<PathBuf>> {
+        let mut all_files = Vec::new();
 
         for root in &self.scan_paths {
             if !root.exists() || !root.is_dir() {
                 continue;
             }
 
-            let audio_files = tokio::task::spawn_blocking({
+            let files = tokio::task::spawn_blocking({
                 let root = root.clone();
                 move || {
                     WalkDir::new(&root)
@@ -157,82 +175,99 @@ impl Scanner {
             .await
             .context("walkdir failed")?;
 
-            let tracks_stream = stream::iter(audio_files)
-                .map({
+            all_files.extend(files);
+        }
+
+        Ok(all_files)
+    }
+
+    async fn scan_with_options(&self, db: &Database, options: ScanOptions) -> Result<ScanStats> {
+        let mut scanned = 0;
+        let mut added = 0;
+        let mut updated = 0;
+
+        let audio_files = self.collect_audio_files().await?;
+
+        let tracks_stream = stream::iter(audio_files)
+            .map({
+                let db = db.clone();
+                let force = options.force;
+                move |path: PathBuf| {
                     let db = db.clone();
-                    move |path: PathBuf| {
-                        let db = db.clone();
-                        async move {
-                            let file_path = path.to_string_lossy().to_string();
-                            let file_meta = tokio::task::spawn_blocking({
-                                let path = path.clone();
-                                move || std::fs::metadata(&path)
-                            })
-                            .await
+                    async move {
+                        let file_path = path.to_string_lossy().to_string();
+                        let file_meta = tokio::task::spawn_blocking({
+                            let path = path.clone();
+                            move || std::fs::metadata(&path)
+                        })
+                        .await
+                        .ok()
+                        .and_then(|r| r.ok())?;
+
+                        let file_size = file_meta.len() as i64;
+                        let file_modified = file_meta
+                            .modified()
                             .ok()
-                            .and_then(|r| r.ok())?;
+                            .and_then(|m| m.duration_since(UNIX_EPOCH).ok())
+                            .map(|d| d.as_secs() as i64)
+                            .unwrap_or(0);
 
-                            let file_size = file_meta.len() as i64;
-                            let file_modified = file_meta
-                                .modified()
-                                .ok()
-                                .and_then(|m| m.duration_since(UNIX_EPOCH).ok())
-                                .map(|d| d.as_secs() as i64)
-                                .unwrap_or(0);
+                        let existing = db.get_song_by_path(&file_path).await.ok().flatten();
+                        let is_new = existing.is_none();
 
-                            let existing = db.get_song_by_path(&file_path).await.ok().flatten();
-                            let is_new = existing.is_none();
-
-                            if let Some(existing) = existing {
-                                if existing.file_size == file_size
-                                    && existing.file_modified == file_modified
-                                {
-                                    return None;
-                                }
+                        if let Some(existing) = &existing {
+                            if !Self::should_process_file(
+                                existing.file_size,
+                                existing.file_modified,
+                                file_size,
+                                file_modified,
+                                force,
+                            ) {
+                                return None;
                             }
-
-                            let metadata = tokio::task::spawn_blocking({
-                                let path = path.clone();
-                                move || Self::read_metadata(&path)
-                            })
-                            .await
-                            .ok()
-                            .and_then(|r| r.ok())?;
-
-                            let image_data = tokio::task::spawn_blocking({
-                                let path = path.clone();
-                                move || Self::extract_image(&path)
-                            })
-                            .await
-                            .ok()
-                            .flatten();
-
-                            Some((
-                                ScannedTrack {
-                                    path,
-                                    file_size,
-                                    file_modified,
-                                    metadata,
-                                    image_data,
-                                },
-                                is_new,
-                            ))
                         }
-                    }
-                })
-                .buffer_unordered(MAX_CONCURRENT_SCANS)
-                .filter_map(|item| async move { item });
 
-            futures::pin_mut!(tracks_stream);
+                        let metadata = tokio::task::spawn_blocking({
+                            let path = path.clone();
+                            move || Self::read_metadata(&path)
+                        })
+                        .await
+                        .ok()
+                        .and_then(|r| r.ok())?;
 
-            while let Some((track, is_new)) = tracks_stream.next().await {
-                if let Ok(()) = self.save_track(db, &track).await {
-                    scanned += 1;
-                    if is_new {
-                        added += 1;
-                    } else {
-                        updated += 1;
+                        let image_data = tokio::task::spawn_blocking({
+                            let path = path.clone();
+                            move || Self::extract_image(&path)
+                        })
+                        .await
+                        .ok()
+                        .flatten();
+
+                        Some((
+                            ScannedTrack {
+                                path,
+                                file_size,
+                                file_modified,
+                                metadata,
+                                image_data,
+                            },
+                            is_new,
+                        ))
                     }
+                }
+            })
+            .buffer_unordered(MAX_CONCURRENT_SCANS)
+            .filter_map(|item| async move { item });
+
+        futures::pin_mut!(tracks_stream);
+
+        while let Some((track, is_new)) = tracks_stream.next().await {
+            if let Ok(()) = self.save_track(db, &track).await {
+                scanned += 1;
+                if is_new {
+                    added += 1;
+                } else {
+                    updated += 1;
                 }
             }
         }
@@ -243,6 +278,17 @@ impl Scanner {
             updated,
             removed: 0,
         })
+    }
+
+    pub async fn scan(&self, db: &Database) -> Result<ScanStats> {
+        self.scan_with_options(db, ScanOptions::default()).await
+    }
+
+    pub async fn force_scan(&self, db: &Database) -> Result<ScanStats> {
+        let stats = self
+            .scan_with_options(db, ScanOptions { force: true })
+            .await?;
+        Ok(stats)
     }
 
     pub async fn process_changed_files(
@@ -257,81 +303,84 @@ impl Scanner {
         for path in changed_paths {
             let path_clone = path.clone();
 
-            if path.exists() && path.is_file() && Self::is_audio_file(&path) {
-                let metadata = match tokio::task::spawn_blocking({
-                    let path = path.clone();
-                    move || Self::read_metadata(&path)
-                })
-                .await
-                {
-                    Ok(Ok(m)) => m,
-                    Ok(Err(e)) => {
-                        warn!("Failed to read metadata from {:?}: {}", path_clone, e);
-                        continue;
-                    }
-                    Err(e) => {
-                        error!("Task failed for {:?}: {}", path_clone, e);
-                        continue;
-                    }
-                };
+            if !path.exists() || !path.is_file() || !Self::is_audio_file(&path) {
+                continue;
+            }
 
-                let image_data = tokio::task::spawn_blocking({
-                    let path = path.clone();
-                    move || Self::extract_image(&path)
-                })
+            let file_meta = match std::fs::metadata(&path) {
+                Ok(m) => m,
+                Err(e) => {
+                    warn!("Failed to read file metadata from {:?}: {}", path_clone, e);
+                    continue;
+                }
+            };
+
+            let file_size = file_meta.len() as i64;
+            let file_modified = file_meta
+                .modified()
+                .ok()
+                .and_then(|m| m.duration_since(UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+
+            let existing = db
+                .get_song_by_path(path_clone.to_string_lossy().as_ref())
                 .await
                 .ok()
                 .flatten();
 
-                let file_meta = match std::fs::metadata(&path) {
-                    Ok(m) => m,
-                    Err(e) => {
-                        warn!("Failed to read file metadata from {:?}: {}", path_clone, e);
-                        continue;
-                    }
-                };
-                let file_size = file_meta.len() as i64;
-                let file_modified = file_meta
-                    .modified()
-                    .ok()
-                    .and_then(|m| m.duration_since(UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs() as i64)
-                    .unwrap_or(0);
+            let is_new = existing.is_none();
 
-                let existing = db
-                    .get_song_by_path(path_clone.to_string_lossy().as_ref())
-                    .await
-                    .ok()
-                    .flatten();
-
-                let is_new = existing.is_none();
-
-                if let Some(existing) = existing {
-                    if existing.file_size == file_size && existing.file_modified == file_modified {
-                        continue;
-                    }
+            if let Some(existing) = existing {
+                if existing.file_size == file_size && existing.file_modified == file_modified {
+                    continue;
                 }
+            }
 
-                let track = ScannedTrack {
-                    path: path.clone(),
-                    file_size,
-                    file_modified,
-                    metadata,
-                    image_data,
-                };
-
-                match self.save_track(db, &track).await {
-                    Ok(()) => {
-                        scanned += 1;
-                        if is_new {
-                            added += 1;
-                        } else {
-                            updated += 1;
-                        }
-                        debug!("Updated track: {:?}", path_clone);
-                    }
-                    Err(e) => error!("Failed to save track {:?}: {}", path_clone, e),
+            let metadata = match tokio::task::spawn_blocking({
+                let path = path.clone();
+                move || Self::read_metadata(&path)
+            })
+            .await
+            {
+                Ok(Ok(m)) => m,
+                Ok(Err(e)) => {
+                    warn!("Failed to read metadata from {:?}: {}", path_clone, e);
+                    continue;
                 }
+                Err(e) => {
+                    error!("Task failed for {:?}: {}", path_clone, e);
+                    continue;
+                }
+            };
+
+            let image_data = tokio::task::spawn_blocking({
+                let path = path.clone();
+                move || Self::extract_image(&path)
+            })
+            .await
+            .ok()
+            .flatten();
+
+            let track = ScannedTrack {
+                path: path.clone(),
+                file_size,
+                file_modified,
+                metadata,
+                image_data,
+            };
+
+            match self.save_track(db, &track).await {
+                Ok(()) => {
+                    scanned += 1;
+                    if is_new {
+                        added += 1;
+                    } else {
+                        updated += 1;
+                    }
+                    debug!("Updated track: {:?}", path_clone);
+                }
+                Err(e) => error!("Failed to save track {:?}: {}", path_clone, e),
             }
         }
 
@@ -421,117 +470,99 @@ impl MusicWatcher {
         let (tx, rx) = mpsc::channel(100);
         let scanner_clone = scanner.clone();
         let db_clone = db.clone();
-
         let runtime_handle = tokio::runtime::Handle::current();
 
         let mut debouncer = new_debouncer(
             Duration::from_secs(2),
             None,
-            move |result: DebounceEventResult| match result {
-                Ok(events) => {
-                    let changed_audio_files = Vec::new();
+            move |result: DebounceEventResult| {
+                match result {
+                    Ok(events) => {
+                        let mut changed_audio_files: Vec<PathBuf> = Vec::new();
+                        let mut removed_files: Vec<PathBuf> = Vec::new();
 
-                    for event in events {
-                        debug!("File event: {:?} - {:?}", event.kind, event.paths);
+                        for event in events {
+                            debug!("File event: {:?} - {:?}", event.kind, event.paths);
 
-                        let is_meaningful_event = matches!(
-                            event.kind,
-                            EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
-                        );
-
-                        if is_meaningful_event {
-
-    let mut changed_audio_files = Vec::new();
-    let mut removed_files = Vec::new();
-
-    for path in &event.paths {
-        if path.exists() {
-            if Scanner::could_be_audio_file(path) {
-                changed_audio_files.push(path.clone());
-            }
-        } else {
-            if Scanner::could_be_audio_file(path) {
-                removed_files.push(path.clone());
-            }
-        }
-    }
-
-    for path in removed_files {
-        let path_str = path.to_string_lossy().to_string();
-        let db = db_clone.clone();
-        let tx = tx.clone();
-        runtime_handle.spawn(async move {
-            if let Err(e) = db.delete_song_by_path(&path_str).await {
-                error!("Failed to remove deleted track {}: {}", path_str, e);
-            } else {
-                let stats = ScanStats {
-                    scanned: 0,
-                    added: 0,
-                    updated: 0,
-                    removed: 1,
-                };
-                let _ = tx.send(stats).await;
-            }
-        });
-    }
-
-    let changed_audio_files: Vec<_> = changed_audio_files.into_iter().collect::<HashSet<_>>().into_iter().collect();
-
-    if !changed_audio_files.is_empty() {
-        info!(
-            "Detected {} changed audio files, processing incrementally",
-            changed_audio_files.len()
-        );
-        let scanner = scanner_clone.clone();
-        let db = db_clone.clone();
-        let tx = tx.clone();
-
-        runtime_handle.spawn(async move {
-            match scanner.process_changed_files(&db, changed_audio_files).await {
-                Ok(stats) => {
-                    info!(
-                        "Incremental scan complete - Scanned: {}, Added: {}, Updated: {}, Removed: {}",
-                        stats.scanned, stats.added, stats.updated, stats.removed
-                    );
-                    let _ = tx.send(stats).await;
-                }
-                Err(e) => {
-                    error!("Incremental scan failed: {}", e);
-                }
-            }
-        });
-    }
-}
-
-                    }
-
-                    if !changed_audio_files.is_empty() {
-                        info!(
-                            "Detected {} changed audio files, processing incrementally",
-                            changed_audio_files.len()
-                        );
-                        let scanner = scanner_clone.clone();
-                        let db = db_clone.clone();
-                        let tx = tx.clone();
-
-                        runtime_handle.spawn(async move {
-                            match scanner
-                                .process_changed_files(&db, changed_audio_files)
-                                .await
-                            {
-                                Ok(stats) => {
-                                    let _ = tx.send(stats).await;
-                                }
-                                Err(e) => {
-                                    error!("Incremental scan failed: {}", e);
+                            if matches!(
+                                event.kind,
+                                EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
+                            ) {
+                                for path in &event.paths {
+                                    if Scanner::is_audio_file(path) {
+                                        if path.exists() {
+                                            changed_audio_files.push(path.clone());
+                                        } else {
+                                            removed_files.push(path.clone());
+                                        }
+                                    }
                                 }
                             }
-                        });
+                        }
+
+                        let removed_files: Vec<PathBuf> = removed_files
+                            .into_iter()
+                            .collect::<HashSet<_>>()
+                            .into_iter()
+                            .collect();
+
+                        for path in removed_files {
+                            let path_str = path.to_string_lossy().to_string();
+                            let db = db_clone.clone();
+                            let tx = tx.clone();
+                            runtime_handle.spawn(async move {
+                                if db.delete_song_by_path(&path_str).await.is_ok() {
+                                    let stats = ScanStats {
+                                        scanned: 0,
+                                        added: 0,
+                                        updated: 0,
+                                        removed: 1,
+                                    };
+                                    let _ = tx.send(stats).await;
+                                } else {
+                                    error!(
+                                        "Failed to remove deleted track {}: (error logged above)",
+                                        path_str
+                                    );
+                                }
+                            });
+                        }
+
+                        let changed_audio_files: Vec<PathBuf> = changed_audio_files
+                            .into_iter()
+                            .collect::<HashSet<_>>()
+                            .into_iter()
+                            .collect();
+
+                        if !changed_audio_files.is_empty() {
+                            info!(
+                                "Detected {} changed audio files, processing incrementally",
+                                changed_audio_files.len()
+                            );
+                            let scanner = scanner_clone.clone();
+                            let db = db_clone.clone();
+                            let tx = tx.clone();
+                            runtime_handle.spawn(async move {
+                                match scanner.process_changed_files(&db, changed_audio_files).await
+                                {
+                                    Ok(stats) => {
+                                        info!(
+                                            "Incremental scan complete - Scanned: {}, Added: {}, Updated: {}, Removed: {}",
+                                            stats.scanned, stats.added, stats.updated, stats.removed
+                                        );
+                                        let _ = tx.send(stats).await;
+                                    }
+                                    Err(e) => {
+                                        error!("Incremental scan failed: {}", e);
+                                    }
+                                }
+                            });
+                        }
                     }
-                }
-                Err(errors) => {
-                    for error in errors {
-                        error!("Filesystem watch error: {:?}", error);
+                    Err(errors) => {
+                        for error in errors {
+                            error!("Filesystem watch error: {:?}", error);
+                        }
                     }
                 }
             },
