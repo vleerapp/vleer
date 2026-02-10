@@ -89,6 +89,12 @@ homepage = "https://vleer.app"
 category = "Music"
 identifier = "app.vleerapp.vleer"
 before_packaging_command = "cargo build --release"
-icons = ["assets/images/icon.png", "assets/images/icon.icns"]
+icons = [
+    "assets/images/icon.png",
+    "assets/images/icon-512.png",
+    "assets/images/icon-256.png",
+    "assets/images/icon-128.png",
+    "assets/images/icon.icns",
+]
 out_dir = "target/release/bundles"
 formats = ["all"]
