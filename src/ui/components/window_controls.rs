@@ -1,5 +1,12 @@
 use gpui::*;
 
+#[cfg(target_os = "windows")]
+use raw_window_handle::RawWindowHandle;
+#[cfg(target_os = "windows")]
+use windows::Win32::Foundation::HWND;
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::WindowsAndMessaging::{ShowWindowAsync, SW_RESTORE};
+
 use crate::ui::{
     components::{
         div::flex_row,
@@ -70,7 +77,7 @@ impl RenderOnce for WindowControls {
                 hover_bg,
                 WindowControlArea::Max,
                 use_window_control_area,
-                |window, _| window.zoom_window(),
+                |window, _| toggle_maximize_window(window),
             ));
         }
 
@@ -97,7 +104,7 @@ fn window_control_button(
     use_window_control_area: bool,
     on_click: impl Fn(&mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
-    let button = flex_row()
+    let mut button = flex_row()
         .id(id)
         .w(px(48.0))
         .h_full()
@@ -110,13 +117,32 @@ fn window_control_button(
         .child(icon(icon_path));
 
     if use_window_control_area {
-        button.window_control_area(area)
-    } else {
-        button
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(move |_, window, cx| {
-                cx.stop_propagation();
-                on_click(window, cx);
-            })
+        button = button.window_control_area(area);
     }
+
+    button
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(move |_, window, cx| {
+            cx.stop_propagation();
+            on_click(window, cx);
+        })
+}
+
+fn toggle_maximize_window(window: &Window) {
+    #[cfg(target_os = "windows")]
+    {
+        if window.is_maximized() {
+            if let Ok(handle) = raw_window_handle::HasWindowHandle::window_handle(window) {
+                if let RawWindowHandle::Win32(handle) = handle.as_raw() {
+                    unsafe {
+                        let hwnd = HWND(handle.hwnd.get() as *mut core::ffi::c_void);
+                        let _ = ShowWindowAsync(hwnd, SW_RESTORE);
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
+    window.zoom_window();
 }

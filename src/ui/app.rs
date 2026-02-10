@@ -107,9 +107,15 @@ impl Render for MainWindow {
             element = element.child(titlebar);
         }
 
+        let content_pt = if show_titlebar {
+            px(0.0)
+        } else {
+            px(variables.padding_16)
+        };
+
         element = element.child(
             flex_col()
-                .pt(px(0.0))
+                .pt(content_pt)
                 .pr(px(variables.padding_16))
                 .pb(px(variables.padding_16))
                 .pl(px(variables.padding_16))
