@@ -7,7 +7,7 @@ use anyhow::Result;
 use gpui::Window;
 use gpui::{App, Global};
 #[cfg(target_os = "windows")]
-use raw_window_handle::HasWindowHandle;
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::sync::Arc;
 
 #[cfg(target_os = "linux")]
@@ -133,10 +133,9 @@ impl MediaController {
 
     #[cfg(target_os = "windows")]
     pub fn set_window_handle(&self, window: &Window) {
-        if let Ok(handle) = window.window_handle() {
-            if let raw_window_handle::WindowHandle::Win32(handle) = handle {
-                let hwnd = handle.hwnd.get();
-                self.inner.platform.set_window_handle(hwnd).ok();
+        if let Ok(handle) = HasWindowHandle::window_handle(window) {
+            if let RawWindowHandle::Win32(handle) = handle.as_raw() {
+                self.inner.platform.set_window_handle(handle.hwnd.get()).ok();
             }
         }
     }

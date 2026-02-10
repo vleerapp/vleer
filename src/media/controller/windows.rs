@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use url::Url;
 use windows::core::HSTRING;
-use windows::Foundation::{EventRegistrationToken, TimeSpan, TypedEventHandler, Uri};
+use windows::Foundation::{TimeSpan, TypedEventHandler, Uri};
 use windows::Media::*;
 use windows::Storage::Streams::RandomAccessStreamReference;
 use windows::Win32::Foundation::HWND;
@@ -34,8 +34,8 @@ struct SmtcState {
     controls: SystemMediaTransportControls,
     display_updater: SystemMediaTransportControlsDisplayUpdater,
     timeline_properties: SystemMediaTransportControlsTimelineProperties,
-    button_handler_token: Option<EventRegistrationToken>,
-    position_handler_token: Option<EventRegistrationToken>,
+    button_handler_token: Option<i64>,
+    position_handler_token: Option<i64>,
     artwork_cache: ArtworkCache,
 }
 
@@ -168,7 +168,8 @@ fn init_smtc(
 ) -> Result<SmtcState> {
     let interop: ISystemMediaTransportControlsInterop =
         windows::core::factory::<SystemMediaTransportControls, ISystemMediaTransportControlsInterop>()?;
-    let controls: SystemMediaTransportControls = unsafe { interop.GetForWindow(HWND(hwnd)) }?;
+    let controls: SystemMediaTransportControls =
+        unsafe { interop.GetForWindow(HWND(hwnd as *mut core::ffi::c_void)) }?;
 
     controls.SetIsEnabled(true)?;
     controls.SetIsPlayEnabled(true)?;
@@ -200,9 +201,9 @@ fn init_smtc(
 fn attach_button_handler(
     controls: &SystemMediaTransportControls,
     playback_tx: mpsc::UnboundedSender<PlaybackCommand>,
-) -> Result<EventRegistrationToken> {
-    let handler = TypedEventHandler::new(move |_, args: &Option<_>| {
-        let args: &SystemMediaTransportControlsButtonPressedEventArgs = args.as_ref().unwrap();
+) -> Result<i64> {
+    let handler = TypedEventHandler::new(move |_, args| {
+        let args: &SystemMediaTransportControlsButtonPressedEventArgs = args.ok()?;
         let button = args.Button()?;
 
         let cmd = match button {
@@ -224,9 +225,9 @@ fn attach_button_handler(
 fn attach_position_handler(
     controls: &SystemMediaTransportControls,
     playback_tx: mpsc::UnboundedSender<PlaybackCommand>,
-) -> Result<EventRegistrationToken> {
-    let handler = TypedEventHandler::new(move |_, args: &Option<_>| {
-        let args: &PlaybackPositionChangeRequestedEventArgs = args.as_ref().unwrap();
+) -> Result<i64> {
+    let handler = TypedEventHandler::new(move |_, args| {
+        let args: &PlaybackPositionChangeRequestedEventArgs = args.ok()?;
         let position = args.RequestedPlaybackPosition()?;
         let duration = std::time::Duration::from(position);
         let _ = playback_tx.send(PlaybackCommand::Seek(duration.as_secs_f32()));
