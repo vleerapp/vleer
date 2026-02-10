@@ -4,13 +4,14 @@ use anyhow::{anyhow, Result};
 use image::ImageFormat;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
-use url::Url;
 use windows::core::HSTRING;
-use windows::Foundation::{TimeSpan, TypedEventHandler, Uri};
+use windows::Foundation::{TimeSpan, TypedEventHandler};
 use windows::Media::*;
+use windows::Storage::StorageFile;
 use windows::Storage::Streams::RandomAccessStreamReference;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::WinRT::ISystemMediaTransportControlsInterop;
+use windows_future::AsyncStatus;
 
 pub struct WindowsController {
     playback_tx: mpsc::UnboundedSender<PlaybackCommand>,
@@ -42,7 +43,7 @@ struct SmtcState {
 #[derive(Default)]
 struct ArtworkCache {
     id: Option<String>,
-    uri: Option<String>,
+    path: Option<String>,
 }
 
 impl WindowsController {
@@ -202,7 +203,10 @@ fn attach_button_handler(
     controls: &SystemMediaTransportControls,
     playback_tx: mpsc::UnboundedSender<PlaybackCommand>,
 ) -> Result<i64> {
-    let handler = TypedEventHandler::new(move |_, args| {
+    let handler = TypedEventHandler::<
+        SystemMediaTransportControls,
+        SystemMediaTransportControlsButtonPressedEventArgs,
+    >::new(move |_, args| {
         let args: &SystemMediaTransportControlsButtonPressedEventArgs = args.ok()?;
         let button = args.Button()?;
 
@@ -226,7 +230,10 @@ fn attach_position_handler(
     controls: &SystemMediaTransportControls,
     playback_tx: mpsc::UnboundedSender<PlaybackCommand>,
 ) -> Result<i64> {
-    let handler = TypedEventHandler::new(move |_, args| {
+    let handler = TypedEventHandler::<
+        SystemMediaTransportControls,
+        PlaybackPositionChangeRequestedEventArgs,
+    >::new(move |_, args| {
         let args: &PlaybackPositionChangeRequestedEventArgs = args.ok()?;
         let position = args.RequestedPlaybackPosition()?;
         let duration = std::time::Duration::from(position);
@@ -295,8 +302,8 @@ fn apply_metadata(smtc: &mut SmtcState, metadata: ResolvedMetadata) -> Result<()
         .as_deref()
         .zip(metadata.artwork_data.as_deref())
     {
-        if let Some(uri) = smtc.artwork_cache.resolve(artwork.0, artwork.1)? {
-            let stream = RandomAccessStreamReference::CreateFromUri(&Uri::CreateUri(&HSTRING::from(uri))?)?;
+        if let Some(path) = smtc.artwork_cache.resolve(artwork.0, artwork.1)? {
+            let stream = thumbnail_from_path(&path)?;
             smtc.display_updater.SetThumbnail(&stream)?;
         }
     }
@@ -310,13 +317,13 @@ fn apply_metadata(smtc: &mut SmtcState, metadata: ResolvedMetadata) -> Result<()
 impl ArtworkCache {
     fn resolve(&mut self, id: &str, data: &[u8]) -> Result<Option<String>> {
         if self.id.as_deref() == Some(id) {
-            return Ok(self.uri.clone());
+            return Ok(self.path.clone());
         }
 
-        let uri = write_artwork_to_cache(id, data)?;
+        let path = write_artwork_to_cache(id, data)?;
         self.id = Some(id.to_string());
-        self.uri = Some(uri.clone());
-        Ok(Some(uri))
+        self.path = Some(path.clone());
+        Ok(Some(path))
     }
 }
 
@@ -346,8 +353,23 @@ fn write_artwork_to_cache(id: &str, data: &[u8]) -> Result<String> {
     let file_path = cache_dir.join(format!("artwork-{}.{}", safe_id, ext));
     std::fs::write(&file_path, data)?;
 
-    let uri = Url::from_file_path(&file_path)
-        .map_err(|_| anyhow!("failed to convert artwork path to uri"))?;
+    Ok(file_path.to_string_lossy().to_string())
+}
 
-    Ok(uri.to_string())
+fn thumbnail_from_path(path: &str) -> Result<RandomAccessStreamReference> {
+    let op = StorageFile::GetFileFromPathAsync(&HSTRING::from(path))?;
+    let start = std::time::Instant::now();
+    loop {
+        match op.Status()? {
+            AsyncStatus::Started => {
+                if start.elapsed() > std::time::Duration::from_secs(2) {
+                    return Err(anyhow!("timeout waiting for artwork file to load"));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            _ => break,
+        }
+    }
+    let file = op.GetResults()?;
+    Ok(RandomAccessStreamReference::CreateFromFile(&file)?)
 }
