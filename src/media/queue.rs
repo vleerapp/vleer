@@ -87,6 +87,11 @@ impl Queue {
         Some(song)
     }
 
+    pub fn get_current_song_id(&self) -> Option<Cuid> {
+        self.current_index
+            .and_then(|idx| self.items.get(idx).cloned())
+    }
+
     pub fn next(&mut self, cx: &App) -> Option<Song> {
         if self.items.is_empty() {
             return None;

@@ -1,5 +1,6 @@
 use crate::data::config::Config;
 use crate::data::db::repo::Database;
+use crate::data::models::Cuid;
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
 use discord_rich_presence::{DiscordIpc, DiscordIpcClient, activity};
@@ -8,6 +9,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct DiscordPresence {}
+
+struct CachedSongInfo {
+    title: String,
+    duration: i32,
+    artist_name: Option<String>,
+}
 
 impl DiscordPresence {
     pub fn init(cx: &mut App) {
@@ -18,6 +25,9 @@ impl DiscordPresence {
         let client = Arc::clone(&client);
 
         cx.spawn(async move |cx| {
+            let mut cached_song_id: Option<Cuid> = None;
+            let mut cached_song_info: Option<CachedSongInfo> = None;
+
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
@@ -33,18 +43,40 @@ impl DiscordPresence {
                     continue;
                 }
 
-                let song_id = cx.update(|app| {
-                    app.try_global::<Queue>()
-                        .and_then(|q| q.get_current_song(app).map(|s| s.id))
-                });
+                let song_id =
+                    cx.update(|app| app.try_global::<Queue>().and_then(|q| q.get_current_song_id()));
 
-                let song_opt = song_id.and_then(|id| {
-                    cx.update(|app| {
-                        app.try_global::<Database>().and_then(|db| {
-                            futures::executor::block_on(db.get_song(id)).ok().flatten()
+                if song_id != cached_song_id {
+                    cached_song_id = song_id.clone();
+                    cached_song_info = song_id.clone().and_then(|id| {
+                        let song = cx.update(|app| {
+                            app.try_global::<Database>().and_then(|db| {
+                                futures::executor::block_on(db.get_song(id.clone()))
+                                    .ok()
+                                    .flatten()
+                            })
+                        })?;
+
+                        let artist_name = cx.update(|app| {
+                            song.artist_id
+                                .as_ref()
+                                .and_then(|artist_id| {
+                                    app.try_global::<Database>().and_then(|db| {
+                                        futures::executor::block_on(db.get_artist(artist_id.clone()))
+                                            .ok()
+                                            .flatten()
+                                    })
+                                })
+                                .map(|artist| artist.name)
+                        });
+
+                        Some(CachedSongInfo {
+                            title: song.title,
+                            duration: song.duration,
+                            artist_name,
                         })
-                    })
-                });
+                    });
+                }
 
                 let (position, is_paused) = cx.update(|app| {
                     app.try_global::<Playback>()
@@ -54,30 +86,17 @@ impl DiscordPresence {
 
                 let mut client = client.lock().unwrap();
 
-                if song_opt.is_none() || is_paused {
+                if cached_song_info.is_none() || is_paused {
                     let _ = client.clear_activity();
                     continue;
                 }
 
-                let song = song_opt.as_ref().unwrap();
+                let song = cached_song_info.as_ref().unwrap();
                 let total_secs = song.duration as f64;
                 let elapsed_secs = position as i64;
                 let remaining_secs = (total_secs as i64).saturating_sub(elapsed_secs);
                 let end = unix_now_i64() + remaining_secs;
                 let start = end - total_secs as i64;
-
-                let artist_name = cx.update(|app| {
-                    song.artist_id
-                        .as_ref()
-                        .and_then(|id| {
-                            app.try_global::<Database>().and_then(|db| {
-                                futures::executor::block_on(db.get_artist(id.clone()))
-                                    .ok()
-                                    .flatten()
-                            })
-                        })
-                        .map(|a| a.name)
-                });
 
                 let mut act = activity::Activity::new()
                     .details(&song.title)
@@ -85,7 +104,7 @@ impl DiscordPresence {
                     .activity_type(activity::ActivityType::Listening)
                     .timestamps(activity::Timestamps::new().start(start).end(end));
 
-                if let Some(ref name) = artist_name {
+                if let Some(ref name) = song.artist_name {
                     act = act.state(name);
                 }
 
