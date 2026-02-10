@@ -1,5 +1,5 @@
 use anyhow::Ok;
-use gpui::{prelude::FluentBuilder, *};
+use gpui::*;
 use sqlx::{
     SqlitePool,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous},
@@ -16,6 +16,7 @@ use crate::{
             div::{flex_col, flex_row},
             input::bind_input_keys,
             pane::pane,
+            window_controls::WindowControls,
         },
         discord_presence::DiscordPresence,
         global_actions::register_actions,
@@ -35,6 +36,7 @@ pub(crate) struct MainWindow {
     player: Entity<Player>,
     views: HashMap<AppView, AnyView>,
     current_view: AppView,
+    titlebar_should_move: bool,
 }
 
 impl MainWindow {
@@ -53,7 +55,7 @@ impl MainWindow {
 }
 
 impl Render for MainWindow {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
 
         let content: AnyElement = self
@@ -62,74 +64,122 @@ impl Render for MainWindow {
             .map(|view| view.clone().into_any_element())
             .unwrap_or_else(|| div().into_any_element());
 
-        let mut element = flex_col()
-            .p(px(variables.padding_16))
-            .gap(px(variables.padding_16))
-            .size_full()
-            .min_h_0()
-            .bg(variables.background)
-            .child(div().h(px(0.0)).when(
-                !(cfg!(target_os = "macos") || cfg!(target_os = "windows")),
-                |s| s.hidden(),
-            ))
-            .child(
-                flex_row()
-                    .flex_1()
-                    .min_h_0()
-                    .size_full()
-                    .gap(px(variables.padding_16))
-                    .child(
-                        div()
-                            .id("library-container")
-                            .w(px(300.0))
-                            .flex_shrink_0()
-                            .min_h_0()
-                            .h_full()
-                            .child(pane("library").title("Library").child(self.library.clone())),
+        let show_linux_controls = cfg!(target_os = "linux")
+            && matches!(window.window_decorations(), Decorations::Client { .. });
+        let show_titlebar = cfg!(target_os = "windows") || show_linux_controls;
+        let titlebar_height = px(32.0);
+
+        let mut element = flex_col().size_full().min_h_0().bg(variables.background);
+
+        if show_titlebar {
+            let mut titlebar = flex_row()
+                .id("window-titlebar")
+                .w_full()
+                .h(titlebar_height)
+                .justify_between()
+                .bg(variables.background)
+                .window_control_area(WindowControlArea::Drag)
+                .child(div().flex_1().pl(px(variables.padding_16)))
+                .child(WindowControls::new(titlebar_height).into_any_element());
+
+            if show_linux_controls {
+                titlebar = titlebar
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _ev, _window, _cx| {
+                            this.titlebar_should_move = true;
+                        }),
                     )
-                    .child(
-                        flex_col()
-                            .flex_1()
-                            .min_h_0()
-                            .h_full()
-                            .gap(px(variables.padding_16))
-                            .child(
-                                div()
-                                    .id("navbar-container")
-                                    .h(px(48.0))
-                                    .w_full()
-                                    .flex_shrink_0()
-                                    .child(
-                                        pane("navbar").title("Navbar").child(self.navbar.clone()),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .id("current-view-container")
-                                    .flex_1()
-                                    .min_h_0()
-                                    .size_full()
-                                    .child(
-                                        pane("current-view")
-                                            .title(self.current_view.title())
-                                            .child(content),
-                                    ),
-                            ),
-                    ),
-            )
-            .child(
-                div()
-                    .id("player-container")
-                    .h(px(100.0))
-                    .flex_shrink_0()
-                    .w_full()
-                    .child(
-                        pane("player")
-                            .title("Player")
-                            .child(self.player.clone())
-                            .into_any_element(),
-                    ),
-            );
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(|this, _ev, _window, _cx| {
+                            this.titlebar_should_move = false;
+                        }),
+                    )
+                    .on_mouse_move(cx.listener(|this, _ev, window, _cx| {
+                        if this.titlebar_should_move {
+                            this.titlebar_should_move = false;
+                            window.start_window_move();
+                        }
+                    }));
+            }
+
+            element = element.child(titlebar);
+        }
+
+        element = element.child(
+            flex_col()
+                .pt(px(0.0))
+                .pr(px(variables.padding_16))
+                .pb(px(variables.padding_16))
+                .pl(px(variables.padding_16))
+                .gap(px(variables.padding_16))
+                .flex_1()
+                .min_h_0()
+                .size_full()
+                .child(
+                    flex_row()
+                        .flex_1()
+                        .min_h_0()
+                        .size_full()
+                        .gap(px(variables.padding_16))
+                        .child(
+                            div()
+                                .id("library-container")
+                                .w(px(300.0))
+                                .flex_shrink_0()
+                                .min_h_0()
+                                .h_full()
+                                .child(
+                                    pane("library").title("Library").child(self.library.clone()),
+                                ),
+                        )
+                        .child(
+                            flex_col()
+                                .flex_1()
+                                .min_h_0()
+                                .h_full()
+                                .gap(px(variables.padding_16))
+                                .child(
+                                    div()
+                                        .id("navbar-container")
+                                        .h(px(48.0))
+                                        .w_full()
+                                        .flex_shrink_0()
+                                        .child(
+                                            pane("navbar")
+                                                .title("Navbar")
+                                                .child(self.navbar.clone()),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .id("current-view-container")
+                                        .flex_1()
+                                        .min_h_0()
+                                        .size_full()
+                                        .child(
+                                            pane("current-view")
+                                                .title(self.current_view.title())
+                                                .child(content),
+                                        ),
+                                ),
+                        ),
+                )
+                .child(
+                    div()
+                        .id("player-container")
+                        .h(px(100.0))
+                        .flex_shrink_0()
+                        .w_full()
+                        .child(
+                            pane("player")
+                                .title("Player")
+                                .child(self.player.clone())
+                                .into_any_element(),
+                        ),
+                ),
+        );
 
         let text_styles = element.text_style();
         *text_styles = TextStyleRefinement {
@@ -245,6 +295,7 @@ pub async fn run() -> anyhow::Result<()> {
                             player: player_entity,
                             views,
                             current_view: AppView::Home,
+                            titlebar_should_move: false,
                         }
                     })
                 },

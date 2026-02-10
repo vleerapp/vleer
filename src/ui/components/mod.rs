@@ -9,3 +9,4 @@ pub mod slider;
 pub mod song_table;
 pub mod title;
 pub mod pane;
+pub mod window_controls;

@@ -27,3 +27,6 @@ pub const VOLUME_3: &str = "!bundled:icons/volume-3.svg";
 pub const VOLUME_4: &str = "!bundled:icons/volume-4.svg";
 pub const VOLUME_MUTE: &str = "!bundled:icons/volume-mute.svg";
 pub const X: &str = "!bundled:icons/x.svg";
+pub const MAXIMIZE: &str = "!bundled:icons/maximize.svg";
+pub const UNMAXIMIZE: &str = "!bundled:icons/unmaximize.svg";
+pub const MINIMIZE: &str = "!bundled:icons/minimize.svg";
