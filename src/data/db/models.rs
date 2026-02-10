@@ -3,7 +3,7 @@ use sqlx::{FromRow, Row, sqlite::SqliteRow};
 
 #[derive(Debug, Clone, FromRow)]
 pub struct ImageRow {
-    pub id: String,
+    pub id: Cuid,
     pub data: Vec<u8>,
     pub date_created: String,
     pub date_updated: String,

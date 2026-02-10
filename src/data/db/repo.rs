@@ -1,8 +1,8 @@
-use crate::data::db::models::{ImageRow, Toggleable};
+use crate::data::db::models::Toggleable;
 use crate::data::db::queries;
 use crate::data::models::{
-    Album, Artist, Cuid, Event, EventContext, EventType, PinnedItem, Playlist, PlaylistTrack,
-    RecentItem, Song,
+    Album, Artist, Cuid, Event, EventContext, EventType, Image, PinnedItem, Playlist,
+    PlaylistTrack, RecentItem, Song,
 };
 use gpui::Global;
 use sqlx::SqlitePool;
@@ -244,8 +244,10 @@ impl Database {
         queries::upsert_image(&self.pool, id, data).await
     }
 
-    pub async fn get_image(&self, id: &str) -> sqlx::Result<Option<ImageRow>> {
-        queries::get_image(&self.pool, id).await
+    pub async fn get_image(&self, id: &str) -> sqlx::Result<Option<Image>> {
+        Ok(queries::get_image(&self.pool, id)
+            .await?
+            .map(|row| row.into()))
     }
 
     pub async fn delete_image(&self, id: &str) -> sqlx::Result<()> {

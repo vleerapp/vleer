@@ -1,4 +1,4 @@
-use crate::data::db::models::{AlbumRow, ArtistRow, PlaylistRow, PlaylistTrackRow, SongRow};
+use crate::data::db::models::{AlbumRow, ArtistRow, ImageRow, PlaylistRow, PlaylistTrackRow, SongRow};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type)]
@@ -21,6 +21,14 @@ impl std::fmt::Display for Cuid {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Image {
+    pub id: Cuid,
+    pub data: Vec<u8>,
+    pub date_created: String,
+    pub date_updated: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -200,6 +208,17 @@ impl From<PlaylistTrackRow> for PlaylistTrack {
             playlist_id: row.playlist_id,
             song: row.song.into(),
             position: row.position,
+        }
+    }
+}
+
+impl From<ImageRow> for Image {
+    fn from(row: ImageRow) -> Self {
+        Self {
+            id: row.id,
+            data: row.data,
+            date_created: row.date_created,
+            date_updated: row.date_updated,
         }
     }
 }
