@@ -16,7 +16,9 @@ A free, open-source music app powered by the OpenMusic API Spec—the open stand
 
 ## Roadmap
 
-- [ ] Stable local music player https://github.com/vleerapp/vleer/issues/46
+[Tracker](https://github.com/orgs/vleerapp/projects/4)
+
+- [ ] Stable local music player
 - [ ] OpenMusic API integration
 
 ## Installation & Security
