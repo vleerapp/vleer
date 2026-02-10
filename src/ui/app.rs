@@ -9,9 +9,7 @@ use tracing::{debug, error};
 
 use crate::{
     data::{config::Config, db::repo::Database, scanner::Scanner, telemetry::Telemetry},
-    media::{
-        media_controls::controllers::init_media_controllers, playback::Playback, queue::Queue,
-    },
+    media::{controller::MediaController, playback::Playback, queue::Queue},
     ui::{
         assets::VleerAssetSource,
         components::{
@@ -205,6 +203,7 @@ pub async fn run() -> anyhow::Result<()> {
             Variables::init(cx);
             Telemetry::init(cx, data_dir.clone());
             Scanner::init(cx);
+            MediaController::init(cx);
 
             find_fonts(cx)
                 .inspect_err(|e| error!(?e, "Failed to load fonts"))
@@ -226,7 +225,10 @@ pub async fn run() -> anyhow::Result<()> {
                 |window, cx| {
                     window.set_window_title("Vleer");
 
-                    init_media_controllers(cx, window);
+                    #[cfg(target_os = "windows")]
+                    if let Some(mc) = cx.try_global::<MediaController>() {
+                        mc.set_window_handle(window);
+                    }
 
                     cx.new(|cx| {
                         Playback::start_monitor(window, cx);

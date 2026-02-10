@@ -1,7 +1,7 @@
 use super::equalizer::{Equalizer, EqualizerSource};
-use super::media_controls::controllers::MediaControllerHandle;
 use super::queue::Queue;
 use crate::data::config::Config;
+use crate::media::controller::{MediaController, PlaybackState};
 use crate::media::visualizer::{F32Converter, VisualizerSource, VisualizerState};
 use anyhow::{Context, Result};
 use gpui::{App, AsyncWindowContext, BorrowAppContext, Global, Window};
@@ -11,12 +11,21 @@ use std::io::BufReader;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::sync::mpsc;
 use tracing::debug;
 
 const LOG_VOLUME_GROWTH_RATE: f32 = 6.908;
 const LOG_VOLUME_SCALE_FACTOR: f32 = 1000.0;
 const UNITY_GAIN: f32 = 1.0;
 const DEFAULT_TARGET_LUFS: f32 = -14.0;
+
+#[derive(Debug, Clone)]
+pub enum PlaybackCommand {
+    PlayPause,
+    Next,
+    Previous,
+    Seek(f32),
+}
 
 pub struct Playback {
     _stream: Option<OutputStream>,
@@ -29,9 +38,13 @@ pub struct Playback {
     normalization_enabled: bool,
     position: f32,
     visualizer_state: VisualizerState,
+    command_rx: Option<mpsc::UnboundedReceiver<PlaybackCommand>>,
 }
 
 impl Global for Playback {}
+
+use std::sync::OnceLock;
+static PLAYBACK_CMD_TX: OnceLock<mpsc::UnboundedSender<PlaybackCommand>> = OnceLock::new();
 
 impl Playback {
     fn new() -> Result<Self> {
@@ -48,15 +61,63 @@ impl Playback {
             normalization_enabled: false,
             position: 0.0,
             visualizer_state: VisualizerState::default(),
+            command_rx: None,
         })
     }
 
     pub fn init(cx: &mut App) -> Result<()> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        PLAYBACK_CMD_TX.set(tx).ok();
+
         let mut playback = Self::new()?;
+        playback.command_rx = Some(rx);
         let config = cx.global::<Config>();
         playback.apply_config(config);
         cx.set_global(playback);
+
+        Self::start_command_processor(cx);
+
         Ok(())
+    }
+
+    pub fn get_command_sender(cx: &App) -> mpsc::UnboundedSender<PlaybackCommand> {
+        PLAYBACK_CMD_TX
+            .get()
+            .expect("Playback not initialized")
+            .clone()
+    }
+
+    fn start_command_processor(cx: &mut App) {
+        let mut rx =
+            cx.update_global::<Playback, _>(|playback, _cx| playback.command_rx.take().unwrap());
+
+        cx.spawn(async move |cx| {
+            while let Some(cmd) = rx.recv().await {
+                cx.update(|cx| match cmd {
+                    PlaybackCommand::PlayPause => {
+                        cx.update_global::<Playback, _>(|playback, cx| {
+                            playback.play_pause(cx);
+                        });
+                    }
+                    PlaybackCommand::Next => {
+                        cx.update_global::<Playback, _>(|playback, cx| {
+                            playback.next(cx);
+                        });
+                    }
+                    PlaybackCommand::Previous => {
+                        cx.update_global::<Playback, _>(|playback, cx| {
+                            playback.previous(cx);
+                        });
+                    }
+                    PlaybackCommand::Seek(position) => {
+                        cx.update_global::<Playback, _>(|playback, _cx| {
+                            playback.seek(position).ok();
+                        });
+                    }
+                });
+            }
+        })
+        .detach();
     }
 
     pub fn open(
@@ -119,8 +180,11 @@ impl Playback {
                 self.paused = false;
                 debug!("Started playback");
 
-                if let Some(mc) = cx.try_global::<MediaControllerHandle>() {
-                    mc.send_playback_state(true);
+                if let Some(mc) = cx.try_global::<MediaController>() {
+                    let mc = mc.clone();
+                    tokio::spawn(async move {
+                        mc.set_state(PlaybackState::Playing).await.ok();
+                    });
                 }
             }
         }
@@ -133,8 +197,11 @@ impl Playback {
                 self.paused = true;
                 debug!("Paused playback");
 
-                if let Some(mc) = cx.try_global::<MediaControllerHandle>() {
-                    mc.send_playback_state(false);
+                if let Some(mc) = cx.try_global::<MediaController>() {
+                    let mc = mc.clone();
+                    tokio::spawn(async move {
+                        mc.set_state(PlaybackState::Paused).await.ok();
+                    });
                 }
             }
         }
@@ -179,16 +246,12 @@ impl Playback {
         Ok(())
     }
 
-    pub fn set_volume(&mut self, volume: f32, cx: &mut App) {
+    pub fn set_volume(&mut self, volume: f32, _cx: &mut App) {
         self.volume = volume.clamp(0.0, 1.0);
         let log_volume = Self::compute_log_volume(self.volume);
 
         if let Some(sink) = &self.sink {
             sink.set_volume(log_volume);
-        }
-
-        if let Some(mc) = cx.try_global::<MediaControllerHandle>() {
-            mc.send_volume(self.volume as f64);
         }
 
         debug!("Volume: {:.2} (log: {:.2})", self.volume, log_volume);
@@ -292,71 +355,64 @@ impl Playback {
         debug!("Applied config to playback");
     }
 
-    pub fn play_queue(cx: &mut App) -> Result<()> {
+    pub fn play_queue(&mut self, cx: &mut App) {
         let song = cx.update_global::<Queue, _>(|queue, cx| queue.get_current_song(cx));
         let config = cx.global::<Config>().clone();
-
         if let Some(song) = song {
-            cx.update_global::<Playback, _>(|playback, cx| {
-                if let Err(e) = playback.open(&song.file_path, &config, song.lufs) {
-                    tracing::error!("Failed to open track: {}", e);
-                    return;
-                }
+            if let Err(e) = self.open(&song.file_path, &config, song.lufs) {
+                tracing::error!("Failed to open track: {}", e);
+                return;
+            }
+            self.play(cx);
 
-                playback.play(cx);
-                debug!("Started queue playback");
-            });
-
-            if let Some(mc) = cx.try_global::<MediaControllerHandle>() {
-                mc.send_song(song);
+            if let Some(mc) = cx.try_global::<MediaController>() {
+                let mc = mc.clone();
+                let song = song.clone();
+                tokio::spawn(async move {
+                    mc.update_song(song).await.ok();
+                });
             }
         }
-
-        Ok(())
     }
 
-    pub fn next(cx: &mut App) -> Result<()> {
+    pub fn next(&mut self, cx: &mut App) {
         let song = cx.update_global::<Queue, _>(|queue, cx| queue.next(cx));
-
+        let config = cx.global::<Config>().clone();
         if let Some(song) = song {
-            let config = cx.global::<Config>().clone();
+            if let Err(e) = self.open(&song.file_path, &config, song.lufs) {
+                tracing::error!("Failed to open next track: {}", e);
+                return;
+            }
+            self.play(cx);
 
-            cx.update_global::<Playback, _>(|playback, cx| {
-                if let Err(e) = playback.open(&song.file_path, &config, song.lufs) {
-                    tracing::error!("Failed to open next track: {}", e);
-                    return;
-                }
-                playback.play(cx);
-                debug!("Next track");
-            });
-
-            if let Some(mc) = cx.try_global::<MediaControllerHandle>() {
-                mc.send_song(song);
+            if let Some(mc) = cx.try_global::<MediaController>() {
+                let mc = mc.clone();
+                let song = song.clone();
+                tokio::spawn(async move {
+                    mc.update_song(song).await.ok();
+                });
             }
         }
-        Ok(())
     }
 
-    pub fn previous(cx: &mut App) -> Result<()> {
+    pub fn previous(&mut self, cx: &mut App) {
         let song = cx.update_global::<Queue, _>(|queue, cx| queue.previous(cx));
-
+        let config = cx.global::<Config>().clone();
         if let Some(song) = song {
-            let config = cx.global::<Config>().clone();
+            if let Err(e) = self.open(&song.file_path, &config, song.lufs) {
+                tracing::error!("Failed to open previous track: {}", e);
+                return;
+            }
+            self.play(cx);
 
-            cx.update_global::<Playback, _>(|playback, cx| {
-                if let Err(e) = playback.open(&song.file_path, &config, song.lufs) {
-                    tracing::error!("Failed to open previous track: {}", e);
-                    return;
-                }
-                playback.play(cx);
-                debug!("Previous track");
-            });
-
-            if let Some(mc) = cx.try_global::<MediaControllerHandle>() {
-                mc.send_song(song);
+            if let Some(mc) = cx.try_global::<MediaController>() {
+                let mc = mc.clone();
+                let song = song.clone();
+                tokio::spawn(async move {
+                    mc.update_song(song).await.ok();
+                });
             }
         }
-        Ok(())
     }
 
     pub fn start_monitor<T: 'static>(window: &Window, cx: &mut gpui::Context<T>) {
@@ -376,9 +432,9 @@ impl Playback {
 
                     if should_advance {
                         cx.update(|_window, cx| {
-                            if let Err(e) = Self::next(cx) {
-                                tracing::error!("Auto-advance failed: {}", e);
-                            }
+                            cx.update_global::<Playback, _>(|playback, cx| {
+                                playback.next(cx);
+                            });
                         })
                         .ok();
                     }

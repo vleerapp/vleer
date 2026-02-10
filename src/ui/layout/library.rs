@@ -158,7 +158,9 @@ fn pinned_item(
                                                 queue.add_songs(song_ids);
                                             });
 
-                                            let _ = Playback::play_queue(cx);
+                                            cx.update_global::<Playback, _>(|playback, cx| {
+                                                playback.play_queue(cx);
+                                            });
                                         })
                                     }
                                 })
@@ -278,7 +280,7 @@ impl Render for Library {
                                     div().pr(px(variables.padding_16)).child(
                                         div()
                                             .w_full()
-                                            .h(px(1.0))
+                                            .h(px(0.5))
                                             .bg(variables.border)
                                             .flex_shrink_0(),
                                     ),

@@ -333,12 +333,11 @@ impl Render for SongTableItem {
                                                             },
                                                         );
 
-                                                        if let Err(e) = Playback::play_queue(cx) {
-                                                            tracing::error!(
-                                                                "Failed to start playback: {}",
-                                                                e
-                                                            );
-                                                        }
+                                                        cx.update_global::<Playback, _>(
+                                                            |playback, cx| {
+                                                                playback.play_queue(cx);
+                                                            },
+                                                        );
                                                     });
                                                 }
                                             })

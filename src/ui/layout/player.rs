@@ -119,8 +119,8 @@ impl Render for Player {
             .group("previous-button")
             .child(icon(PREVIOUS).group_hover("previous-button", |s| s.text_color(variables.text)))
             .on_click(cx.listener(|_this, _event, _window, cx| {
-                cx.update_global::<Queue, _>(|queue, cx| {
-                    queue.previous(cx);
+                cx.update_global::<Playback, _>(|playback, cx| {
+                    playback.previous(cx);
                 });
                 cx.notify();
             }));
@@ -129,8 +129,8 @@ impl Render for Player {
             .group("next-button")
             .child(icon(NEXT).group_hover("next-button", |s| s.text_color(variables.text)))
             .on_click(cx.listener(|_this, _event, _window, cx| {
-                cx.update_global::<Queue, _>(|queue, cx| {
-                    queue.next(cx);
+                cx.update_global::<Playback, _>(|playback, cx| {
+                    playback.next(cx);
                 });
                 cx.notify();
             }));
