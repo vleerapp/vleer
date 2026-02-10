@@ -17,7 +17,10 @@ use crate::data::db::repo::Database;
 use crate::data::metadata::{AudioMetadata, ImageData, extract_image_data};
 use crate::data::telemetry::Telemetry;
 
-const SUPPORTED_EXTENSIONS: &[&str] = &["mp3", "flac", "ogg", "m4a", "wav"];
+const SUPPORTED_EXTENSIONS: &[&str] = &[
+    "wav", "aiff", "aif", "caf", "mp3", "flac", "ogg", "oga", "ogx", "mp4", "m4a", "mp4a", "mkv",
+    "webm",
+];
 const MAX_CONCURRENT_SCANS: usize = 16;
 
 #[derive(Debug, Clone)]
