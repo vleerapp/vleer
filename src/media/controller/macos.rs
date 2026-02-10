@@ -1,10 +1,10 @@
 use super::{PlaybackState, ResolvedMetadata};
 use crate::media::playback::PlaybackCommand;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use block2::RcBlock;
-use objc2::rc::{autoreleasepool, Retained};
+use objc2::rc::{Retained, autoreleasepool};
 use objc2::runtime::AnyObject;
-use objc2::{class, msg_send, ClassType};
+use objc2::{AnyThread, class, msg_send};
 use objc2_app_kit::NSImage;
 use objc2_core_foundation::CGSize;
 use objc2_foundation::{NSData, NSNumber, NSString};
@@ -20,10 +20,10 @@ const MP_NOW_PLAYING_STATE_STOPPED: isize = 3;
 const MP_REMOTE_COMMAND_SUCCESS: isize = 0;
 
 #[link(name = "MediaPlayer", kind = "framework")]
-extern "C" {}
+unsafe extern "C" {}
 
 #[allow(non_upper_case_globals)]
-extern "C" {
+unsafe extern "C" {
     static MPMediaItemPropertyTitle: *mut AnyObject;
     static MPMediaItemPropertyArtist: *mut AnyObject;
     static MPMediaItemPropertyAlbumTitle: *mut AnyObject;
@@ -47,7 +47,9 @@ enum Command {
 struct MacosState {
     command_center: *mut AnyObject,
     now_playing_center: *mut AnyObject,
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     handlers: Vec<RcBlock<dyn Fn(*mut AnyObject) -> isize>>,
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     position_handler: RcBlock<dyn Fn(*mut AnyObject) -> isize>,
     artwork: Mutex<ArtworkState>,
 }
@@ -140,12 +142,10 @@ fn run_macos(
 
 impl MacosState {
     fn new(playback_tx: mpsc::UnboundedSender<PlaybackCommand>) -> Self {
-        let command_center: *mut AnyObject = unsafe {
-            msg_send![class!(MPRemoteCommandCenter), sharedCommandCenter]
-        };
-        let now_playing_center: *mut AnyObject = unsafe {
-            msg_send![class!(MPNowPlayingInfoCenter), defaultCenter]
-        };
+        let command_center: *mut AnyObject =
+            unsafe { msg_send![class!(MPRemoteCommandCenter), sharedCommandCenter] };
+        let now_playing_center: *mut AnyObject =
+            unsafe { msg_send![class!(MPNowPlayingInfoCenter), defaultCenter] };
 
         let mut handlers: Vec<RcBlock<dyn Fn(*mut AnyObject) -> isize>> = Vec::new();
 
@@ -210,7 +210,8 @@ impl MacosState {
 
     fn update_metadata(&mut self, metadata: ResolvedMetadata) -> Result<()> {
         autoreleasepool(|_| {
-            let now_playing: *mut AnyObject = unsafe { msg_send![class!(NSMutableDictionary), dictionary] };
+            let now_playing: *mut AnyObject =
+                unsafe { msg_send![class!(NSMutableDictionary), dictionary] };
 
             if let Some(title) = metadata.title {
                 let ns_title = NSString::from_str(&title);
@@ -303,8 +304,10 @@ impl MacosState {
 
     fn set_position(&mut self, position_ms: u64) -> Result<()> {
         autoreleasepool(|_| {
-            let now_playing: *mut AnyObject = unsafe { msg_send![class!(NSMutableDictionary), dictionary] };
-            let previous: *mut AnyObject = unsafe { msg_send![self.now_playing_center, nowPlayingInfo] };
+            let now_playing: *mut AnyObject =
+                unsafe { msg_send![class!(NSMutableDictionary), dictionary] };
+            let previous: *mut AnyObject =
+                unsafe { msg_send![self.now_playing_center, nowPlayingInfo] };
             if !previous.is_null() {
                 unsafe {
                     let _: () = msg_send![now_playing, addEntriesFromDictionary: previous];
@@ -363,9 +366,8 @@ impl MacosState {
         let handler = RcBlock::new(move |_size: CGSize| -> *mut AnyObject { image_ptr.cast() });
 
         let artwork: *mut AnyObject = unsafe { msg_send![class!(MPMediaItemArtwork), alloc] };
-        let artwork: *mut AnyObject = unsafe {
-            msg_send![artwork, initWithBoundsSize: size requestHandler: &*handler]
-        };
+        let artwork: *mut AnyObject =
+            unsafe { msg_send![artwork, initWithBoundsSize: size, requestHandler: &*handler] };
 
         if artwork.is_null() {
             error!("failed to create MPMediaItemArtwork");

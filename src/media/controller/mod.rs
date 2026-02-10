@@ -3,9 +3,9 @@ use crate::data::models::Song;
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
 use anyhow::Result;
-use gpui::{App, Global};
 #[cfg(target_os = "windows")]
 use gpui::Window;
+use gpui::{App, Global};
 #[cfg(target_os = "windows")]
 use raw_window_handle::HasWindowHandle;
 use std::sync::Arc;
@@ -28,6 +28,7 @@ use windows::WindowsController as PlatformController;
 pub enum PlaybackState {
     Playing,
     Paused,
+    #[allow(dead_code)]
     Stopped,
 }
 
@@ -38,8 +39,10 @@ pub(crate) struct ResolvedMetadata {
     pub album: Option<String>,
     pub duration_ms: Option<u64>,
     pub position_ms: Option<u64>,
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     pub artwork_id: Option<String>,
     pub artwork_data: Option<Vec<u8>>,
+    #[cfg(target_os = "linux")]
     pub track_id: Option<String>,
 }
 
@@ -90,6 +93,7 @@ impl MediaController {
             None => None,
         };
 
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         let artwork_id = if artwork_data.is_some() {
             song.image_id.clone().or_else(|| Some(song.id.to_string()))
         } else {
@@ -102,8 +106,10 @@ impl MediaController {
             album,
             duration_ms: Some(song.duration.max(0) as u64 * 1000),
             position_ms: Some(0),
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             artwork_id,
             artwork_data,
+            #[cfg(target_os = "linux")]
             track_id: Some(format!("/app/vleer/track/{}", song.id)),
         };
 
@@ -119,7 +125,10 @@ impl MediaController {
     }
 
     pub async fn set_can_go_previous(&self, can_go_previous: bool) -> Result<()> {
-        self.inner.platform.set_can_go_previous(can_go_previous).await
+        self.inner
+            .platform
+            .set_can_go_previous(can_go_previous)
+            .await
     }
 
     #[cfg(target_os = "windows")]

@@ -80,7 +80,7 @@ impl Playback {
         Ok(())
     }
 
-    pub fn get_command_sender(cx: &App) -> mpsc::UnboundedSender<PlaybackCommand> {
+    pub fn get_command_sender(_cx: &App) -> mpsc::UnboundedSender<PlaybackCommand> {
         PLAYBACK_CMD_TX
             .get()
             .expect("Playback not initialized")
