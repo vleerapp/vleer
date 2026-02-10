@@ -67,6 +67,7 @@ impl Render for MainWindow {
         let show_linux_controls = cfg!(target_os = "linux")
             && matches!(window.window_decorations(), Decorations::Client { .. });
         let show_titlebar = cfg!(target_os = "windows") || show_linux_controls;
+        let is_macos = cfg!(target_os = "macos");
         let titlebar_height = px(32.0);
 
         let mut element = flex_col().size_full().min_h_0().bg(variables.background);
@@ -109,6 +110,8 @@ impl Render for MainWindow {
 
         let content_pt = if show_titlebar {
             px(0.0)
+        } else if is_macos {
+            px(variables.padding_16 * 2.0)
         } else {
             px(variables.padding_16)
         };
