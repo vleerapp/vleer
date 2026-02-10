@@ -11,7 +11,9 @@ use std::time::Instant;
 use unicode_segmentation::*;
 
 use crate::ui::{
-    components::{div::flex_row, icons::icon::icon}, global_actions::PlayPause, variables::Variables
+    components::{div::flex_row, icons::icon::icon},
+    global_actions::PlayPause,
+    variables::Variables,
 };
 
 actions!(
@@ -53,6 +55,7 @@ pub fn bind_input_keys(cx: &mut App) {
         KeyBinding::new("secondary-v", Paste, None),
         KeyBinding::new("secondary-c", Copy, None),
         KeyBinding::new("secondary-x", Cut, None),
+        KeyBinding::new("secondary-backspace", DeleteToPreviousWord, None),
     ]);
 
     #[cfg(target_os = "macos")]
@@ -66,7 +69,6 @@ pub fn bind_input_keys(cx: &mut App) {
 
     #[cfg(not(target_os = "macos"))]
     cx.bind_keys([
-        KeyBinding::new("secondary-backspace", DeleteToPreviousWord, None),
         KeyBinding::new("secondary-left", WordLeft, None),
         KeyBinding::new("secondary-right", WordRight, None),
         KeyBinding::new("secondary-shift-left", SelectWordLeft, None),
