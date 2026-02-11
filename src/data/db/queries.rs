@@ -369,6 +369,54 @@ pub async fn get_album_songs(pool: &SqlitePool, album_id: &Cuid) -> sqlx::Result
         .await
 }
 
+pub async fn get_artists_count_filtered(pool: &SqlitePool, query: &str) -> sqlx::Result<i64> {
+    let query_lower = query.to_lowercase();
+
+    let row: (i64,) = sqlx::query_as(
+        r#"
+        SELECT COUNT(DISTINCT ar.id)
+        FROM artists ar
+        WHERE
+            ?1 = ''
+            OR LOWER(ar.name) LIKE '%' || ?1 || '%'
+        "#,
+    )
+    .bind(&query_lower)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(row.0)
+}
+
+pub async fn get_artists_paged_filtered(
+    pool: &SqlitePool,
+    query: &str,
+    limit: i64,
+    offset: i64,
+) -> sqlx::Result<Vec<ArtistListRow>> {
+    let query_lower = query.to_lowercase();
+
+    sqlx::query_as::<_, ArtistListRow>(
+        r#"
+        SELECT
+            ar.id,
+            ar.name,
+            ar.image_id
+        FROM artists ar
+        WHERE
+            ?1 = ''
+            OR LOWER(ar.name) LIKE '%' || ?1 || '%'
+        ORDER BY LOWER(ar.name) ASC
+        LIMIT ?2 OFFSET ?3
+        "#,
+    )
+    .bind(&query_lower)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
+}
+
 pub async fn get_playlist(pool: &SqlitePool, id: &Cuid) -> sqlx::Result<Option<PlaylistRow>> {
     sqlx::query_as::<_, PlaylistRow>("SELECT * FROM playlists WHERE id = ?")
         .bind(id)

@@ -1,8 +1,8 @@
 use crate::data::db::models::Toggleable;
 use crate::data::db::queries;
 use crate::data::models::{
-    Album, AlbumListItem, Artist, Cuid, Event, EventContext, EventType, Image, PinnedItem,
-    Playlist, PlaylistTrack, RecentItem, Song, SongListItem, SongSort,
+    Album, AlbumListItem, Artist, ArtistListItem, Cuid, Event, EventContext, EventType, Image,
+    PinnedItem, Playlist, PlaylistTrack, RecentItem, Song, SongListItem, SongSort,
 };
 use gpui::Global;
 use sqlx::SqlitePool;
@@ -85,6 +85,28 @@ impl Database {
         Ok(queries::get_artist(&self.pool, id)
             .await?
             .map(|row| row.into()))
+    }
+
+    pub async fn get_artists_count_filtered(&self, query: &str) -> sqlx::Result<usize> {
+        let count = queries::get_artists_count_filtered(&self.pool, query).await?;
+        Ok(count as usize)
+    }
+
+    pub async fn get_artists_paged_filtered(
+        &self,
+        query: &str,
+        offset: i64,
+        limit: i64,
+    ) -> sqlx::Result<Vec<ArtistListItem>> {
+        let rows = queries::get_artists_paged_filtered(&self.pool, query, limit, offset).await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| ArtistListItem {
+                id: row.id,
+                name: row.name,
+                image_id: row.image_id,
+            })
+            .collect())
     }
 
     pub async fn upsert_artist(&self, name: &str) -> sqlx::Result<Cuid> {

@@ -50,6 +50,13 @@ pub struct ArtistRow {
 }
 
 #[derive(Debug, Clone, FromRow)]
+pub struct ArtistListRow {
+    pub id: Cuid,
+    pub name: String,
+    pub image_id: Option<String>,
+}
+
+#[derive(Debug, Clone, FromRow)]
 pub struct AlbumRow {
     pub id: Cuid,
     pub title: String,

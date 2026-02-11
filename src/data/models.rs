@@ -92,6 +92,13 @@ pub struct AlbumListItem {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtistListItem {
+    pub id: Cuid,
+    pub name: String,
+    pub image_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Artist {
     pub id: Cuid,
     pub name: String,

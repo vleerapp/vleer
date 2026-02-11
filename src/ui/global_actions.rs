@@ -3,7 +3,7 @@ use tracing::{debug, error, info};
 
 use crate::{
     data::{config::Config, db::repo::Database, scanner::Scanner},
-    media::{playback::Playback, queue::Queue},
+    media::playback::Playback,
 };
 
 actions!(vleer, [Quit, ReloadConfig, Scan, ForceScan]);
