@@ -1,8 +1,8 @@
 use crate::data::db::models::Toggleable;
 use crate::data::db::queries;
 use crate::data::models::{
-    Album, Artist, Cuid, Event, EventContext, EventType, Image, PinnedItem, Playlist,
-    PlaylistTrack, RecentItem, Song,
+    Album, AlbumListItem, Artist, Cuid, Event, EventContext, EventType, Image, PinnedItem,
+    Playlist, PlaylistTrack, RecentItem, Song, SongListItem, SongSort,
 };
 use gpui::Global;
 use sqlx::SqlitePool;
@@ -97,6 +97,44 @@ impl Database {
             .map(|row| row.into()))
     }
 
+    pub async fn get_albums_count_filtered(&self, query: &str) -> sqlx::Result<usize> {
+        let count = queries::get_albums_count_filtered(&self.pool, query).await?;
+        Ok(count as usize)
+    }
+
+    pub async fn get_albums_paged_filtered(
+        &self,
+        query: &str,
+        offset: i64,
+        limit: i64,
+    ) -> sqlx::Result<Vec<AlbumListItem>> {
+        let rows = queries::get_albums_paged_filtered(&self.pool, query, limit, offset).await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| AlbumListItem {
+                id: row.id,
+                title: row.title,
+                artist_name: row.artist_name,
+                image_id: row.image_id,
+                year: row.year,
+            })
+            .collect())
+    }
+
+    pub async fn get_albums_with_artist(&self) -> sqlx::Result<Vec<AlbumListItem>> {
+        let rows = queries::get_albums_with_artist(&self.pool).await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| AlbumListItem {
+                id: row.id,
+                title: row.title,
+                artist_name: row.artist_name,
+                image_id: row.image_id,
+                year: row.year,
+            })
+            .collect())
+    }
+
     pub async fn upsert_album(
         &self,
         title: &str,
@@ -108,6 +146,45 @@ impl Database {
 
     pub async fn delete_album(&self, id: &Cuid) -> sqlx::Result<()> {
         queries::delete_album(&self.pool, id).await
+    }
+
+    pub async fn get_songs_count_filtered(&self, query: &str) -> sqlx::Result<usize> {
+        let count = queries::get_songs_count_filtered(&self.pool, query).await?;
+        Ok(count as usize)
+    }
+
+    pub async fn get_songs_paged_filtered(
+        &self,
+        query: &str,
+        sort: SongSort,
+        ascending: bool,
+        offset: i64,
+        limit: i64,
+    ) -> sqlx::Result<Vec<SongListItem>> {
+        let rows =
+            queries::get_songs_paged_filtered(&self.pool, query, sort, ascending, limit, offset)
+                .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| SongListItem {
+                id: row.id,
+                title: row.title,
+                artist_name: row.artist_name,
+                album_title: row.album_title,
+                duration: row.duration,
+                image_id: row.image_id,
+            })
+            .collect())
+    }
+
+    pub async fn get_song_ids_from_offset_filtered(
+        &self,
+        query: &str,
+        sort: SongSort,
+        ascending: bool,
+        offset: i64,
+    ) -> sqlx::Result<Vec<Cuid>> {
+        queries::get_song_ids_from_offset_filtered(&self.pool, query, sort, ascending, offset).await
     }
 
     pub async fn get_album_songs(&self, album_id: &Cuid) -> sqlx::Result<Vec<Song>> {

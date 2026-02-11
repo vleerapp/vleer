@@ -1,4 +1,6 @@
-use crate::data::db::models::{AlbumRow, ArtistRow, ImageRow, PlaylistRow, PlaylistTrackRow, SongRow};
+use crate::data::db::models::{
+    AlbumRow, ArtistRow, ImageRow, PlaylistRow, PlaylistTrackRow, SongRow,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type)]
@@ -53,6 +55,24 @@ pub struct Song {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SongListItem {
+    pub id: Cuid,
+    pub title: String,
+    pub artist_name: Option<String>,
+    pub album_title: Option<String>,
+    pub duration: i32,
+    pub image_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SongSort {
+    Default,
+    Title,
+    Album,
+    Duration,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Album {
     pub id: Cuid,
     pub title: String,
@@ -60,6 +80,15 @@ pub struct Album {
     pub image_id: Option<String>,
     pub favorite: bool,
     pub pinned: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlbumListItem {
+    pub id: Cuid,
+    pub title: String,
+    pub artist_name: Option<String>,
+    pub image_id: Option<String>,
+    pub year: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

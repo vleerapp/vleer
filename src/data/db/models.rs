@@ -31,6 +31,16 @@ pub struct SongRow {
 }
 
 #[derive(Debug, Clone, FromRow)]
+pub struct SongListRow {
+    pub id: Cuid,
+    pub title: String,
+    pub artist_name: Option<String>,
+    pub album_title: Option<String>,
+    pub duration: i32,
+    pub image_id: Option<String>,
+}
+
+#[derive(Debug, Clone, FromRow)]
 pub struct ArtistRow {
     pub id: Cuid,
     pub name: String,
@@ -47,6 +57,15 @@ pub struct AlbumRow {
     pub image_id: Option<String>,
     pub favorite: bool,
     pub pinned: bool,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct AlbumListRow {
+    pub id: Cuid,
+    pub title: String,
+    pub artist_name: Option<String>,
+    pub image_id: Option<String>,
+    pub year: Option<String>,
 }
 
 #[derive(Debug, Clone, FromRow)]

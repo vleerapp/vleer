@@ -1,6 +1,6 @@
 use crate::data::{
     db::models::*,
-    models::{Cuid, Event, EventContext, EventType},
+    models::{Cuid, Event, EventContext, EventType, SongSort},
 };
 use sqlx::SqlitePool;
 
@@ -131,6 +131,82 @@ pub async fn get_album(pool: &SqlitePool, id: Cuid) -> sqlx::Result<Option<Album
         .await
 }
 
+pub async fn get_albums_count_filtered(pool: &SqlitePool, query: &str) -> sqlx::Result<i64> {
+    let query_lower = query.to_lowercase();
+
+    let row: (i64,) = sqlx::query_as(
+        r#"
+        SELECT COUNT(DISTINCT al.id)
+        FROM albums al
+        LEFT JOIN artists ar ON al.artist_id = ar.id
+        WHERE
+            ?1 = ''
+            OR LOWER(al.title) LIKE '%' || ?1 || '%'
+            OR (ar.id IS NOT NULL AND LOWER(ar.name) LIKE '%' || ?1 || '%')
+        "#,
+    )
+    .bind(&query_lower)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(row.0)
+}
+
+pub async fn get_albums_paged_filtered(
+    pool: &SqlitePool,
+    query: &str,
+    limit: i64,
+    offset: i64,
+) -> sqlx::Result<Vec<AlbumListRow>> {
+    let query_lower = query.to_lowercase();
+
+    sqlx::query_as::<_, AlbumListRow>(
+        r#"
+        SELECT
+            al.id,
+            al.title,
+            ar.name AS artist_name,
+            al.image_id,
+            MIN(s.date) AS year
+        FROM albums al
+        LEFT JOIN artists ar ON al.artist_id = ar.id
+        LEFT JOIN songs s ON s.album_id = al.id
+        WHERE
+            ?1 = ''
+            OR LOWER(al.title) LIKE '%' || ?1 || '%'
+            OR (ar.id IS NOT NULL AND LOWER(ar.name) LIKE '%' || ?1 || '%')
+        GROUP BY al.id, al.title, ar.name, al.image_id
+        ORDER BY LOWER(al.title) ASC
+        LIMIT ?2 OFFSET ?3
+        "#,
+    )
+    .bind(&query_lower)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn get_albums_with_artist(pool: &SqlitePool) -> sqlx::Result<Vec<AlbumListRow>> {
+    sqlx::query_as::<_, AlbumListRow>(
+        r#"
+        SELECT
+            al.id,
+            al.title,
+            ar.name AS artist_name,
+            al.image_id,
+            MIN(s.date) AS year
+        FROM albums al
+        LEFT JOIN artists ar ON al.artist_id = ar.id
+        LEFT JOIN songs s ON s.album_id = al.id
+        GROUP BY al.id, al.title, ar.name, al.image_id
+        ORDER BY LOWER(al.title) ASC
+        "#,
+    )
+    .fetch_all(pool)
+    .await
+}
+
 pub async fn upsert_album(
     pool: &SqlitePool,
     title: &str,
@@ -158,6 +234,132 @@ pub async fn delete_album(pool: &SqlitePool, id: &Cuid) -> sqlx::Result<()> {
         .execute(pool)
         .await?;
     Ok(())
+}
+
+pub async fn get_songs_count_filtered(pool: &SqlitePool, query: &str) -> sqlx::Result<i64> {
+    let query_lower = query.to_lowercase();
+
+    let row: (i64,) = sqlx::query_as(
+        r#"
+        SELECT COUNT(DISTINCT s.id)
+        FROM songs s
+        LEFT JOIN artists ar ON s.artist_id = ar.id
+        LEFT JOIN albums al ON s.album_id = al.id
+        WHERE
+            ?1 = ''
+            OR LOWER(s.title) LIKE '%' || ?1 || '%'
+            OR (ar.id IS NOT NULL AND LOWER(ar.name) LIKE '%' || ?1 || '%')
+            OR (al.id IS NOT NULL AND LOWER(al.title) LIKE '%' || ?1 || '%')
+        "#,
+    )
+    .bind(&query_lower)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(row.0)
+}
+
+fn song_order_clause(sort: SongSort, ascending: bool) -> &'static str {
+    match sort {
+        SongSort::Title => {
+            if ascending {
+                "LOWER(s.title) ASC, s.id ASC"
+            } else {
+                "LOWER(s.title) DESC, s.id ASC"
+            }
+        }
+        SongSort::Album => {
+            if ascending {
+                "LOWER(COALESCE(al.title, '')) ASC, s.id ASC"
+            } else {
+                "LOWER(COALESCE(al.title, '')) DESC, s.id ASC"
+            }
+        }
+        SongSort::Duration => {
+            if ascending {
+                "s.duration ASC, s.id ASC"
+            } else {
+                "s.duration DESC, s.id ASC"
+            }
+        }
+        SongSort::Default => "s.date_added DESC, s.id ASC",
+    }
+}
+
+pub async fn get_songs_paged_filtered(
+    pool: &SqlitePool,
+    query: &str,
+    sort: SongSort,
+    ascending: bool,
+    limit: i64,
+    offset: i64,
+) -> sqlx::Result<Vec<SongListRow>> {
+    let query_lower = query.to_lowercase();
+    let order_clause = song_order_clause(sort, ascending);
+
+    let sql = format!(
+        r#"
+        SELECT
+            s.id,
+            s.title,
+            ar.name AS artist_name,
+            al.title AS album_title,
+            s.duration,
+            s.image_id
+        FROM songs s
+        LEFT JOIN artists ar ON s.artist_id = ar.id
+        LEFT JOIN albums al ON s.album_id = al.id
+        WHERE
+            ?1 = ''
+            OR LOWER(s.title) LIKE '%' || ?1 || '%'
+            OR (ar.id IS NOT NULL AND LOWER(ar.name) LIKE '%' || ?1 || '%')
+            OR (al.id IS NOT NULL AND LOWER(al.title) LIKE '%' || ?1 || '%')
+        ORDER BY {order_clause}
+        LIMIT ?2 OFFSET ?3
+        "#
+    );
+
+    sqlx::query_as::<_, SongListRow>(&sql)
+        .bind(&query_lower)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await
+}
+
+pub async fn get_song_ids_from_offset_filtered(
+    pool: &SqlitePool,
+    query: &str,
+    sort: SongSort,
+    ascending: bool,
+    offset: i64,
+) -> sqlx::Result<Vec<Cuid>> {
+    let query_lower = query.to_lowercase();
+    let order_clause = song_order_clause(sort, ascending);
+
+    let sql = format!(
+        r#"
+        SELECT s.id
+        FROM songs s
+        LEFT JOIN artists ar ON s.artist_id = ar.id
+        LEFT JOIN albums al ON s.album_id = al.id
+        WHERE
+            ?1 = ''
+            OR LOWER(s.title) LIKE '%' || ?1 || '%'
+            OR (ar.id IS NOT NULL AND LOWER(ar.name) LIKE '%' || ?1 || '%')
+            OR (al.id IS NOT NULL AND LOWER(al.title) LIKE '%' || ?1 || '%')
+        ORDER BY {order_clause}
+        LIMIT -1 OFFSET ?2
+        "#
+    );
+
+    let rows: Vec<(Cuid,)> = sqlx::query_as(&sql)
+        .bind(&query_lower)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?;
+
+    Ok(rows.into_iter().map(|(id,)| id).collect())
 }
 
 pub async fn get_album_songs(pool: &SqlitePool, album_id: &Cuid) -> sqlx::Result<Vec<SongRow>> {
