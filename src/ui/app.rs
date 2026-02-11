@@ -279,6 +279,7 @@ pub async fn run() -> anyhow::Result<()> {
                     }),
                     app_id: Some("vleer".to_string()),
                     kind: gpui::WindowKind::Normal,
+                    window_min_size: Some(Size::new(px(754.0), px(443.0))),
                     ..Default::default()
                 },
                 |window, cx| {
