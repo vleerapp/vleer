@@ -92,6 +92,78 @@ impl Queue {
             .and_then(|idx| self.items.get(idx).cloned())
     }
 
+    pub fn set_current_song_cache(&self, song_id: Cuid, song: Song) {
+        *self.current_song.borrow_mut() = Some((song_id, song));
+    }
+
+    pub fn advance_next_id(&mut self) -> Option<Cuid> {
+        if self.items.is_empty() {
+            return None;
+        }
+        match self.repeat_mode {
+            RepeatMode::One => {
+                return self.get_current_song_id();
+            }
+            RepeatMode::All => {
+                if let Some(idx) = self.current_index {
+                    self.current_index = Some((idx + 1) % self.items.len());
+                } else {
+                    self.current_index = Some(0);
+                }
+            }
+            RepeatMode::Off => {
+                if let Some(idx) = self.current_index {
+                    if idx + 1 < self.items.len() {
+                        self.current_index = Some(idx + 1);
+                    } else {
+                        return None;
+                    }
+                } else {
+                    self.current_index = Some(0);
+                }
+            }
+        }
+        debug!("Moved to next song. Index: {:?}", self.current_index);
+        *self.current_song.borrow_mut() = None;
+        self.get_current_song_id()
+    }
+
+    pub fn advance_previous_id(&mut self) -> Option<Cuid> {
+        if self.items.is_empty() {
+            return None;
+        }
+        match self.repeat_mode {
+            RepeatMode::One => {
+                return self.get_current_song_id();
+            }
+            RepeatMode::All => {
+                if let Some(idx) = self.current_index {
+                    if idx == 0 {
+                        self.current_index = Some(self.items.len() - 1);
+                    } else {
+                        self.current_index = Some(idx - 1);
+                    }
+                } else {
+                    self.current_index = Some(0);
+                }
+            }
+            RepeatMode::Off => {
+                if let Some(idx) = self.current_index {
+                    if idx > 0 {
+                        self.current_index = Some(idx - 1);
+                    } else {
+                        return None;
+                    }
+                } else {
+                    self.current_index = Some(0);
+                }
+            }
+        }
+        debug!("Moved to previous song. Index: {:?}", self.current_index);
+        *self.current_song.borrow_mut() = None;
+        self.get_current_song_id()
+    }
+
     pub fn next(&mut self, cx: &App) -> Option<Song> {
         if self.items.is_empty() {
             return None;

@@ -1,6 +1,8 @@
 use super::equalizer::{Equalizer, EqualizerSource};
 use super::queue::Queue;
-use crate::data::config::Config;
+use crate::data::config::{Config, EqualizerSettings};
+use crate::data::db::repo::Database;
+use crate::data::models::{Cuid, Song};
 use crate::media::controller::{MediaController, PlaybackState};
 use crate::media::visualizer::{F32Converter, VisualizerSource, VisualizerState};
 use anyhow::{Context, Result};
@@ -12,7 +14,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tracing::debug;
+use tracing::{debug, error};
 
 const LOG_VOLUME_GROWTH_RATE: f32 = 6.908;
 const LOG_VOLUME_SCALE_FACTOR: f32 = 1000.0;
@@ -27,6 +29,12 @@ pub enum PlaybackCommand {
     Seek(f32),
 }
 
+struct PreparedPlayback {
+    stream: OutputStream,
+    sink: Sink,
+    current_file: String,
+}
+
 pub struct Playback {
     _stream: Option<OutputStream>,
     sink: Option<Sink>,
@@ -39,6 +47,7 @@ pub struct Playback {
     position: f32,
     visualizer_state: VisualizerState,
     command_rx: Option<mpsc::UnboundedReceiver<PlaybackCommand>>,
+    load_token: u64,
 }
 
 impl Global for Playback {}
@@ -47,6 +56,151 @@ use std::sync::OnceLock;
 static PLAYBACK_CMD_TX: OnceLock<mpsc::UnboundedSender<PlaybackCommand>> = OnceLock::new();
 
 impl Playback {
+    fn compute_normalization_gain_for(
+        normalization_enabled: bool,
+        current_lufs: Option<f32>,
+    ) -> f32 {
+        if normalization_enabled {
+            if let Some(lufs) = current_lufs {
+                let gain_db = (DEFAULT_TARGET_LUFS - lufs).clamp(-12.0, 12.0);
+                let linear_gain = 10.0f32.powf(gain_db / 20.0);
+                debug!("Normalization: LUFS {:.2}, gain {:.2} dB", lufs, gain_db);
+                return linear_gain;
+            }
+        }
+        1.0
+    }
+
+    fn prepare_playback(
+        path: String,
+        lufs: Option<f32>,
+        volume: f32,
+        normalization_enabled: bool,
+        eq_settings: EqualizerSettings,
+        equalizer: Arc<Mutex<Equalizer>>,
+        visualizer_state: VisualizerState,
+    ) -> Result<PreparedPlayback> {
+        let file =
+            File::open(&path).with_context(|| format!("Failed to open audio file: {:?}", path))?;
+
+        let decoder = Decoder::new(BufReader::new(file)).context("Failed to decode audio file")?;
+
+        let source = F32Converter { input: decoder };
+        let sample_rate = source.sample_rate();
+        let channels = source.channels();
+
+        debug!("Audio file: {}Hz, {} channels", sample_rate, channels);
+
+        let stream = OutputStreamBuilder::from_default_device()
+            .context("Failed to create output stream builder")?
+            .with_sample_rate(sample_rate)
+            .open_stream()
+            .context("Failed to open output stream")?;
+
+        let sink = Sink::connect_new(stream.mixer());
+
+        *equalizer.lock().unwrap() = Equalizer::from_settings(sample_rate, &eq_settings);
+
+        let eq_source = EqualizerSource::new(source, equalizer.clone());
+        let vis_source = VisualizerSource::new(eq_source, visualizer_state);
+        let gain = Self::compute_normalization_gain_for(normalization_enabled, lufs);
+        let normalized = vis_source.amplify(gain);
+
+        sink.append(normalized);
+        sink.set_volume(Self::compute_log_volume(volume));
+        sink.pause();
+
+        Ok(PreparedPlayback {
+            stream,
+            sink,
+            current_file: path,
+        })
+    }
+
+    fn load_song_by_id(&mut self, cx: &mut App, song_id: Cuid) {
+        let db = cx.global::<Database>().clone();
+        let config = cx.global::<Config>().clone();
+        let eq_settings = config.get().equalizer.clone();
+        let normalization_enabled = config.get().audio.normalization;
+        let equalizer = self.equalizer.clone();
+        let visualizer_state = self.visualizer_state.clone();
+        let volume = self.volume;
+
+        self.load_token = self.load_token.wrapping_add(1);
+        let token = self.load_token;
+
+        cx.spawn(async move |cx| {
+            let song = db.get_song(song_id.clone()).await.ok().flatten();
+            let Some(song) = song else {
+                return;
+            };
+
+            let path = song.file_path.clone();
+            let lufs = song.lufs;
+
+            let prepared = tokio::task::spawn_blocking(move || {
+                Playback::prepare_playback(
+                    path,
+                    lufs,
+                    volume,
+                    normalization_enabled,
+                    eq_settings,
+                    equalizer,
+                    visualizer_state,
+                )
+            })
+            .await;
+
+            let prepared = match prepared {
+                Ok(Ok(prepared)) => prepared,
+                Ok(Err(e)) => {
+                    error!("Failed to open track: {}", e);
+                    return;
+                }
+                Err(e) => {
+                    error!("Failed to open track: {}", e);
+                    return;
+                }
+            };
+
+            cx.update(|cx| {
+                let mut applied = false;
+                cx.update_global::<Playback, _>(|playback, cx| {
+                    if playback.load_token != token {
+                        return;
+                    }
+
+                    playback._stream = Some(prepared.stream);
+                    playback.sink = Some(prepared.sink);
+                    playback.position = 0.0;
+                    playback.current_file = Some(prepared.current_file);
+                    playback.current_lufs = lufs;
+                    playback.normalization_enabled = normalization_enabled;
+                    playback.paused = true;
+                    playback.play(cx);
+                    applied = true;
+                });
+
+                if !applied {
+                    return;
+                }
+
+                cx.update_global::<Queue, _>(|queue, _cx| {
+                    queue.set_current_song_cache(song.id.clone(), song.clone());
+                });
+
+                if let Some(mc) = cx.try_global::<MediaController>() {
+                    let mc = mc.clone();
+                    let song = song.clone();
+                    tokio::spawn(async move {
+                        mc.update_song(song).await.ok();
+                    });
+                }
+            });
+        })
+        .detach();
+    }
+
     fn new() -> Result<Self> {
         let equalizer = Arc::new(Mutex::new(Equalizer::new(44100, 2)));
 
@@ -62,6 +216,7 @@ impl Playback {
             position: 0.0,
             visualizer_state: VisualizerState::default(),
             command_rx: None,
+            load_token: 0,
         })
     }
 
@@ -356,62 +511,23 @@ impl Playback {
     }
 
     pub fn play_queue(&mut self, cx: &mut App) {
-        let song = cx.update_global::<Queue, _>(|queue, cx| queue.get_current_song(cx));
-        let config = cx.global::<Config>().clone();
-        if let Some(song) = song {
-            if let Err(e) = self.open(&song.file_path, &config, song.lufs) {
-                tracing::error!("Failed to open track: {}", e);
-                return;
-            }
-            self.play(cx);
-
-            if let Some(mc) = cx.try_global::<MediaController>() {
-                let mc = mc.clone();
-                let song = song.clone();
-                tokio::spawn(async move {
-                    mc.update_song(song).await.ok();
-                });
-            }
+        let song_id = cx.update_global::<Queue, _>(|queue, _| queue.get_current_song_id());
+        if let Some(song_id) = song_id {
+            self.load_song_by_id(cx, song_id);
         }
     }
 
     pub fn next(&mut self, cx: &mut App) {
-        let song = cx.update_global::<Queue, _>(|queue, cx| queue.next(cx));
-        let config = cx.global::<Config>().clone();
-        if let Some(song) = song {
-            if let Err(e) = self.open(&song.file_path, &config, song.lufs) {
-                tracing::error!("Failed to open next track: {}", e);
-                return;
-            }
-            self.play(cx);
-
-            if let Some(mc) = cx.try_global::<MediaController>() {
-                let mc = mc.clone();
-                let song = song.clone();
-                tokio::spawn(async move {
-                    mc.update_song(song).await.ok();
-                });
-            }
+        let song_id = cx.update_global::<Queue, _>(|queue, _| queue.advance_next_id());
+        if let Some(song_id) = song_id {
+            self.load_song_by_id(cx, song_id);
         }
     }
 
     pub fn previous(&mut self, cx: &mut App) {
-        let song = cx.update_global::<Queue, _>(|queue, cx| queue.previous(cx));
-        let config = cx.global::<Config>().clone();
-        if let Some(song) = song {
-            if let Err(e) = self.open(&song.file_path, &config, song.lufs) {
-                tracing::error!("Failed to open previous track: {}", e);
-                return;
-            }
-            self.play(cx);
-
-            if let Some(mc) = cx.try_global::<MediaController>() {
-                let mc = mc.clone();
-                let song = song.clone();
-                tokio::spawn(async move {
-                    mc.update_song(song).await.ok();
-                });
-            }
+        let song_id = cx.update_global::<Queue, _>(|queue, _| queue.advance_previous_id());
+        if let Some(song_id) = song_id {
+            self.load_song_by_id(cx, song_id);
         }
     }
 

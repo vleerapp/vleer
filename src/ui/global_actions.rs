@@ -51,14 +51,14 @@ fn play_pause(_: &PlayPause, cx: &mut App) {
 }
 
 fn previous(_: &Previous, cx: &mut App) {
-    cx.update_global::<Queue, _>(|queue, cx| {
-        queue.previous(cx);
+    cx.update_global::<Playback, _>(|playback, cx| {
+        playback.previous(cx);
     });
 }
 
 fn next(_: &Next, cx: &mut App) {
-    cx.update_global::<Queue, _>(|queue, cx| {
-        queue.next(cx);
+    cx.update_global::<Playback, _>(|playback, cx| {
+        playback.next(cx);
     });
 }
 
