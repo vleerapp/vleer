@@ -184,6 +184,45 @@ impl Scanner {
         Ok(all_files)
     }
 
+    async fn collect_song_paths(&self, db: &Database) -> Result<Vec<String>> {
+        let mut offset = 0i64;
+        let limit = 500i64;
+        let mut paths = Vec::new();
+
+        loop {
+            let songs = db.get_songs_paged(offset, limit).await?;
+            if songs.is_empty() {
+                break;
+            }
+
+            paths.extend(songs.into_iter().map(|song| song.file_path));
+            offset += limit;
+        }
+
+        Ok(paths)
+    }
+
+    async fn remove_missing_tracks(&self, db: &Database) -> Result<usize> {
+        let mut removed = 0;
+        let paths = self.collect_song_paths(db).await?;
+
+        for path_str in paths {
+            if !Path::new(&path_str).exists() {
+                match db.delete_song_by_path(&path_str).await {
+                    Ok(()) => {
+                        removed += 1;
+                        debug!("Removed missing track: {}", path_str);
+                    }
+                    Err(e) => {
+                        error!("Failed to remove missing track {}: {}", path_str, e);
+                    }
+                }
+            }
+        }
+
+        Ok(removed)
+    }
+
     async fn scan_with_options(&self, db: &Database, options: ScanOptions) -> Result<ScanStats> {
         let mut scanned = 0;
         let mut added = 0;
@@ -275,11 +314,13 @@ impl Scanner {
             }
         }
 
+        let removed = self.remove_missing_tracks(db).await?;
+
         Ok(ScanStats {
             scanned,
             added,
             updated,
-            removed: 0,
+            removed,
         })
     }
 
