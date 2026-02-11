@@ -29,6 +29,10 @@ impl Global for Search {}
 pub struct Library {
     search_input: Entity<TextInput>,
     pinned_items: Vec<PinnedItem>,
+    search_results: Vec<PinnedItem>,
+    search_counts: (usize, usize, usize, usize),
+    search_pending: bool,
+    last_query: String,
 }
 
 impl Library {
@@ -61,12 +65,62 @@ impl Library {
         })
         .detach();
 
-        cx.observe_global::<Search>(|_this, cx| cx.notify())
+        cx.observe_global::<Search>(|this, cx| {
+            let query = cx.global::<Search>().query.to_string();
+            if query == this.last_query {
+                return;
+            }
+            this.last_query = query.clone();
+
+            if query.is_empty() {
+                this.search_results.clear();
+                this.search_counts = (0, 0, 0, 0);
+                this.search_pending = false;
+                cx.notify();
+                return;
+            }
+
+            this.search_pending = true;
+            cx.notify();
+
+            let db = cx.global::<Database>().clone();
+            cx.spawn(async move |this, cx: &mut AsyncApp| {
+                let results = db.search_library(&query).await.unwrap_or_default();
+                let counts = db.get_search_match_counts(&query).await.unwrap_or((0, 0, 0, 0));
+
+                cx.update(|cx| {
+                    this.update(cx, |lib, cx| {
+                        if lib.last_query != query {
+                            return;
+                        }
+
+                        lib.search_results = results
+                            .into_iter()
+                            .map(|(id, name, image_id, item_type)| PinnedItem {
+                                id,
+                                name,
+                                image_id,
+                                item_type,
+                            })
+                            .collect();
+                        lib.search_counts = counts;
+                        lib.search_pending = false;
+                        cx.notify();
+                    })
+                })
+                .ok();
+            })
             .detach();
+        })
+        .detach();
 
         Self {
             search_input,
             pinned_items: Vec::new(),
+            search_results: Vec::new(),
+            search_counts: (0, 0, 0, 0),
+            search_pending: false,
+            last_query: String::new(),
         }
     }
 }
@@ -186,37 +240,19 @@ impl Render for Library {
         let is_searching = !query.is_empty();
 
         let (s_count, al_count, ar_count, p_count) = if is_searching {
-            let db = cx.global::<Database>().clone();
-            tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current()
-                    .block_on(db.get_search_match_counts(&query))
-                    .unwrap_or((0, 0, 0, 0))
-            })
+            self.search_counts
         } else {
             (0, 0, 0, 0)
         };
 
         let displayed_items: Vec<PinnedItem> = if is_searching {
-            let db = cx.global::<Database>().clone();
-            let query_clone = query.clone();
-            tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current()
-                    .block_on(db.search_library(&query_clone))
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|(id, name, image_id, item_type)| PinnedItem {
-                        id,
-                        name,
-                        image_id,
-                        item_type,
-                    })
-                    .collect()
-            })
+            self.search_results.clone()
         } else {
             self.pinned_items.clone()
         };
 
         let has_display = !displayed_items.is_empty();
+        let is_search_pending = is_searching && self.search_pending;
 
         div()
             .image_cache(vleer_cache("library-image-cache", 20))
@@ -309,11 +345,19 @@ impl Render for Library {
                                         )
                                         .into_any_element()
                                 } else {
-                                    div()
-                                        .pt(px(variables.padding_16))
-                                        .text_color(variables.text_secondary)
-                                        .child("No Results Found")
-                                        .into_any_element()
+                                    if is_search_pending {
+                                        div()
+                                            .pt(px(variables.padding_16))
+                                            .text_color(variables.text_secondary)
+                                            .child("")
+                                            .into_any_element()
+                                    } else {
+                                        div()
+                                            .pt(px(variables.padding_16))
+                                            .text_color(variables.text_secondary)
+                                            .child("No Results Found")
+                                            .into_any_element()
+                                    }
                                 }),
                         )
                     }),
