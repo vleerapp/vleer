@@ -8,14 +8,15 @@ use gpui::{
 use rustc_hash::{FxBuildHasher, FxHashMap};
 use tracing::{error, trace};
 
-pub fn vleer_cache(
-    id: impl Into<ElementId>,
-    max_items: usize,
-) -> VleerImageCacheProvider {
+pub fn vleer_cache(id: impl Into<ElementId>, max_items: usize) -> VleerImageCacheProvider {
     VleerImageCacheProvider {
         id: id.into(),
         max_items,
     }
+}
+
+pub fn app_image_cache() -> VleerImageCacheProvider {
+    vleer_cache("vleer-app-image-cache", 200)
 }
 
 pub struct VleerImageCacheProvider {
@@ -27,9 +28,15 @@ impl ImageCacheProvider for VleerImageCacheProvider {
     fn provide(&mut self, window: &mut gpui::Window, cx: &mut App) -> gpui::AnyImageCache {
         window
             .with_global_id(self.id.clone(), |id, window| {
-                window.with_element_state(id, |cache, _| {
-                    let cache =
-                        cache.unwrap_or_else(|| VleerImageCache::new(self.max_items, cx));
+                window.with_element_state(id, |cache: Option<Entity<VleerImageCache>>, _| {
+                    let cache = if let Some(cache) = cache {
+                        cache.update(cx, |cache, _| {
+                            cache.ensure_capacity(self.max_items);
+                        });
+                        cache
+                    } else {
+                        VleerImageCache::new(self.max_items, cx)
+                    };
 
                     (cache.clone(), cache)
                 })
@@ -66,6 +73,17 @@ impl VleerImageCache {
                 cache: FxHashMap::with_capacity_and_hasher(max_items, FxBuildHasher),
             }
         })
+    }
+
+    fn ensure_capacity(&mut self, max_items: usize) {
+        if max_items <= self.max_items {
+            return;
+        }
+
+        let additional = max_items - self.max_items;
+        self.max_items = max_items;
+        self.usage_list.reserve(additional);
+        self.cache.reserve(additional);
     }
 }
 
