@@ -6,7 +6,7 @@ use crate::ui::components::div::flex_row;
 use crate::ui::components::icons::icon::icon;
 use crate::ui::components::scrollbar::ScrollableElement;
 use crate::ui::{
-    assets::image_cache::vleer_cache,
+    assets::image_cache::app_image_cache,
     components::{
         div::flex_col,
         icons::icons::{self, PLAY},
@@ -86,7 +86,10 @@ impl Library {
             let db = cx.global::<Database>().clone();
             cx.spawn(async move |this, cx: &mut AsyncApp| {
                 let results = db.search_library(&query).await.unwrap_or_default();
-                let counts = db.get_search_match_counts(&query).await.unwrap_or((0, 0, 0, 0));
+                let counts = db
+                    .get_search_match_counts(&query)
+                    .await
+                    .unwrap_or((0, 0, 0, 0));
 
                 cx.update(|cx| {
                     this.update(cx, |lib, cx| {
@@ -255,7 +258,7 @@ impl Render for Library {
         let is_search_pending = is_searching && self.search_pending;
 
         div()
-            .image_cache(vleer_cache("library-image-cache", 20))
+            .image_cache(app_image_cache())
             .size_full()
             .min_w_0()
             .min_h_0()

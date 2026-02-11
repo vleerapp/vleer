@@ -7,7 +7,7 @@ use crate::{
         queue::{Queue, RepeatMode},
     },
     ui::{
-        assets::image_cache::vleer_cache,
+        assets::image_cache::app_image_cache,
         components::{
             button::Button,
             div::{flex_col, flex_row},
@@ -272,7 +272,7 @@ impl Render for Player {
             );
 
         flex_col()
-            .image_cache(vleer_cache("player-image-cache", 100))
+            .image_cache(app_image_cache())
             .h_full()
             .p(px(variables.padding_16))
             .gap(px(variables.padding_16))

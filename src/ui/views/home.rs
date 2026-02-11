@@ -1,7 +1,7 @@
 use crate::{
     data::{db::repo::Database, models::RecentItem},
     ui::{
-        assets::image_cache::vleer_cache,
+        assets::image_cache::app_image_cache,
         components::{
             div::{flex_col, flex_row},
             icons::{
@@ -21,7 +21,7 @@ pub struct HomeView {
 }
 
 const MIN_COVER_SIZE: f32 = 180.0;
-const MAX_COVER_SIZE: f32 = 220.0;
+const MAX_COVER_SIZE: f32 = 400.0;
 const GAP_SIZE: f32 = 16.0;
 
 impl HomeView {
@@ -319,7 +319,7 @@ impl Render for HomeView {
             .gap(px(variables.padding_16));
 
         div()
-            .image_cache(vleer_cache("home-image-cache", 20))
+            .image_cache(app_image_cache())
             .id("home-container")
             .flex()
             .flex_col()
