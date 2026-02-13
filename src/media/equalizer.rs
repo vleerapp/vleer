@@ -73,12 +73,8 @@ impl Equalizer {
                 self.bands[i].gain_db = effective_gain;
 
                 let mut coeffs_guard = self.coeffs.write().unwrap();
-                coeffs_guard[i] = Coeffs::peaking(
-                    freq as f32,
-                    q,
-                    effective_gain,
-                    self.sample_rate as f32,
-                );
+                coeffs_guard[i] =
+                    Coeffs::peaking(freq as f32, q, effective_gain, self.sample_rate as f32);
             }
         }
     }
@@ -164,7 +160,7 @@ pub struct EqualizerSource<S> {
 impl<S: rodio::Source<Item = f32>> EqualizerSource<S> {
     pub fn new(inner: S, equalizer: Arc<std::sync::Mutex<Equalizer>>) -> Self {
         let eq = equalizer.lock().unwrap();
-        let channels = inner.channels() as usize;
+        let channels = inner.channels().get() as usize;
         let states: Vec<Vec<(f32, f32)>> = (0..channels)
             .map(|_| (0..10).map(|_| (0.0, 0.0)).collect())
             .collect();
@@ -203,11 +199,11 @@ impl<S: rodio::Source<Item = f32>> rodio::Source for EqualizerSource<S> {
         self.inner.current_span_len()
     }
 
-    fn channels(&self) -> u16 {
+    fn channels(&self) -> std::num::NonZero<u16> {
         self.inner.channels()
     }
 
-    fn sample_rate(&self) -> u32 {
+    fn sample_rate(&self) -> std::num::NonZero<u32> {
         self.inner.sample_rate()
     }
 

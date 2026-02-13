@@ -1,6 +1,6 @@
 use rodio::Source;
 use spectrum_analyzer::scaling::divide_by_N_sqrt;
-use spectrum_analyzer::{FrequencyLimit, samples_fft_to_spectrum};
+use spectrum_analyzer::{samples_fft_to_spectrum, FrequencyLimit};
 use std::sync::{Arc, Mutex};
 
 pub trait ToF32 {
@@ -43,8 +43,8 @@ where
     I: Source<Item = f32>,
 {
     pub fn new(input: I, state: VisualizerState) -> Self {
-        let channels = input.channels();
-        let sample_rate = input.sample_rate();
+        let channels = input.channels().get();
+        let sample_rate = input.sample_rate().get();
         Self {
             input,
             buffer: Vec::with_capacity(1024),
@@ -123,11 +123,11 @@ where
         self.input.current_span_len()
     }
 
-    fn channels(&self) -> u16 {
+    fn channels(&self) -> std::num::NonZero<u16> {
         self.input.channels()
     }
 
-    fn sample_rate(&self) -> u32 {
+    fn sample_rate(&self) -> std::num::NonZero<u32> {
         self.input.sample_rate()
     }
 
@@ -161,11 +161,11 @@ where
         self.input.current_span_len()
     }
 
-    fn channels(&self) -> u16 {
+    fn channels(&self) -> std::num::NonZero<u16> {
         self.input.channels()
     }
 
-    fn sample_rate(&self) -> u32 {
+    fn sample_rate(&self) -> std::num::NonZero<u32> {
         self.input.sample_rate()
     }
 

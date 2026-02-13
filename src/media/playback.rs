@@ -2,17 +2,21 @@ use super::equalizer::{Equalizer, EqualizerSource};
 use super::queue::Queue;
 use crate::data::config::{Config, EqualizerSettings};
 use crate::data::db::repo::Database;
-use crate::data::models::{Cuid, Song};
+use crate::data::models::Cuid;
 use crate::media::controller::{MediaController, PlaybackState};
 use crate::media::visualizer::{F32Converter, VisualizerSource, VisualizerState};
 use anyhow::{Context, Result};
 use gpui::{App, AsyncWindowContext, BorrowAppContext, Global, Window};
-use rodio::{Decoder, OutputStream, OutputStreamBuilder, Sink, Source};
+use rodio::decoder::{Decoder, DecoderBuilder};
+use rodio::source::Source;
+use rodio::{DeviceSinkBuilder, MixerDeviceSink, Player as Sink};
 use std::fs::File;
 use std::io::BufReader;
-use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
+use symphonia::core::codecs::CodecRegistry;
+use symphonia::default::register_enabled_codecs;
+use symphonia_adapter_libopus::OpusDecoder;
 use tokio::sync::mpsc;
 use tracing::{debug, error};
 
@@ -30,13 +34,13 @@ pub enum PlaybackCommand {
 }
 
 struct PreparedPlayback {
-    stream: OutputStream,
+    _device: MixerDeviceSink,
     sink: Sink,
     current_file: String,
 }
 
 pub struct Playback {
-    _stream: Option<OutputStream>,
+    _device: Option<MixerDeviceSink>,
     sink: Option<Sink>,
     equalizer: Arc<Mutex<Equalizer>>,
     volume: f32,
@@ -52,8 +56,19 @@ pub struct Playback {
 
 impl Global for Playback {}
 
-use std::sync::OnceLock;
 static PLAYBACK_CMD_TX: OnceLock<mpsc::UnboundedSender<PlaybackCommand>> = OnceLock::new();
+
+fn get_codec_registry() -> Arc<CodecRegistry> {
+    static REGISTRY: OnceLock<Arc<CodecRegistry>> = OnceLock::new();
+    REGISTRY
+        .get_or_init(|| {
+            let mut registry = CodecRegistry::new();
+            registry.register_all::<OpusDecoder>();
+            register_enabled_codecs(&mut registry);
+            Arc::new(registry)
+        })
+        .clone()
+}
 
 impl Playback {
     fn compute_normalization_gain_for(
@@ -83,23 +98,25 @@ impl Playback {
         let file =
             File::open(&path).with_context(|| format!("Failed to open audio file: {:?}", path))?;
 
-        let decoder = Decoder::new(BufReader::new(file)).context("Failed to decode audio file")?;
+        let decoder = DecoderBuilder::new()
+            .with_codec_registry(get_codec_registry())
+            .with_data(BufReader::new(file))
+            .build()
+            .context("Failed to decode audio file")?;
 
         let source = F32Converter { input: decoder };
         let sample_rate = source.sample_rate();
         let channels = source.channels();
 
-        debug!("Audio file: {}Hz, {} channels", sample_rate, channels);
+        debug!("Audio file: {:?}Hz, {:?} channels", sample_rate, channels);
 
-        let stream = OutputStreamBuilder::from_default_device()
-            .context("Failed to create output stream builder")?
-            .with_sample_rate(sample_rate)
-            .open_stream()
-            .context("Failed to open output stream")?;
+        let device = DeviceSinkBuilder::open_default_sink()
+            .context("Failed to open default audio device")?;
 
-        let sink = Sink::connect_new(stream.mixer());
+        let sink = Sink::connect_new(device.mixer());
 
-        *equalizer.lock().unwrap() = Equalizer::from_settings(sample_rate, &eq_settings);
+        let sample_rate_u32: u32 = sample_rate.get();
+        *equalizer.lock().unwrap() = Equalizer::from_settings(sample_rate_u32, &eq_settings);
 
         let eq_source = EqualizerSource::new(source, equalizer.clone());
         let vis_source = VisualizerSource::new(eq_source, visualizer_state);
@@ -111,7 +128,7 @@ impl Playback {
         sink.pause();
 
         Ok(PreparedPlayback {
-            stream,
+            _device: device,
             sink,
             current_file: path,
         })
@@ -170,7 +187,7 @@ impl Playback {
                         return;
                     }
 
-                    playback._stream = Some(prepared.stream);
+                    playback._device = Some(prepared._device);
                     playback.sink = Some(prepared.sink);
                     playback.position = 0.0;
                     playback.current_file = Some(prepared.current_file);
@@ -205,7 +222,7 @@ impl Playback {
         let equalizer = Arc::new(Mutex::new(Equalizer::new(44100, 2)));
 
         Ok(Self {
-            _stream: None,
+            _device: None,
             sink: None,
             equalizer,
             volume: 0.5,
@@ -275,59 +292,6 @@ impl Playback {
         .detach();
     }
 
-    pub fn open(
-        &mut self,
-        path: impl AsRef<Path>,
-        config: &Config,
-        lufs: Option<f32>,
-    ) -> Result<()> {
-        let path = path.as_ref();
-        debug!("Opening audio file: {:?}", path);
-
-        let file =
-            File::open(path).with_context(|| format!("Failed to open audio file: {:?}", path))?;
-
-        let decoder = Decoder::new(BufReader::new(file)).context("Failed to decode audio file")?;
-
-        let source = F32Converter { input: decoder };
-        let sample_rate = source.sample_rate();
-        let channels = source.channels();
-
-        debug!("Audio file: {}Hz, {} channels", sample_rate, channels);
-
-        let stream = OutputStreamBuilder::from_default_device()
-            .context("Failed to create output stream builder")?
-            .with_sample_rate(sample_rate)
-            .open_stream()
-            .context("Failed to open output stream")?;
-
-        let sink = Sink::connect_new(stream.mixer());
-
-        *self.equalizer.lock().unwrap() =
-            Equalizer::from_settings(sample_rate, &config.get().equalizer);
-
-        self.current_lufs = lufs;
-        self.normalization_enabled = config.get().audio.normalization;
-
-        let eq_source = EqualizerSource::new(source, self.equalizer.clone());
-        let vis_source = VisualizerSource::new(eq_source, self.visualizer_state.clone());
-        let gain = self.compute_normalization_gain();
-        let normalized = vis_source.amplify(gain);
-
-        sink.append(normalized);
-        sink.set_volume(Self::compute_log_volume(self.volume));
-        sink.pause();
-
-        self._stream = Some(stream);
-        self.sink = Some(sink);
-        self.position = 0.0;
-        self.current_file = Some(path.to_string_lossy().to_string());
-        self.paused = true;
-
-        debug!("Loaded audio file");
-        Ok(())
-    }
-
     pub fn play(&mut self, cx: &mut App) {
         if self.paused {
             if let Some(sink) = &self.sink {
@@ -375,7 +339,10 @@ impl Playback {
             let was_playing = !self.paused;
 
             let file = File::open(file_path)?;
-            let mut source: Decoder<BufReader<File>> = Decoder::try_from(file)?;
+            let mut source: Decoder<BufReader<File>> = DecoderBuilder::new()
+                .with_codec_registry(get_codec_registry())
+                .with_data(BufReader::new(file))
+                .build()?;
             source.try_seek(Duration::from_secs_f32(position)).ok();
 
             let eq_source = EqualizerSource::new(source, self.equalizer.clone());
