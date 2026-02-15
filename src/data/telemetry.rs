@@ -56,9 +56,9 @@ impl Telemetry {
         }
 
         let url = if cfg!(debug_assertions) {
-            "http://localhost:3000/v1/telemetry"
+            "http://localhost:3000/telemetry/v1"
         } else {
-            "https://api.vleer.app/v1/telemetry"
+            "https://api.vleer.app/telemetry/v1"
         };
 
         let user_id = match self.get_or_create_user_id() {
