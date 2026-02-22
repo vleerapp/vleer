@@ -39,7 +39,10 @@ impl AudioMetadata {
             ParseOptions::new().read_cover_art(false)
         };
 
-        let tagged_file = Probe::open(path)?.options(parse_options).read()?;
+        let tagged_file = Probe::open(path)?
+            .guess_file_type()?
+            .options(parse_options)
+            .read()?;
 
         let properties = tagged_file.properties();
         let duration = properties.duration();
@@ -82,8 +85,7 @@ impl AudioMetadata {
 }
 
 pub fn extract_image_data(audio_path: &Path) -> Result<Option<ImageData>> {
-    let tagged_file = lofty::read_from_path(audio_path)
-        .with_context(|| format!("Failed to read audio file for cover: {:?}", audio_path))?;
+    let tagged_file = Probe::open(audio_path)?.guess_file_type()?.read()?;
 
     let tag = match tagged_file
         .primary_tag()
