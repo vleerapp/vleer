@@ -52,6 +52,7 @@ pub struct Playback {
     visualizer_state: VisualizerState,
     command_rx: Option<mpsc::UnboundedReceiver<PlaybackCommand>>,
     load_token: u64,
+    loading: bool,
 }
 
 impl Global for Playback {}
@@ -110,8 +111,9 @@ impl Playback {
 
         debug!("Audio file: {:?}Hz, {:?} channels", sample_rate, channels);
 
-        let device = DeviceSinkBuilder::open_default_sink()
+        let mut device = DeviceSinkBuilder::open_default_sink()
             .context("Failed to open default audio device")?;
+        device.log_on_drop(false);
 
         let sink = Sink::connect_new(device.mixer());
 
@@ -145,19 +147,32 @@ impl Playback {
 
         self.load_token = self.load_token.wrapping_add(1);
         let token = self.load_token;
+        self.loading = true;
 
         cx.spawn(async move |cx| {
-            let (tx, rx) = std::sync::mpsc::channel();
-            let db = db.clone();
-            let song_id = song_id.clone();
-            crate::RUNTIME.spawn(async move {
-                let result = db.get_song(song_id).await;
-                let _ = tx.send(result);
-            });
-
-            let song = rx.recv().ok().and_then(|r| r.ok()).flatten();
+            let song = match crate::RUNTIME
+                .spawn(async move { db.get_song(song_id).await })
+                .await
+            {
+                Ok(Ok(song)) => song,
+                Ok(Err(e)) => {
+                    error!("Failed to fetch song: {}", e);
+                    None
+                }
+                Err(e) => {
+                    error!("Failed to fetch song task: {}", e);
+                    None
+                }
+            };
 
             let Some(song) = song else {
+                cx.update(|cx| {
+                    cx.update_global::<Playback, _>(|playback, _cx| {
+                        if playback.load_token == token {
+                            playback.loading = false;
+                        }
+                    });
+                });
                 return;
             };
 
@@ -181,18 +196,37 @@ impl Playback {
                 Ok(Ok(prepared)) => prepared,
                 Ok(Err(e)) => {
                     error!("Failed to open track: {}", e);
+                    cx.update(|cx| {
+                        cx.update_global::<Playback, _>(|playback, _cx| {
+                            if playback.load_token == token {
+                                playback.loading = false;
+                            }
+                        });
+                    });
                     return;
                 }
                 Err(e) => {
                     error!("Failed to open track: {}", e);
+                    cx.update(|cx| {
+                        cx.update_global::<Playback, _>(|playback, _cx| {
+                            if playback.load_token == token {
+                                playback.loading = false;
+                            }
+                        });
+                    });
                     return;
                 }
             };
 
+            debug!("Track prepared, applying to playback state");
+
             cx.update(|cx| {
+                debug!("Inside cx.update");
                 let mut applied = false;
                 cx.update_global::<Playback, _>(|playback, cx| {
+                    debug!("load_token: {}, token: {}", playback.load_token, token);
                     if playback.load_token != token {
+                        debug!("Token mismatch, skipping");
                         return;
                     }
 
@@ -203,17 +237,23 @@ impl Playback {
                     playback.current_lufs = lufs;
                     playback.normalization_enabled = normalization_enabled;
                     playback.paused = true;
+                    playback.loading = false;
+                    debug!("Calling play()");
                     playback.play(cx);
                     applied = true;
+                    debug!("Song applied to playback");
                 });
 
                 if !applied {
+                    debug!("Song not applied (token mismatch)");
                     return;
                 }
 
                 cx.update_global::<Queue, _>(|queue, _cx| {
                     queue.set_current_song_cache(song.id.clone(), song.clone());
                 });
+
+                debug!("Song cached in queue");
 
                 if let Some(mc) = cx.try_global::<MediaController>() {
                     let mc = mc.clone();
@@ -223,6 +263,8 @@ impl Playback {
                     });
                 }
             });
+
+            debug!("cx.update completed");
         })
         .detach();
     }
@@ -243,6 +285,7 @@ impl Playback {
             visualizer_state: VisualizerState::default(),
             command_rx: None,
             load_token: 0,
+            loading: false,
         })
     }
 
@@ -400,6 +443,10 @@ impl Playback {
         !self.paused
     }
 
+    pub fn get_loading(&self) -> bool {
+        self.loading
+    }
+
     pub fn get_position(&self) -> f32 {
         if let Some(sink) = &self.sink {
             self.position + sink.get_pos().as_secs_f32()
@@ -488,6 +535,7 @@ impl Playback {
 
     pub fn play_queue(&mut self, cx: &mut App) {
         let song_id = cx.update_global::<Queue, _>(|queue, _| queue.get_current_song_id());
+        debug!("play_queue requested: current_song_id={:?}", song_id);
         if let Some(song_id) = song_id {
             self.load_song_by_id(cx, song_id);
         }
@@ -517,7 +565,7 @@ impl Playback {
                     let should_advance = cx
                         .update(|_window, cx| {
                             cx.try_global::<Playback>()
-                                .map(|p| p.empty() && p.get_playing())
+                                .map(|p| p.empty() && p.get_playing() && !p.get_loading())
                                 .unwrap_or(false)
                         })
                         .unwrap_or(false);
