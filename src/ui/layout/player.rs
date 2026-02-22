@@ -1,4 +1,5 @@
 use gpui::{prelude::FluentBuilder, *};
+use std::time::Duration;
 
 use crate::{
     data::{config::Config, models::Cuid},
@@ -24,7 +25,42 @@ pub struct Player {
 }
 
 impl Player {
-    pub fn new() -> Self {
+    pub fn new(cx: &mut Context<Self>) -> Self {
+        cx.observe_global::<Playback>(|_this, cx| {
+            cx.notify();
+        })
+        .detach();
+
+        cx.observe_global::<Queue>(|_this, cx| {
+            cx.notify();
+        })
+        .detach();
+
+        cx.spawn(async move |this, cx: &mut AsyncApp| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
+
+                let should_refresh = cx.update(|cx| {
+                    cx.try_global::<Playback>()
+                        .map(|playback| playback.get_playing() || playback.get_loading())
+                        .unwrap_or(false)
+                });
+
+                if !should_refresh {
+                    continue;
+                }
+
+                cx.update(|cx| {
+                    let _ = this.update(cx, |_this, cx| {
+                        cx.notify();
+                    });
+                });
+            }
+        })
+        .detach();
+
         Self {
             cached_song_data: None,
         }
@@ -38,7 +74,10 @@ impl Render for Player {
         let current_song = if let Some(song) = cx.global::<Queue>().get_current_song(cx) {
             let title = song.title.clone();
             let cover = song.image_id.map(|id| format!("!image://{}", id));
-            let artist = "Unknown Artist".to_string();
+            let artist = song
+                .artist_name
+                .clone()
+                .unwrap_or_else(|| "Unknown Artist".to_string());
 
             self.cached_song_data = Some((
                 song.id.clone(),
@@ -168,8 +207,21 @@ impl Render for Player {
                 .child(
                     flex_col()
                         .gap(px(2.0))
-                        .child(div().font_weight(FontWeight(500.0)).child(title))
-                        .child(div().text_color(variables.text_secondary).child(artist)),
+                        .min_w_0()
+                        .child(
+                            div()
+                                .font_weight(FontWeight(500.0))
+                                .text_ellipsis()
+                                .max_w(px(200.0))
+                                .child(title),
+                        )
+                        .child(
+                            div()
+                                .text_color(variables.text_secondary)
+                                .text_ellipsis()
+                                .max_w(px(200.0))
+                                .child(artist),
+                        ),
                 )
                 .into_any_element()
         } else {
@@ -185,6 +237,7 @@ impl Render for Player {
                 .child(
                     flex_col()
                         .gap(px(2.0))
+                        .min_w_0()
                         .child(
                             div()
                                 .font_weight(FontWeight(500.0))

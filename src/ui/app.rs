@@ -318,7 +318,7 @@ pub async fn run() -> anyhow::Result<()> {
 
                         let library_entity = cx.new(|cx| Library::new(cx));
                         let navbar_entity = cx.new(|_cx| Navbar::new());
-                        let player_entity = cx.new(|_cx| Player::new());
+                        let player_entity = cx.new(|cx| Player::new(cx));
 
                         let views = ViewRegistry::register_all(window, cx);
 
