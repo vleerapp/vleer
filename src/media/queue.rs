@@ -1,7 +1,4 @@
-use crate::data::{
-    db::repo::Database,
-    models::{Cuid, Song},
-};
+use crate::data::models::{Cuid, Song};
 use gpui::{App, Global};
 use std::cell::RefCell;
 use tracing::debug;
@@ -74,17 +71,9 @@ impl Queue {
             }
         }
 
-        let db = cx.global::<Database>();
-        let song = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current()
-                .block_on(db.get_song(song_id.clone()))
-                .ok()
-                .flatten()
-        })?;
-
-        *self.current_song.borrow_mut() = Some((song_id, song.clone()));
-
-        Some(song)
+        // Song not in cache - return None and let callers use set_current_song_cache
+        // to populate it asynchronously. Blocking here stalls the async executor.
+        None
     }
 
     pub fn get_current_song_id(&self) -> Option<Cuid> {

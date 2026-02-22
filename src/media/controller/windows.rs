@@ -1,16 +1,16 @@
 use super::{PlaybackState, ResolvedMetadata};
 use crate::media::playback::PlaybackCommand;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use image::ImageFormat;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
-use windows::core::HSTRING;
 use windows::Foundation::{TimeSpan, TypedEventHandler};
 use windows::Media::*;
 use windows::Storage::StorageFile;
 use windows::Storage::Streams::RandomAccessStreamReference;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::WinRT::ISystemMediaTransportControlsInterop;
+use windows::core::HSTRING;
 use windows_future::AsyncStatus;
 
 pub struct WindowsController {
@@ -167,8 +167,10 @@ fn init_smtc(
     hwnd: isize,
     playback_tx: mpsc::UnboundedSender<PlaybackCommand>,
 ) -> Result<SmtcState> {
-    let interop: ISystemMediaTransportControlsInterop =
-        windows::core::factory::<SystemMediaTransportControls, ISystemMediaTransportControlsInterop>()?;
+    let interop: ISystemMediaTransportControlsInterop = windows::core::factory::<
+        SystemMediaTransportControls,
+        ISystemMediaTransportControlsInterop,
+    >()?;
     let controls: SystemMediaTransportControls =
         unsafe { interop.GetForWindow(HWND(hwnd as *mut core::ffi::c_void)) }?;
 
@@ -258,7 +260,9 @@ fn apply_playback(
 
     if let Some(position_ms) = position_ms {
         smtc.timeline_properties
-            .SetPosition(TimeSpan::from(std::time::Duration::from_millis(position_ms)))?;
+            .SetPosition(TimeSpan::from(std::time::Duration::from_millis(
+                position_ms,
+            )))?;
         smtc.controls
             .UpdateTimelineProperties(&smtc.timeline_properties)?;
     }
@@ -268,7 +272,9 @@ fn apply_playback(
 
 fn apply_position(smtc: &mut SmtcState, position_ms: u64) -> Result<()> {
     smtc.timeline_properties
-        .SetPosition(TimeSpan::from(std::time::Duration::from_millis(position_ms)))?;
+        .SetPosition(TimeSpan::from(std::time::Duration::from_millis(
+            position_ms,
+        )))?;
     smtc.controls
         .UpdateTimelineProperties(&smtc.timeline_properties)?;
     Ok(())
@@ -290,7 +296,8 @@ fn apply_metadata(smtc: &mut SmtcState, metadata: ResolvedMetadata) -> Result<()
     if let Some(duration_ms) = metadata.duration_ms {
         let duration = std::time::Duration::from_millis(duration_ms);
         smtc.timeline_properties.SetStartTime(TimeSpan::default())?;
-        smtc.timeline_properties.SetMinSeekTime(TimeSpan::default())?;
+        smtc.timeline_properties
+            .SetMinSeekTime(TimeSpan::default())?;
         smtc.timeline_properties
             .SetEndTime(TimeSpan::from(duration))?;
         smtc.timeline_properties

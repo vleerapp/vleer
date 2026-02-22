@@ -1,6 +1,6 @@
 use super::{PlaybackState, ResolvedMetadata};
 use crate::media::playback::PlaybackCommand;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use image::ImageFormat;
 use mpris_server::{Metadata, PlaybackStatus, Player, Time, TrackId};
 use std::cell::Cell;
@@ -170,8 +170,10 @@ fn run_mpris(
                         .and_then(|id| TrackId::try_from(id).ok())
                         .unwrap_or(TrackId::NO_TRACK);
 
-                    let art_url = artwork_cache
-                        .resolve(metadata.artwork_id.as_deref(), metadata.artwork_data.as_deref())?;
+                    let art_url = artwork_cache.resolve(
+                        metadata.artwork_id.as_deref(),
+                        metadata.artwork_data.as_deref(),
+                    )?;
 
                     let mut builder = Metadata::builder().trackid(track_id);
 

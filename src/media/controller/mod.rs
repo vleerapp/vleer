@@ -135,7 +135,10 @@ impl MediaController {
     pub fn set_window_handle(&self, window: &Window) {
         if let Ok(handle) = HasWindowHandle::window_handle(window) {
             if let RawWindowHandle::Win32(handle) = handle.as_raw() {
-                self.inner.platform.set_window_handle(handle.hwnd.get()).ok();
+                self.inner
+                    .platform
+                    .set_window_handle(handle.hwnd.get())
+                    .ok();
             }
         }
     }

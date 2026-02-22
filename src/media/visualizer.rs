@@ -1,6 +1,6 @@
 use rodio::Source;
 use spectrum_analyzer::scaling::divide_by_N_sqrt;
-use spectrum_analyzer::{samples_fft_to_spectrum, FrequencyLimit};
+use spectrum_analyzer::{FrequencyLimit, samples_fft_to_spectrum};
 use std::sync::{Arc, Mutex};
 
 pub trait ToF32 {
