@@ -5,17 +5,31 @@ use crate::data::{
 use sqlx::SqlitePool;
 
 pub async fn get_song(pool: &SqlitePool, id: Cuid) -> sqlx::Result<Option<SongRow>> {
-    sqlx::query_as::<_, SongRow>("SELECT * FROM songs WHERE id = ?")
-        .bind(id)
-        .fetch_optional(pool)
-        .await
+    sqlx::query_as::<_, SongRow>(
+        r#"
+        SELECT s.*, ar.name AS artist_name
+        FROM songs s
+        LEFT JOIN artists ar ON s.artist_id = ar.id
+        WHERE s.id = ?
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
 }
 
 pub async fn get_song_by_path(pool: &SqlitePool, file_path: &str) -> sqlx::Result<Option<SongRow>> {
-    sqlx::query_as::<_, SongRow>("SELECT * FROM songs WHERE file_path = ?")
-        .bind(file_path)
-        .fetch_optional(pool)
-        .await
+    sqlx::query_as::<_, SongRow>(
+        r#"
+        SELECT s.*, ar.name AS artist_name
+        FROM songs s
+        LEFT JOIN artists ar ON s.artist_id = ar.id
+        WHERE s.file_path = ?
+        "#,
+    )
+    .bind(file_path)
+    .fetch_optional(pool)
+    .await
 }
 
 pub async fn upsert_song(
@@ -110,11 +124,19 @@ pub async fn get_songs_paged(
     offset: i64,
     limit: i64,
 ) -> sqlx::Result<Vec<SongRow>> {
-    sqlx::query_as::<_, SongRow>("SELECT * FROM songs ORDER BY date_added DESC LIMIT ? OFFSET ?")
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(pool)
-        .await
+    sqlx::query_as::<_, SongRow>(
+        r#"
+        SELECT s.*, ar.name AS artist_name
+        FROM songs s
+        LEFT JOIN artists ar ON s.artist_id = ar.id
+        ORDER BY s.date_added DESC
+        LIMIT ? OFFSET ?
+        "#,
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
 }
 
 pub async fn get_songs_count(pool: &SqlitePool) -> sqlx::Result<i64> {
@@ -330,7 +352,33 @@ pub async fn get_songs_count_filtered(pool: &SqlitePool, query: &str) -> sqlx::R
     Ok(row.0)
 }
 
-fn song_order_clause(sort: SongSort, ascending: bool) -> &'static str {
+fn song_search_relevance_order_clause() -> &'static str {
+    r#"
+    CASE
+        WHEN s.title = ?1 COLLATE NOCASE THEN 400
+        WHEN s.title LIKE ?1 || '%' COLLATE NOCASE THEN 300
+        WHEN EXISTS (
+            SELECT 1
+            FROM artists ar3
+            WHERE
+                ar3.id = s.artist_id
+                AND ar3.name LIKE ?1 || '%' COLLATE NOCASE
+        ) THEN 220
+        WHEN EXISTS (
+            SELECT 1
+            FROM albums al3
+            WHERE
+                al3.id = s.album_id
+                AND al3.title LIKE ?1 || '%' COLLATE NOCASE
+        ) THEN 200
+        ELSE 100
+    END DESC,
+    s.title COLLATE NOCASE ASC,
+    s.id ASC
+    "#
+}
+
+fn song_order_clause(sort: SongSort, ascending: bool, has_query: bool) -> &'static str {
     match sort {
         SongSort::Title => {
             if ascending {
@@ -353,7 +401,13 @@ fn song_order_clause(sort: SongSort, ascending: bool) -> &'static str {
                 "s.duration DESC, s.id ASC"
             }
         }
-        SongSort::Default => "s.date_added DESC, s.id ASC",
+        SongSort::Default => {
+            if has_query {
+                song_search_relevance_order_clause()
+            } else {
+                "s.date_added DESC, s.id ASC"
+            }
+        }
     }
 }
 
@@ -366,9 +420,10 @@ pub async fn get_songs_paged_filtered(
     offset: i64,
 ) -> sqlx::Result<Vec<SongListRow>> {
     let query = query.trim();
-    let order_clause = song_order_clause(sort, ascending);
+    let has_query = !query.is_empty();
+    let order_clause = song_order_clause(sort, ascending, has_query);
 
-    if query.is_empty() {
+    if !has_query {
         let sql = format!(
             r#"
             SELECT
@@ -442,9 +497,10 @@ pub async fn get_song_ids_from_offset_filtered(
     offset: i64,
 ) -> sqlx::Result<Vec<Cuid>> {
     let query = query.trim();
-    let order_clause = song_order_clause(sort, ascending);
+    let has_query = !query.is_empty();
+    let order_clause = song_order_clause(sort, ascending, has_query);
 
-    if query.is_empty() {
+    if !has_query {
         let sql = format!(
             r#"
             SELECT s.id
@@ -464,6 +520,8 @@ pub async fn get_song_ids_from_offset_filtered(
         r#"
         SELECT s.id
         FROM songs s
+        LEFT JOIN artists ar ON s.artist_id = ar.id
+        LEFT JOIN albums al ON s.album_id = al.id
         WHERE
             s.title LIKE '%' || ?1 || '%' COLLATE NOCASE
             OR EXISTS (
@@ -495,10 +553,18 @@ pub async fn get_song_ids_from_offset_filtered(
 }
 
 pub async fn get_album_songs(pool: &SqlitePool, album_id: &Cuid) -> sqlx::Result<Vec<SongRow>> {
-    sqlx::query_as::<_, SongRow>("SELECT * FROM songs WHERE album_id = ? ORDER BY track_number ASC")
-        .bind(album_id)
-        .fetch_all(pool)
-        .await
+    sqlx::query_as::<_, SongRow>(
+        r#"
+        SELECT s.*, ar.name AS artist_name
+        FROM songs s
+        LEFT JOIN artists ar ON s.artist_id = ar.id
+        WHERE s.album_id = ?
+        ORDER BY s.track_number ASC
+        "#,
+    )
+    .bind(album_id)
+    .fetch_all(pool)
+    .await
 }
 
 pub async fn get_artists_count_filtered(pool: &SqlitePool, query: &str) -> sqlx::Result<i64> {
@@ -659,9 +725,11 @@ pub async fn get_playlist_songs(
             pt.id,
             pt.playlist_id,
             pt.position,
-            s.*
+            s.*,
+            ar.name AS artist_name
         FROM playlist_tracks pt
         JOIN songs s ON s.id = pt.song_id
+        LEFT JOIN artists ar ON s.artist_id = ar.id
         WHERE pt.playlist_id = ?
         ORDER BY pt.position ASC
         "#,
