@@ -72,20 +72,18 @@ impl Library {
 
         let search_query = query.clone();
         let db = cx.global::<Database>().clone();
-        let request_seq_copy = request_seq;
         let query_task = cx.spawn(async move |this, cx: &mut AsyncApp| {
             cx.background_executor().timer(SEARCH_QUERY_DEBOUNCE).await;
 
-            let (tx, rx) = std::sync::mpsc::channel();
-            let db = db.clone();
             let query_for_spawn = search_query.clone();
-            crate::RUNTIME.spawn(async move {
-                let result = db.search_library(&query_for_spawn, SEARCH_RESULT_LIMIT).await;
-                let _ = tx.send(result);
-            });
-
-            let results = match rx.recv() {
-                Ok(Ok(r)) => r,
+            let results = match crate::RUNTIME
+                .spawn(async move {
+                    db.search_library(&query_for_spawn, SEARCH_RESULT_LIMIT)
+                        .await
+                })
+                .await
+            {
+                Ok(Ok(results)) => results,
                 _ => Vec::new(),
             };
 
@@ -117,16 +115,12 @@ impl Library {
         let count_task = cx.spawn(async move |this, cx: &mut AsyncApp| {
             cx.background_executor().timer(SEARCH_COUNT_DEBOUNCE).await;
 
-            let (tx, rx) = std::sync::mpsc::channel();
-            let db = db.clone();
             let query_for_spawn = count_query.clone();
-            crate::RUNTIME.spawn(async move {
-                let result = db.get_search_match_counts(&query_for_spawn).await;
-                let _ = tx.send(result);
-            });
-
-            let counts = match rx.recv() {
-                Ok(Ok(c)) => c,
+            let counts = match crate::RUNTIME
+                .spawn(async move { db.get_search_match_counts(&query_for_spawn).await })
+                .await
+            {
+                Ok(Ok(counts)) => counts,
                 _ => (0, 0, 0, 0),
             };
 
@@ -258,23 +252,31 @@ fn pinned_item(
                                 let db = cx.global::<Database>().clone();
 
                                 cx.spawn(async move |cx: &mut AsyncApp| {
-                                    let song_ids = match item_type.as_str() {
-                                        "Album" => db
-                                            .get_album_songs(&id)
-                                            .await
-                                            .unwrap_or_default()
-                                            .into_iter()
-                                            .map(|s| s.id)
-                                            .collect(),
-                                        "Playlist" => db
-                                            .get_playlist_songs(&id)
-                                            .await
-                                            .unwrap_or_default()
-                                            .into_iter()
-                                            .map(|pt| pt.song.id)
-                                            .collect(),
-                                        "Song" => vec![id],
-                                        _ => Vec::new(),
+                                    let song_ids = match crate::RUNTIME
+                                        .spawn(async move {
+                                            match item_type.as_str() {
+                                                "Album" => db
+                                                    .get_album_songs(&id)
+                                                    .await
+                                                    .unwrap_or_default()
+                                                    .into_iter()
+                                                    .map(|s| s.id)
+                                                    .collect(),
+                                                "Playlist" => db
+                                                    .get_playlist_songs(&id)
+                                                    .await
+                                                    .unwrap_or_default()
+                                                    .into_iter()
+                                                    .map(|pt| pt.song.id)
+                                                    .collect(),
+                                                "Song" => vec![id],
+                                                _ => Vec::new(),
+                                            }
+                                        })
+                                        .await
+                                    {
+                                        Ok(song_ids) => song_ids,
+                                        Err(_) => Vec::new(),
                                     };
 
                                     if !song_ids.is_empty() {

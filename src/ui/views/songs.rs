@@ -4,6 +4,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
+use tracing::error;
 
 use crate::{
     data::{
@@ -129,6 +130,13 @@ impl SongPageCache {
         true
     }
 
+    fn clear_count_pending(&mut self, state_version: u64) {
+        if self.state_version != state_version {
+            return;
+        }
+        self.count_pending = false;
+    }
+
     fn get_row(
         &mut self,
         query: &str,
@@ -165,6 +173,13 @@ impl SongPageCache {
         self.pending_pages.remove(&page);
         self.pages.insert(page, entries);
         true
+    }
+
+    fn clear_page_pending(&mut self, state_version: u64, page: usize) {
+        if self.state_version != state_version {
+            return;
+        }
+        self.pending_pages.remove(&page);
     }
 }
 
@@ -237,15 +252,27 @@ impl SongsView {
                     let db = db.clone();
                     let query = query.clone();
                     cx.spawn(async move |cx: &mut AsyncApp| {
-                        let (tx, rx) = std::sync::mpsc::channel();
-                        let db = db.clone();
-                        let query = query.clone();
-                        crate::RUNTIME.spawn(async move {
-                            let result = db.get_songs_paged_filtered(&query, sort, ascending, offset, limit).await;
-                            let _ = tx.send(result);
-                        });
-
-                        let items = rx.recv().ok().and_then(|r| r.ok()).unwrap_or_default();
+                        let items = match crate::RUNTIME
+                            .spawn(async move {
+                                db.get_songs_paged_filtered(&query, sort, ascending, offset, limit)
+                                    .await
+                            })
+                            .await
+                        {
+                            Ok(Ok(items)) => items,
+                            Ok(Err(err)) => {
+                                error!("Failed to fetch songs page 0: {}", err);
+                                let mut cache = cache.lock().expect("song cache lock poisoned");
+                                cache.clear_page_pending(state_version, 0);
+                                return;
+                            }
+                            Err(err) => {
+                                error!("Songs page 0 task failed: {}", err);
+                                let mut cache = cache.lock().expect("song cache lock poisoned");
+                                cache.clear_page_pending(state_version, 0);
+                                return;
+                            }
+                        };
                         let entries = items.into_iter().map(song_entry_from_list_item).collect();
 
                         let should_notify = {
@@ -272,15 +299,24 @@ impl SongsView {
                     let table_ref = table_ref.clone();
                     let db = db.clone();
                     cx.spawn(async move |cx: &mut AsyncApp| {
-                        let (tx, rx) = std::sync::mpsc::channel();
-                        let db = db.clone();
-                        let query = query.clone();
-                        crate::RUNTIME.spawn(async move {
-                            let result = db.get_songs_count_filtered(&query).await;
-                            let _ = tx.send(result);
-                        });
-
-                        let count = rx.recv().ok().and_then(|r| r.ok()).unwrap_or(0);
+                        let count = match crate::RUNTIME
+                            .spawn(async move { db.get_songs_count_filtered(&query).await })
+                            .await
+                        {
+                            Ok(Ok(count)) => count,
+                            Ok(Err(err)) => {
+                                error!("Failed to fetch songs count: {}", err);
+                                let mut cache = cache.lock().expect("song cache lock poisoned");
+                                cache.clear_count_pending(state_version);
+                                return;
+                            }
+                            Err(err) => {
+                                error!("Songs count task failed: {}", err);
+                                let mut cache = cache.lock().expect("song cache lock poisoned");
+                                cache.clear_count_pending(state_version);
+                                return;
+                            }
+                        };
                         let should_notify = {
                             let mut cache = cache.lock().expect("song cache lock poisoned");
                             cache.set_count(state_version, count)
@@ -326,15 +362,27 @@ impl SongsView {
                     let cache = cache.clone();
                     let table_ref = table_ref.clone();
                     cx.spawn(async move |cx: &mut AsyncApp| {
-                        let (tx, rx) = std::sync::mpsc::channel();
-                        let db = db.clone();
-                        let query = query.clone();
-                        crate::RUNTIME.spawn(async move {
-                            let result = db.get_songs_paged_filtered(&query, sort, ascending, offset, limit).await;
-                            let _ = tx.send(result);
-                        });
-
-                        let items = rx.recv().ok().and_then(|r| r.ok()).unwrap_or_default();
+                        let items = match crate::RUNTIME
+                            .spawn(async move {
+                                db.get_songs_paged_filtered(&query, sort, ascending, offset, limit)
+                                    .await
+                            })
+                            .await
+                        {
+                            Ok(Ok(items)) => items,
+                            Ok(Err(err)) => {
+                                error!("Failed to fetch songs page {}: {}", page, err);
+                                let mut cache = cache.lock().expect("song cache lock poisoned");
+                                cache.clear_page_pending(state_version, page);
+                                return;
+                            }
+                            Err(err) => {
+                                error!("Songs page {} task failed: {}", page, err);
+                                let mut cache = cache.lock().expect("song cache lock poisoned");
+                                cache.clear_page_pending(state_version, page);
+                                return;
+                            }
+                        };
                         let entries = items.into_iter().map(song_entry_from_list_item).collect();
 
                         let should_notify = {
@@ -366,15 +414,28 @@ impl SongsView {
             let (sort, ascending) = map_sort(sort);
 
             cx.spawn(async move |cx: &mut AsyncApp| {
-                let (tx, rx) = std::sync::mpsc::channel();
-                let db = db.clone();
-                let query = query.clone();
-                crate::RUNTIME.spawn(async move {
-                    let result = db.get_song_ids_from_offset_filtered(&query, sort, ascending, (index + 1) as i64).await;
-                    let _ = tx.send(result);
-                });
-
-                let song_ids = rx.recv().ok().and_then(|r| r.ok()).unwrap_or_default();
+                let song_ids = match crate::RUNTIME
+                    .spawn(async move {
+                        db.get_song_ids_from_offset_filtered(
+                            &query,
+                            sort,
+                            ascending,
+                            (index + 1) as i64,
+                        )
+                        .await
+                    })
+                    .await
+                {
+                    Ok(Ok(song_ids)) => song_ids,
+                    Ok(Err(err)) => {
+                        error!("Failed to fetch queued song ids: {}", err);
+                        return;
+                    }
+                    Err(err) => {
+                        error!("Queued song ids task failed: {}", err);
+                        return;
+                    }
+                };
 
                 if song_ids.is_empty() {
                     return;
