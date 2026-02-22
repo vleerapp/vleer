@@ -500,7 +500,8 @@ impl Scanner {
 
     pub async fn force_scan(&self, db: &Database) -> Result<ScanStats> {
         let _scan_guard = self.scan_lock.lock().await;
-        self.scan_with_options(db, ScanOptions { force: true }).await
+        self.scan_with_options(db, ScanOptions { force: true })
+            .await
     }
 
     pub async fn process_changed_files(
@@ -640,10 +641,7 @@ impl Scanner {
             pending.extend(changed_paths);
         }
 
-        if self
-            .incremental_worker_running
-            .swap(true, Ordering::AcqRel)
-        {
+        if self.incremental_worker_running.swap(true, Ordering::AcqRel) {
             return;
         }
 
@@ -811,82 +809,82 @@ impl MusicWatcher {
         let mut debouncer = new_debouncer(
             Duration::from_secs(2),
             None,
-            move |result: DebounceEventResult| {
-                match result {
-                    Ok(events) => {
-                        let mut changed_audio_files: Vec<PathBuf> = Vec::new();
-                        let mut removed_files: Vec<PathBuf> = Vec::new();
+            move |result: DebounceEventResult| match result {
+                Ok(events) => {
+                    let mut changed_audio_files: Vec<PathBuf> = Vec::new();
+                    let mut removed_files: Vec<PathBuf> = Vec::new();
 
-                        for event in events {
-                            debug!("File event: {:?} - {:?}", event.kind, event.paths);
+                    for event in events {
+                        debug!("File event: {:?} - {:?}", event.kind, event.paths);
 
-                            if matches!(
-                                event.kind,
-                                EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
-                            ) {
-                                for path in &event.paths {
-                                    if Scanner::is_audio_file(path) {
-                                        if path.exists() {
-                                            changed_audio_files.push(path.clone());
-                                        } else {
-                                            removed_files.push(path.clone());
-                                        }
+                        if matches!(
+                            event.kind,
+                            EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
+                        ) {
+                            for path in &event.paths {
+                                if Scanner::is_audio_file(path) {
+                                    if path.exists() {
+                                        changed_audio_files.push(path.clone());
+                                    } else {
+                                        removed_files.push(path.clone());
                                     }
                                 }
                             }
                         }
-
-                        let removed_files: Vec<PathBuf> = removed_files
-                            .into_iter()
-                            .collect::<HashSet<_>>()
-                            .into_iter()
-                            .collect();
-
-                        for path in removed_files {
-                            let path_str = path.to_string_lossy().to_string();
-                            let db = db_clone.clone();
-                            let tx = tx.clone();
-                            runtime_handle.spawn(async move {
-                                if db.delete_song_by_path(&path_str).await.is_ok() {
-                                    let stats = ScanStats {
-                                        scanned: 0,
-                                        added: 0,
-                                        updated: 0,
-                                        removed: 1,
-                                    };
-                                    let _ = tx.send(stats).await;
-                                } else {
-                                    error!(
-                                        "Failed to remove deleted track {}: (error logged above)",
-                                        path_str
-                                    );
-                                }
-                            });
-                        }
-
-                        let changed_audio_files: Vec<PathBuf> = changed_audio_files
-                            .into_iter()
-                            .collect::<HashSet<_>>()
-                            .into_iter()
-                            .collect();
-
-                        if !changed_audio_files.is_empty() {
-                            info!(
-                                "Detected {} changed audio files, processing incrementally",
-                                changed_audio_files.len()
-                            );
-                            let scanner = scanner_clone.clone();
-                            let db = db_clone.clone();
-                            let tx = tx.clone();
-                            runtime_handle.spawn(async move {
-                                scanner.queue_changed_files(db, tx, changed_audio_files).await;
-                            });
-                        }
                     }
-                    Err(errors) => {
-                        for error in errors {
-                            error!("Filesystem watch error: {:?}", error);
-                        }
+
+                    let removed_files: Vec<PathBuf> = removed_files
+                        .into_iter()
+                        .collect::<HashSet<_>>()
+                        .into_iter()
+                        .collect();
+
+                    for path in removed_files {
+                        let path_str = path.to_string_lossy().to_string();
+                        let db = db_clone.clone();
+                        let tx = tx.clone();
+                        runtime_handle.spawn(async move {
+                            if db.delete_song_by_path(&path_str).await.is_ok() {
+                                let stats = ScanStats {
+                                    scanned: 0,
+                                    added: 0,
+                                    updated: 0,
+                                    removed: 1,
+                                };
+                                let _ = tx.send(stats).await;
+                            } else {
+                                error!(
+                                    "Failed to remove deleted track {}: (error logged above)",
+                                    path_str
+                                );
+                            }
+                        });
+                    }
+
+                    let changed_audio_files: Vec<PathBuf> = changed_audio_files
+                        .into_iter()
+                        .collect::<HashSet<_>>()
+                        .into_iter()
+                        .collect();
+
+                    if !changed_audio_files.is_empty() {
+                        info!(
+                            "Detected {} changed audio files, processing incrementally",
+                            changed_audio_files.len()
+                        );
+                        let scanner = scanner_clone.clone();
+                        let db = db_clone.clone();
+                        let tx = tx.clone();
+                        runtime_handle.spawn(async move {
+                            scanner
+                                .queue_changed_files(db, tx, changed_audio_files)
+                                .await;
+                        });
+                    }
+                }
+                Err(errors) => {
+                    for error in errors {
+                        error!("Filesystem watch error: {:?}", error);
                     }
                 }
             },

@@ -30,7 +30,9 @@ impl DiscordPresence {
             let mut cached_song_info: Option<CachedSongInfo> = None;
 
             loop {
-                cx.background_executor().timer(std::time::Duration::from_secs(2)).await;
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(2))
+                    .await;
 
                 let discord_enabled = cx.update(|app| {
                     app.try_global::<Config>()
@@ -51,7 +53,7 @@ impl DiscordPresence {
 
                 if song_id != cached_song_id {
                     cached_song_id = song_id.clone();
-                    
+
                     if let Some(id) = song_id {
                         let song = match db.get_song(id).await {
                             Ok(Some(s)) => s,

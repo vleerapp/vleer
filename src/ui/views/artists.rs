@@ -161,7 +161,9 @@ impl ArtistsView {
             let db = db.clone();
             let query_for_spawn = query.clone();
             crate::RUNTIME.spawn(async move {
-                let result = db.get_artists_paged_filtered(&query_for_spawn, offset, page_size as i64).await;
+                let result = db
+                    .get_artists_paged_filtered(&query_for_spawn, offset, page_size as i64)
+                    .await;
                 let _ = tx.send(result);
             });
 

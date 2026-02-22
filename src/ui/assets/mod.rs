@@ -16,7 +16,7 @@ pub struct VleerAssetSource {
 
 impl VleerAssetSource {
     pub fn new(pool: Arc<SqlitePool>) -> Self {
-        Self { 
+        Self {
             pool,
             cache: DashMap::new(),
         }
@@ -43,9 +43,9 @@ impl AssetSource for VleerAssetSource {
 }
 
 pub fn get_image(
-    pool: &SqlitePool, 
-    id: &str, 
-    cache: &DashMap<String, Option<Vec<u8>>>
+    pool: &SqlitePool,
+    id: &str,
+    cache: &DashMap<String, Option<Vec<u8>>>,
 ) -> gpui::Result<Option<Cow<'static, [u8]>>> {
     if let Some(cached) = cache.get(id) {
         return Ok(cached.as_ref().map(|v| Cow::Owned(v.clone())));
@@ -69,7 +69,7 @@ pub fn get_image(
 
     let result = row.map(|(image,)| image.clone());
     cache.insert(id.to_string(), result.clone());
-    
+
     Ok(result.map(Cow::Owned))
 }
 

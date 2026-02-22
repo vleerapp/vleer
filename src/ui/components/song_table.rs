@@ -10,6 +10,7 @@ use gpui::{prelude::*, *};
 use rustc_hash::FxHashMap;
 use std::rc::Rc;
 use std::sync::Arc;
+use tracing::debug;
 
 const ANIMATION_FPS: f32 = 60.0;
 
@@ -321,6 +322,7 @@ impl Render for SongTableItem {
                                         let Some(data) = &row_data else {
                                             return;
                                         };
+                                        debug!("Songs play click: song_id={}", data.id);
 
                                         cx.update_global::<Queue, _>(|queue, _cx| {
                                             queue.clear();
