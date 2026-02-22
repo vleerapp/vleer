@@ -5,7 +5,7 @@ use raw_window_handle::RawWindowHandle;
 #[cfg(target_os = "windows")]
 use windows::Win32::Foundation::HWND;
 #[cfg(target_os = "windows")]
-use windows::Win32::UI::WindowsAndMessaging::{ShowWindowAsync, SW_RESTORE};
+use windows::Win32::UI::WindowsAndMessaging::{SW_RESTORE, ShowWindowAsync};
 
 use crate::ui::{
     components::{
