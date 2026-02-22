@@ -1,5 +1,6 @@
 use gpui::{Context, IntoElement, Render, prelude::FluentBuilder, *};
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::time::Duration;
 
 use crate::{
     data::{db::repo::Database, models::AlbumListItem},
@@ -11,40 +12,90 @@ use crate::{
         },
         layout::library::Search,
         variables::Variables,
+        views::{ActiveView, AppView},
     },
 };
 
 const MIN_COVER_SIZE: f32 = 180.0;
 const MAX_COVER_SIZE: f32 = 400.0;
 const GAP_SIZE: f32 = 16.0;
+const ALBUM_QUERY_DEBOUNCE: Duration = Duration::from_millis(180);
 
 pub struct AlbumsView {
     page_size: usize,
     total_count: usize,
     page_cache: FxHashMap<usize, Vec<AlbumListItem>>,
-    page_pending: FxHashSet<usize>,
+    page_pending: FxHashSet<(u64, usize)>,
     last_query: String,
+    query_version: u64,
     container_width: Option<f32>,
     scroll_handle: UniformListScrollHandle,
+    refresh_task: Option<Task<()>>,
 }
 
 impl AlbumsView {
+    fn schedule_query_refresh(&mut self, cx: &mut Context<Self>) {
+        self.refresh_task = None;
+        let task = cx.spawn(async move |this, cx: &mut AsyncApp| {
+            cx.background_executor().timer(ALBUM_QUERY_DEBOUNCE).await;
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    if cx.global::<ActiveView>().0 != AppView::Albums {
+                        return;
+                    }
+
+                    let current_query = cx.global::<Search>().query.trim().to_string();
+                    if current_query != this.last_query {
+                        return;
+                    }
+
+                    this.refresh_query(cx);
+                })
+            })
+            .ok();
+        });
+        self.refresh_task = Some(task);
+    }
+
     pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let initial_query = cx.global::<Search>().query.trim().to_string();
         let mut view = Self {
             page_size: 60,
             total_count: 0,
             page_cache: FxHashMap::default(),
             page_pending: FxHashSet::default(),
-            last_query: String::new(),
+            last_query: initial_query,
+            query_version: 0,
             container_width: None,
             scroll_handle: UniformListScrollHandle::default(),
+            refresh_task: None,
         };
 
-        view.refresh_query(cx);
+        if cx.global::<ActiveView>().0 == AppView::Albums {
+            view.refresh_query(cx);
+        }
 
         cx.observe_global::<Search>(|this, cx| {
-            let query = cx.global::<Search>().query.to_string();
+            if cx.global::<ActiveView>().0 != AppView::Albums {
+                return;
+            }
+
+            let query = cx.global::<Search>().query.trim().to_string();
             if query == this.last_query {
+                return;
+            }
+            this.last_query = query;
+            this.schedule_query_refresh(cx);
+        })
+        .detach();
+
+        cx.observe_global::<ActiveView>(|this, cx| {
+            if cx.global::<ActiveView>().0 != AppView::Albums {
+                return;
+            }
+
+            let query = cx.global::<Search>().query.trim().to_string();
+            if query == this.last_query && !this.page_cache.is_empty() {
                 return;
             }
             this.last_query = query;
@@ -56,6 +107,7 @@ impl AlbumsView {
     }
 
     fn refresh_query(&mut self, cx: &mut Context<Self>) {
+        self.query_version = self.query_version.wrapping_add(1);
         self.page_cache.clear();
         self.page_pending.clear();
         self.total_count = 0;
@@ -63,13 +115,22 @@ impl AlbumsView {
 
         let db = cx.global::<Database>().clone();
         let query = self.last_query.clone();
+        let query_version = self.query_version;
 
         cx.spawn(async move |this, cx: &mut AsyncApp| {
-            let count = db.get_albums_count_filtered(&query).await.unwrap_or(0);
+            let (tx, rx) = std::sync::mpsc::channel();
+            let db = db.clone();
+            let query_for_spawn = query.clone();
+            crate::RUNTIME.spawn(async move {
+                let result = db.get_albums_count_filtered(&query_for_spawn).await;
+                let _ = tx.send(result);
+            });
+
+            let count = rx.recv().ok().and_then(|r| r.ok()).unwrap_or(0);
 
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
-                    if this.last_query != query {
+                    if this.last_query != query || this.query_version != query_version {
                         return;
                     }
                     this.total_count = count;
@@ -82,30 +143,38 @@ impl AlbumsView {
     }
 
     fn ensure_page(&mut self, page: usize, cx: &mut Context<Self>) {
-        if self.page_cache.contains_key(&page) || self.page_pending.contains(&page) {
+        let pending_key = (self.query_version, page);
+        if self.page_cache.contains_key(&page) || self.page_pending.contains(&pending_key) {
             return;
         }
 
-        self.page_pending.insert(page);
+        self.page_pending.insert(pending_key);
 
         let db = cx.global::<Database>().clone();
         let query = self.last_query.clone();
+        let query_version = self.query_version;
         let page_size = self.page_size;
         let offset = (page * page_size) as i64;
 
         cx.spawn(async move |this, cx: &mut AsyncApp| {
-            let albums = db
-                .get_albums_paged_filtered(&query, offset, page_size as i64)
-                .await
-                .unwrap_or_default();
+            let (tx, rx) = std::sync::mpsc::channel();
+            let db = db.clone();
+            let query_for_spawn = query.clone();
+            crate::RUNTIME.spawn(async move {
+                let result = db.get_albums_paged_filtered(&query_for_spawn, offset, page_size as i64).await;
+                let _ = tx.send(result);
+            });
+
+            let albums = rx.recv().ok().and_then(|r| r.ok()).unwrap_or_default();
 
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
-                    if this.last_query != query {
+                    if this.last_query != query || this.query_version != query_version {
+                        this.page_pending.remove(&(query_version, page));
                         return;
                     }
                     this.page_cache.insert(page, albums);
-                    this.page_pending.remove(&page);
+                    this.page_pending.remove(&(query_version, page));
                     cx.notify();
                 })
             })

@@ -18,6 +18,11 @@ use crate::ui::{
 };
 use gpui::prelude::FluentBuilder;
 use gpui::*;
+use std::time::Duration;
+
+const SEARCH_RESULT_LIMIT: i64 = 30;
+const SEARCH_QUERY_DEBOUNCE: Duration = Duration::from_millis(140);
+const SEARCH_COUNT_DEBOUNCE: Duration = Duration::from_millis(180);
 
 #[derive(Default)]
 pub struct Search {
@@ -33,9 +38,113 @@ pub struct Library {
     search_counts: (usize, usize, usize, usize),
     search_pending: bool,
     last_query: String,
+    search_request_seq: u64,
+    search_query_task: Option<Task<()>>,
+    search_count_task: Option<Task<()>>,
 }
 
 impl Library {
+    fn cancel_inflight_search(&mut self) {
+        self.search_query_task = None;
+        self.search_count_task = None;
+    }
+
+    fn on_search_query_changed(&mut self, query: String, cx: &mut Context<Self>) {
+        if query == self.last_query {
+            return;
+        }
+        self.last_query = query.clone();
+        self.cancel_inflight_search();
+
+        if query.is_empty() {
+            self.search_request_seq = self.search_request_seq.wrapping_add(1);
+            self.search_results.clear();
+            self.search_counts = (0, 0, 0, 0);
+            self.search_pending = false;
+            cx.notify();
+            return;
+        }
+
+        self.search_pending = true;
+        self.search_request_seq = self.search_request_seq.wrapping_add(1);
+        let request_seq = self.search_request_seq;
+        cx.notify();
+
+        let search_query = query.clone();
+        let db = cx.global::<Database>().clone();
+        let request_seq_copy = request_seq;
+        let query_task = cx.spawn(async move |this, cx: &mut AsyncApp| {
+            cx.background_executor().timer(SEARCH_QUERY_DEBOUNCE).await;
+
+            let (tx, rx) = std::sync::mpsc::channel();
+            let db = db.clone();
+            let query_for_spawn = search_query.clone();
+            crate::RUNTIME.spawn(async move {
+                let result = db.search_library(&query_for_spawn, SEARCH_RESULT_LIMIT).await;
+                let _ = tx.send(result);
+            });
+
+            let results = match rx.recv() {
+                Ok(Ok(r)) => r,
+                _ => Vec::new(),
+            };
+
+            cx.update(|cx| {
+                this.update(cx, |lib, cx| {
+                    if lib.last_query != search_query || lib.search_request_seq != request_seq {
+                        return;
+                    }
+
+                    lib.search_results = results
+                        .into_iter()
+                        .map(|(id, name, image_id, item_type)| PinnedItem {
+                            id,
+                            name,
+                            image_id,
+                            item_type,
+                        })
+                        .collect();
+                    lib.search_pending = false;
+                    cx.notify();
+                })
+            })
+            .ok();
+        });
+        self.search_query_task = Some(query_task);
+
+        let count_query = query.clone();
+        let db = cx.global::<Database>().clone();
+        let count_task = cx.spawn(async move |this, cx: &mut AsyncApp| {
+            cx.background_executor().timer(SEARCH_COUNT_DEBOUNCE).await;
+
+            let (tx, rx) = std::sync::mpsc::channel();
+            let db = db.clone();
+            let query_for_spawn = count_query.clone();
+            crate::RUNTIME.spawn(async move {
+                let result = db.get_search_match_counts(&query_for_spawn).await;
+                let _ = tx.send(result);
+            });
+
+            let counts = match rx.recv() {
+                Ok(Ok(c)) => c,
+                _ => (0, 0, 0, 0),
+            };
+
+            cx.update(|cx| {
+                this.update(cx, |lib, cx| {
+                    if lib.last_query != count_query || lib.search_request_seq != request_seq {
+                        return;
+                    }
+
+                    lib.search_counts = counts;
+                    cx.notify();
+                })
+            })
+            .ok();
+        });
+        self.search_count_task = Some(count_task);
+    }
+
     pub fn new(cx: &mut Context<Self>) -> Self {
         let search_input =
             cx.new(|cx| TextInput::new(cx, "Search Library").with_icon(icons::SEARCH));
@@ -55,65 +164,22 @@ impl Library {
         })
         .detach();
 
-        cx.subscribe(&search_input, |_, _, event: &InputEvent, cx| {
+        cx.subscribe(&search_input, |this, _, event: &InputEvent, cx| {
             let text = match event {
                 InputEvent::Change(text) | InputEvent::Submit(text) => text,
             };
+            let query = text.trim().to_string();
             cx.update_global::<Search, _>(|s, _cx| {
-                s.query = text.clone().into();
+                s.query = query.clone().into();
             });
+            this.on_search_query_changed(query, cx);
         })
         .detach();
 
         cx.observe_global::<Search>(|this, cx| {
             let query = cx.global::<Search>().query.to_string();
-            if query == this.last_query {
-                return;
-            }
-            this.last_query = query.clone();
-
-            if query.is_empty() {
-                this.search_results.clear();
-                this.search_counts = (0, 0, 0, 0);
-                this.search_pending = false;
-                cx.notify();
-                return;
-            }
-
-            this.search_pending = true;
-            cx.notify();
-
-            let db = cx.global::<Database>().clone();
-            cx.spawn(async move |this, cx: &mut AsyncApp| {
-                let results = db.search_library(&query).await.unwrap_or_default();
-                let counts = db
-                    .get_search_match_counts(&query)
-                    .await
-                    .unwrap_or((0, 0, 0, 0));
-
-                cx.update(|cx| {
-                    this.update(cx, |lib, cx| {
-                        if lib.last_query != query {
-                            return;
-                        }
-
-                        lib.search_results = results
-                            .into_iter()
-                            .map(|(id, name, image_id, item_type)| PinnedItem {
-                                id,
-                                name,
-                                image_id,
-                                item_type,
-                            })
-                            .collect();
-                        lib.search_counts = counts;
-                        lib.search_pending = false;
-                        cx.notify();
-                    })
-                })
-                .ok();
-            })
-            .detach();
+            let query = query.trim().to_string();
+            this.on_search_query_changed(query, cx);
         })
         .detach();
 
@@ -124,6 +190,9 @@ impl Library {
             search_counts: (0, 0, 0, 0),
             search_pending: false,
             last_query: String::new(),
+            search_request_seq: 0,
+            search_query_task: None,
+            search_count_task: None,
         }
     }
 }
@@ -239,7 +308,7 @@ impl Render for Library {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
         let search = cx.global::<Search>();
-        let query = search.query.to_string();
+        let query = search.query.trim().to_string();
         let is_searching = !query.is_empty();
 
         let (s_count, al_count, ar_count, p_count) = if is_searching {

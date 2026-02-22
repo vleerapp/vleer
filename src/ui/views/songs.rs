@@ -1,8 +1,9 @@
 use gpui::*;
-use rustc_hash::FxHashMap;
-use std::cell::RefCell;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::time::Duration;
 
 use crate::{
     data::{
@@ -20,10 +21,12 @@ use crate::{
             },
         },
         layout::library::Search,
+        views::{ActiveView, AppView},
     },
 };
 
 const SONG_PAGE_SIZE: usize = 100;
+const SONG_QUERY_DEBOUNCE: Duration = Duration::from_millis(180);
 
 fn map_sort(sort: Option<TableSort>) -> (SongSort, bool) {
     match sort {
@@ -63,10 +66,13 @@ fn song_entry_from_list_item(item: SongListItem) -> Arc<SongEntry> {
 struct SongPageCache {
     page_size: usize,
     pages: FxHashMap<usize, Vec<Arc<SongEntry>>>,
+    pending_pages: FxHashSet<usize>,
     count: Option<usize>,
+    count_pending: bool,
     last_query: String,
     last_sort: SongSort,
     last_ascending: bool,
+    state_version: u64,
 }
 
 impl SongPageCache {
@@ -74,10 +80,13 @@ impl SongPageCache {
         Self {
             page_size,
             pages: FxHashMap::default(),
+            pending_pages: FxHashSet::default(),
             count: None,
+            count_pending: false,
             last_query: String::new(),
             last_sort: SongSort::Default,
             last_ascending: false,
+            state_version: 0,
         }
     }
 
@@ -87,55 +96,41 @@ impl SongPageCache {
             self.last_sort = sort;
             self.last_ascending = ascending;
             self.pages.clear();
+            self.pending_pages.clear();
             self.count = None;
+            self.count_pending = false;
+            self.state_version = self.state_version.wrapping_add(1);
         }
     }
 
-    fn get_count(&mut self, db: &Database, query: &str, sort: SongSort, ascending: bool) -> usize {
+    fn get_count(&mut self, query: &str, sort: SongSort, ascending: bool) -> usize {
         self.ensure_state(query, sort, ascending);
-
-        if let Some(count) = self.count {
-            return count;
-        }
-
-        let count = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current()
-                .block_on(db.get_songs_count_filtered(query))
-                .unwrap_or(0)
-        });
-
-        self.count = Some(count);
-        count
+        self.count.unwrap_or(0)
     }
 
-    fn ensure_page(
-        &mut self,
-        db: &Database,
-        query: &str,
-        sort: SongSort,
-        ascending: bool,
-        page: usize,
-    ) {
-        if self.pages.contains_key(&page) {
-            return;
+    fn state_version(&self) -> u64 {
+        self.state_version
+    }
+
+    fn should_fetch_count(&mut self) -> bool {
+        if self.count.is_some() || self.count_pending {
+            return false;
         }
+        self.count_pending = true;
+        true
+    }
 
-        let offset = (page * self.page_size) as i64;
-        let limit = self.page_size as i64;
-
-        let items = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current()
-                .block_on(db.get_songs_paged_filtered(query, sort, ascending, offset, limit))
-                .unwrap_or_default()
-        });
-
-        let entries = items.into_iter().map(song_entry_from_list_item).collect();
-        self.pages.insert(page, entries);
+    fn set_count(&mut self, state_version: u64, count: usize) -> bool {
+        if self.state_version != state_version {
+            return false;
+        }
+        self.count = Some(count);
+        self.count_pending = false;
+        true
     }
 
     fn get_row(
         &mut self,
-        db: &Database,
         query: &str,
         sort: SongSort,
         ascending: bool,
@@ -145,53 +140,241 @@ impl SongPageCache {
 
         let page = index / self.page_size;
         let offset = index % self.page_size;
-        self.ensure_page(db, query, sort, ascending, page);
 
         self.pages.get(&page).and_then(|p| p.get(offset)).cloned()
+    }
+
+    fn should_fetch_page(&mut self, page: usize) -> bool {
+        if self.pages.contains_key(&page) || self.pending_pages.contains(&page) {
+            return false;
+        }
+        self.pending_pages.insert(page);
+        true
+    }
+
+    fn page_fetch_params(&self, page: usize) -> (i64, i64) {
+        let offset = (page * self.page_size) as i64;
+        let limit = self.page_size as i64;
+        (offset, limit)
+    }
+
+    fn set_page(&mut self, state_version: u64, page: usize, entries: Vec<Arc<SongEntry>>) -> bool {
+        if self.state_version != state_version {
+            return false;
+        }
+        self.pending_pages.remove(&page);
+        self.pages.insert(page, entries);
+        true
     }
 }
 
 pub struct SongsView {
     table: Entity<SongTable>,
     last_query: String,
+    refresh_task: Option<Task<()>>,
 }
 
 impl SongsView {
+    fn schedule_table_refresh(&mut self, cx: &mut Context<Self>) {
+        self.refresh_task = None;
+        let task = cx.spawn(async move |this, cx: &mut AsyncApp| {
+            cx.background_executor().timer(SONG_QUERY_DEBOUNCE).await;
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    if cx.global::<ActiveView>().0 != AppView::Songs {
+                        return;
+                    }
+
+                    let current_query = cx.global::<Search>().query.trim().to_string();
+                    if current_query != this.last_query {
+                        return;
+                    }
+
+                    let table_handle = this.table.clone();
+                    cx.update_entity(&table_handle, |_table, cx| {
+                        cx.emit(SongTableEvent::NewRows);
+                    });
+                })
+            })
+            .ok();
+        });
+        self.refresh_task = Some(task);
+    }
+
     pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let cache = Rc::new(RefCell::new(SongPageCache::new(SONG_PAGE_SIZE)));
+        let initial_query = cx.global::<Search>().query.trim().to_string();
+        let cache = Arc::new(Mutex::new(SongPageCache::new(SONG_PAGE_SIZE)));
+        let table_ref: Arc<Mutex<Option<Entity<SongTable>>>> = Arc::new(Mutex::new(None));
 
         let get_row_count: GetRowCountHandler = {
             let cache = cache.clone();
+            let table_ref = table_ref.clone();
             Rc::new(move |cx, sort| {
                 let db = cx.global::<Database>().clone();
-                let query = cx.global::<Search>().query.to_string();
+                let query = cx.global::<Search>().query.trim().to_string();
                 let (sort, ascending) = map_sort(sort);
-                cache.borrow_mut().get_count(&db, &query, sort, ascending)
+
+                let (count, should_fetch_count, should_prefetch_page, state_version, offset, limit) = {
+                    let mut cache = cache.lock().expect("song cache lock poisoned");
+                    let count = cache.get_count(&query, sort, ascending);
+                    let should_fetch_count = cache.should_fetch_count();
+                    let should_prefetch_page = cache.should_fetch_page(0);
+                    let state_version = cache.state_version();
+                    let (offset, limit) = cache.page_fetch_params(0);
+                    (
+                        count,
+                        should_fetch_count,
+                        should_prefetch_page,
+                        state_version,
+                        offset,
+                        limit,
+                    )
+                };
+
+                if should_prefetch_page {
+                    let cache = cache.clone();
+                    let table_ref = table_ref.clone();
+                    let db = db.clone();
+                    let query = query.clone();
+                    cx.spawn(async move |cx: &mut AsyncApp| {
+                        let (tx, rx) = std::sync::mpsc::channel();
+                        let db = db.clone();
+                        let query = query.clone();
+                        crate::RUNTIME.spawn(async move {
+                            let result = db.get_songs_paged_filtered(&query, sort, ascending, offset, limit).await;
+                            let _ = tx.send(result);
+                        });
+
+                        let items = rx.recv().ok().and_then(|r| r.ok()).unwrap_or_default();
+                        let entries = items.into_iter().map(song_entry_from_list_item).collect();
+
+                        let should_notify = {
+                            let mut cache = cache.lock().expect("song cache lock poisoned");
+                            cache.set_page(state_version, 0, entries)
+                        };
+
+                        if should_notify {
+                            let table = table_ref.lock().ok().and_then(|guard| (*guard).clone());
+                            if let Some(table) = table {
+                                cx.update(|cx| {
+                                    cx.update_entity(&table, |_table, cx| {
+                                        cx.emit(SongTableEvent::NewRows);
+                                    });
+                                });
+                            }
+                        }
+                    })
+                    .detach();
+                }
+
+                if should_fetch_count {
+                    let cache = cache.clone();
+                    let table_ref = table_ref.clone();
+                    let db = db.clone();
+                    cx.spawn(async move |cx: &mut AsyncApp| {
+                        let (tx, rx) = std::sync::mpsc::channel();
+                        let db = db.clone();
+                        let query = query.clone();
+                        crate::RUNTIME.spawn(async move {
+                            let result = db.get_songs_count_filtered(&query).await;
+                            let _ = tx.send(result);
+                        });
+
+                        let count = rx.recv().ok().and_then(|r| r.ok()).unwrap_or(0);
+                        let should_notify = {
+                            let mut cache = cache.lock().expect("song cache lock poisoned");
+                            cache.set_count(state_version, count)
+                        };
+
+                        if should_notify {
+                            let table = table_ref.lock().ok().and_then(|guard| (*guard).clone());
+                            if let Some(table) = table {
+                                cx.update(|cx| {
+                                    cx.update_entity(&table, |_table, cx| {
+                                        cx.emit(SongTableEvent::NewRows);
+                                    });
+                                });
+                            }
+                        }
+                    })
+                    .detach();
+                }
+
+                count
             })
         };
 
         let get_row_handler: GetRowHandler = {
             let cache = cache.clone();
+            let table_ref = table_ref.clone();
             Rc::new(move |cx, index, sort| {
                 let db = cx.global::<Database>().clone();
-                let query = cx.global::<Search>().query.to_string();
+                let query = cx.global::<Search>().query.trim().to_string();
                 let (sort, ascending) = map_sort(sort);
-                cache
-                    .borrow_mut()
-                    .get_row(&db, &query, sort, ascending, index)
+                let page = index / SONG_PAGE_SIZE;
+
+                let (row, should_fetch, state_version, offset, limit) = {
+                    let mut cache = cache.lock().expect("song cache lock poisoned");
+                    let row = cache.get_row(&query, sort, ascending, index);
+                    let should_fetch = cache.should_fetch_page(page);
+                    let state_version = cache.state_version();
+                    let (offset, limit) = cache.page_fetch_params(page);
+                    (row, should_fetch, state_version, offset, limit)
+                };
+
+                if should_fetch {
+                    let cache = cache.clone();
+                    let table_ref = table_ref.clone();
+                    cx.spawn(async move |cx: &mut AsyncApp| {
+                        let (tx, rx) = std::sync::mpsc::channel();
+                        let db = db.clone();
+                        let query = query.clone();
+                        crate::RUNTIME.spawn(async move {
+                            let result = db.get_songs_paged_filtered(&query, sort, ascending, offset, limit).await;
+                            let _ = tx.send(result);
+                        });
+
+                        let items = rx.recv().ok().and_then(|r| r.ok()).unwrap_or_default();
+                        let entries = items.into_iter().map(song_entry_from_list_item).collect();
+
+                        let should_notify = {
+                            let mut cache = cache.lock().expect("song cache lock poisoned");
+                            cache.set_page(state_version, page, entries)
+                        };
+
+                        if should_notify {
+                            let table = table_ref.lock().ok().and_then(|guard| (*guard).clone());
+                            if let Some(table) = table {
+                                cx.update(|cx| {
+                                    cx.update_entity(&table, |_table, cx| {
+                                        cx.emit(SongTableEvent::NewRows);
+                                    });
+                                });
+                            }
+                        }
+                    })
+                    .detach();
+                }
+
+                row
             })
         };
 
         let queue_handler: QueueHandler = Rc::new(move |cx, current_id, index, sort| {
             let db = cx.global::<Database>().clone();
-            let query = cx.global::<Search>().query.to_string();
+            let query = cx.global::<Search>().query.trim().to_string();
             let (sort, ascending) = map_sort(sort);
 
             cx.spawn(async move |cx: &mut AsyncApp| {
-                let song_ids = db
-                    .get_song_ids_from_offset_filtered(&query, sort, ascending, (index + 1) as i64)
-                    .await
-                    .unwrap_or_default();
+                let (tx, rx) = std::sync::mpsc::channel();
+                let db = db.clone();
+                let query = query.clone();
+                crate::RUNTIME.spawn(async move {
+                    let result = db.get_song_ids_from_offset_filtered(&query, sort, ascending, (index + 1) as i64).await;
+                    let _ = tx.send(result);
+                });
+
+                let song_ids = rx.recv().ok().and_then(|r| r.ok()).unwrap_or_default();
 
                 if song_ids.is_empty() {
                     return;
@@ -222,13 +405,40 @@ impl SongsView {
             Some(queue_handler),
             None,
         );
+        if let Ok(mut guard) = table_ref.lock() {
+            *guard = Some(table.clone());
+        }
+
+        if cx.global::<ActiveView>().0 == AppView::Songs {
+            let table_handle = table.clone();
+            cx.update_entity(&table_handle, |_table, cx| {
+                cx.emit(SongTableEvent::NewRows);
+            });
+        }
 
         cx.observe_global::<Search>(|this, cx| {
-            let q = cx.global::<Search>().query.to_string();
+            if cx.global::<ActiveView>().0 != AppView::Songs {
+                return;
+            }
+
+            let q = cx.global::<Search>().query.trim().to_string();
             if q == this.last_query {
                 return;
             }
             this.last_query = q;
+            this.schedule_table_refresh(cx);
+        })
+        .detach();
+
+        cx.observe_global::<ActiveView>(|this, cx| {
+            if cx.global::<ActiveView>().0 != AppView::Songs {
+                return;
+            }
+
+            let q = cx.global::<Search>().query.trim().to_string();
+            if q != this.last_query {
+                this.last_query = q;
+            }
 
             let table_handle = this.table.clone();
             cx.update_entity(&table_handle, |_table, cx| {
@@ -239,7 +449,8 @@ impl SongsView {
 
         Self {
             table,
-            last_query: String::new(),
+            last_query: initial_query,
+            refresh_task: None,
         }
     }
 }
