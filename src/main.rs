@@ -12,7 +12,6 @@ mod ui;
 static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .worker_threads(1)
         .build()
         .unwrap()
 });

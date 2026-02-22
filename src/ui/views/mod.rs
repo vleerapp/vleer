@@ -42,6 +42,17 @@ impl Default for AppView {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ActiveView(pub AppView);
+
+impl Default for ActiveView {
+    fn default() -> Self {
+        Self(AppView::Home)
+    }
+}
+
+impl Global for ActiveView {}
+
 pub struct ViewRegistry;
 
 impl ViewRegistry {

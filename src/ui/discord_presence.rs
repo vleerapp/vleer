@@ -23,13 +23,14 @@ impl DiscordPresence {
         let _ = client.lock().unwrap().connect();
 
         let client = Arc::clone(&client);
+        let db = cx.global::<Database>().clone();
 
         cx.spawn(async move |cx| {
             let mut cached_song_id: Option<Cuid> = None;
             let mut cached_song_info: Option<CachedSongInfo> = None;
 
             loop {
-                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                cx.background_executor().timer(std::time::Duration::from_secs(2)).await;
 
                 let discord_enabled = cx.update(|app| {
                     app.try_global::<Config>()
@@ -43,39 +44,41 @@ impl DiscordPresence {
                     continue;
                 }
 
-                let song_id =
-                    cx.update(|app| app.try_global::<Queue>().and_then(|q| q.get_current_song_id()));
+                let song_id = cx.update(|app| {
+                    app.try_global::<Queue>()
+                        .and_then(|q| q.get_current_song_id())
+                });
 
                 if song_id != cached_song_id {
                     cached_song_id = song_id.clone();
-                    cached_song_info = song_id.clone().and_then(|id| {
-                        let song = cx.update(|app| {
-                            app.try_global::<Database>().and_then(|db| {
-                                futures::executor::block_on(db.get_song(id.clone()))
-                                    .ok()
-                                    .flatten()
-                            })
-                        })?;
+                    
+                    if let Some(id) = song_id {
+                        let song = match db.get_song(id).await {
+                            Ok(Some(s)) => s,
+                            _ => {
+                                cached_song_info = None;
+                                continue;
+                            }
+                        };
 
-                        let artist_name = cx.update(|app| {
-                            song.artist_id
-                                .as_ref()
-                                .and_then(|artist_id| {
-                                    app.try_global::<Database>().and_then(|db| {
-                                        futures::executor::block_on(db.get_artist(artist_id.clone()))
-                                            .ok()
-                                            .flatten()
-                                    })
-                                })
-                                .map(|artist| artist.name)
-                        });
+                        let artist_name = if let Some(ref artist_id) = song.artist_id {
+                            db.get_artist(artist_id.clone())
+                                .await
+                                .ok()
+                                .flatten()
+                                .map(|a| a.name)
+                        } else {
+                            None
+                        };
 
-                        Some(CachedSongInfo {
+                        cached_song_info = Some(CachedSongInfo {
                             title: song.title,
                             duration: song.duration,
                             artist_name,
-                        })
-                    });
+                        });
+                    } else {
+                        cached_song_info = None;
+                    }
                 }
 
                 let (position, is_paused) = cx.update(|app| {

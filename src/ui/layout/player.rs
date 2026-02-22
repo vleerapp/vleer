@@ -1,7 +1,7 @@
 use gpui::{prelude::FluentBuilder, *};
 
 use crate::{
-    data::{config::Config, db::repo::Database, models::Cuid},
+    data::{config::Config, models::Cuid},
     media::{
         playback::Playback,
         queue::{Queue, RepeatMode},
@@ -36,61 +36,17 @@ impl Render for Player {
         let variables = cx.global::<Variables>();
 
         let current_song = if let Some(song) = cx.global::<Queue>().get_current_song(cx) {
-            if let Some((cached_id, title, artist, cover)) = &self.cached_song_data {
-                if cached_id == &song.id {
-                    Some((title.clone(), artist.clone(), cover.clone()))
-                } else {
-                    let db = cx.global::<Database>();
-                    let data = tokio::task::block_in_place(|| {
-                        tokio::runtime::Handle::current().block_on(async {
-                            let artist_name = if let Some(artist_id) = song.artist_id {
-                                db.get_artist(artist_id)
-                                    .await
-                                    .ok()
-                                    .flatten()
-                                    .map(|a| a.name)
-                                    .unwrap_or_else(|| "Unknown Artist".to_string())
-                            } else {
-                                "Unknown Artist".to_string()
-                            };
-                            let cover_uri = song.image_id.map(|id| format!("!image://{}", id));
-                            (song.title.clone(), artist_name, cover_uri)
-                        })
-                    });
-                    self.cached_song_data = Some((
-                        song.id.clone(),
-                        data.0.clone(),
-                        data.1.clone(),
-                        data.2.clone(),
-                    ));
-                    Some(data)
-                }
-            } else {
-                let db = cx.global::<Database>();
-                let data = tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current().block_on(async {
-                        let artist_name = if let Some(artist_id) = song.artist_id {
-                            db.get_artist(artist_id)
-                                .await
-                                .ok()
-                                .flatten()
-                                .map(|a| a.name)
-                                .unwrap_or_else(|| "Unknown Artist".to_string())
-                        } else {
-                            "Unknown Artist".to_string()
-                        };
-                        let cover_uri = song.image_id.map(|id| format!("!image://{}", id));
-                        (song.title.clone(), artist_name, cover_uri)
-                    })
-                });
-                self.cached_song_data = Some((
-                    song.id.clone(),
-                    data.0.clone(),
-                    data.1.clone(),
-                    data.2.clone(),
-                ));
-                Some(data)
-            }
+            let title = song.title.clone();
+            let cover = song.image_id.map(|id| format!("!image://{}", id));
+            let artist = "Unknown Artist".to_string();
+
+            self.cached_song_data = Some((
+                song.id.clone(),
+                title.clone(),
+                artist.clone(),
+                cover.clone(),
+            ));
+            Some((title, artist, cover))
         } else {
             self.cached_song_data = None;
             None

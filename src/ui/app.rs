@@ -1,9 +1,6 @@
 use anyhow::Ok;
 use gpui::*;
-use sqlx::{
-    SqlitePool,
-    sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous},
-};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use std::{collections::HashMap, fs, sync::Arc};
 use tracing::{debug, error};
 
@@ -26,7 +23,7 @@ use crate::{
             player::Player,
         },
         variables::Variables,
-        views::{AppView, ViewRegistry},
+        views::{ActiveView, AppView, ViewRegistry},
     },
 };
 
@@ -49,6 +46,9 @@ impl MainWindow {
             return;
         }
         self.current_view = view;
+        cx.update_global::<ActiveView, _>(|active, _cx| {
+            active.0 = view;
+        });
         window.refresh();
         cx.notify();
     }
@@ -236,24 +236,48 @@ pub async fn run() -> anyhow::Result<()> {
         )
     })?;
 
+    let db_path = data_dir.join("library.db");
+
     let pool = {
-        let options = SqliteConnectOptions::new()
-            .filename(data_dir.join("library.db"))
+        let connect_options = SqliteConnectOptions::new()
+            .filename(&db_path)
             .optimize_on_close(true, None)
             .synchronous(SqliteSynchronous::Normal)
             .journal_mode(SqliteJournalMode::Wal)
+            .busy_timeout(std::time::Duration::from_secs(30))
             .create_if_missing(true);
 
-        let pool = SqlitePool::connect_with(options).await?;
+        let pool = SqlitePoolOptions::new()
+            .max_connections(20)
+            .min_connections(2)
+            .connect_with(connect_options)
+            .await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
         Arc::new(pool)
     };
 
+    let image_pool = {
+        let connect_options = SqliteConnectOptions::new()
+            .filename(&db_path)
+            .synchronous(SqliteSynchronous::Normal)
+            .journal_mode(SqliteJournalMode::Wal)
+            .busy_timeout(std::time::Duration::from_secs(5))
+            .create_if_missing(false);
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(4)
+            .min_connections(1)
+            .connect_with(connect_options)
+            .await?;
+        Arc::new(pool)
+    };
+
     Application::new()
-        .with_assets(VleerAssetSource::new(pool.clone()))
+        .with_assets(VleerAssetSource::new(image_pool))
         .run(move |cx| {
             cx.set_global(Database { pool: pool.clone() });
             cx.set_global(Search::default());
+            cx.set_global(ActiveView::default());
 
             Config::init(cx, &config_dir).expect("unable to initizalize settings");
             Playback::init(cx).expect("unable to initizalize playback context");
@@ -261,7 +285,6 @@ pub async fn run() -> anyhow::Result<()> {
             Queue::init(cx);
             Variables::init(cx);
             Telemetry::init(cx, data_dir.clone());
-            Scanner::init(cx);
             MediaController::init(cx);
 
             find_fonts(cx)
@@ -311,6 +334,8 @@ pub async fn run() -> anyhow::Result<()> {
                 },
             )
             .unwrap();
+
+            Scanner::init(cx);
         });
 
     Ok(())
