@@ -147,7 +147,16 @@ impl Playback {
         let token = self.load_token;
 
         cx.spawn(async move |cx| {
-            let song = db.get_song(song_id.clone()).await.ok().flatten();
+            let (tx, rx) = std::sync::mpsc::channel();
+            let db = db.clone();
+            let song_id = song_id.clone();
+            crate::RUNTIME.spawn(async move {
+                let result = db.get_song(song_id).await;
+                let _ = tx.send(result);
+            });
+
+            let song = rx.recv().ok().and_then(|r| r.ok()).flatten();
+
             let Some(song) = song else {
                 return;
             };
