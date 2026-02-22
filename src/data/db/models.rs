@@ -184,14 +184,6 @@ pub struct SearchResultRow {
     pub item_type: String,
 }
 
-#[derive(Debug, Clone, sqlx::FromRow)]
-pub struct SearchCountsRow {
-    pub song_count: i64,
-    pub album_count: i64,
-    pub artist_count: i64,
-    pub playlist_count: i64,
-}
-
 #[derive(Debug, Clone, FromRow)]
 pub struct RecentItemRow {
     pub most_recent_date: String,

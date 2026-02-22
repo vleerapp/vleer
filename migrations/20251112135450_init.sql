@@ -103,6 +103,12 @@ CREATE INDEX IF NOT EXISTS idx_playlists_image_id ON playlists(image_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_albums_title_artist ON albums(title, artist_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_songs_file_path_unique ON songs(file_path);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_playlist_tracks_unique ON playlist_tracks(playlist_id, song_id);
+CREATE INDEX IF NOT EXISTS idx_artists_name ON artists(name);
+CREATE INDEX IF NOT EXISTS idx_albums_title ON albums(title);
+CREATE INDEX IF NOT EXISTS idx_songs_title ON songs(title);
+CREATE INDEX IF NOT EXISTS idx_songs_artist_album ON songs(artist_id, album_id);
+CREATE INDEX IF NOT EXISTS idx_playlists_name ON playlists(name);
+CREATE INDEX IF NOT EXISTS idx_songs_date_added ON songs(date_added DESC, id ASC);
 CREATE TRIGGER IF NOT EXISTS delete_album_trigger
 AFTER DELETE ON songs BEGIN
 DELETE FROM albums

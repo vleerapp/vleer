@@ -86,6 +86,25 @@ pub async fn delete_song_by_path(pool: &SqlitePool, file_path: &str) -> sqlx::Re
     Ok(())
 }
 
+pub async fn delete_songs_by_paths(pool: &SqlitePool, file_paths: &[String]) -> sqlx::Result<u64> {
+    if file_paths.is_empty() {
+        return Ok(0);
+    }
+
+    let placeholders = std::iter::repeat_n("?", file_paths.len())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!("DELETE FROM songs WHERE file_path IN ({placeholders})");
+
+    let mut query = sqlx::query(&sql);
+    for path in file_paths {
+        query = query.bind(path);
+    }
+
+    let result = query.execute(pool).await?;
+    Ok(result.rows_affected())
+}
+
 pub async fn get_songs_paged(
     pool: &SqlitePool,
     offset: i64,
@@ -132,20 +151,30 @@ pub async fn get_album(pool: &SqlitePool, id: Cuid) -> sqlx::Result<Option<Album
 }
 
 pub async fn get_albums_count_filtered(pool: &SqlitePool, query: &str) -> sqlx::Result<i64> {
-    let query_lower = query.to_lowercase();
+    let query = query.trim();
+    if query.is_empty() {
+        let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM albums")
+            .fetch_one(pool)
+            .await?;
+        return Ok(row.0);
+    }
 
     let row: (i64,) = sqlx::query_as(
         r#"
-        SELECT COUNT(DISTINCT al.id)
+        SELECT COUNT(*)
         FROM albums al
-        LEFT JOIN artists ar ON al.artist_id = ar.id
         WHERE
-            ?1 = ''
-            OR LOWER(al.title) LIKE '%' || ?1 || '%'
-            OR (ar.id IS NOT NULL AND LOWER(ar.name) LIKE '%' || ?1 || '%')
+            al.title LIKE '%' || ?1 || '%' COLLATE NOCASE
+            OR EXISTS (
+                SELECT 1
+                FROM artists ar
+                WHERE
+                    ar.id = al.artist_id
+                    AND ar.name LIKE '%' || ?1 || '%' COLLATE NOCASE
+            )
         "#,
     )
-    .bind(&query_lower)
+    .bind(query)
     .fetch_one(pool)
     .await?;
 
@@ -158,7 +187,29 @@ pub async fn get_albums_paged_filtered(
     limit: i64,
     offset: i64,
 ) -> sqlx::Result<Vec<AlbumListRow>> {
-    let query_lower = query.to_lowercase();
+    let query = query.trim();
+    if query.is_empty() {
+        return sqlx::query_as::<_, AlbumListRow>(
+            r#"
+            SELECT
+                al.id,
+                al.title,
+                ar.name AS artist_name,
+                al.image_id,
+                MIN(s.date) AS year
+            FROM albums al
+            LEFT JOIN artists ar ON al.artist_id = ar.id
+            LEFT JOIN songs s ON s.album_id = al.id
+            GROUP BY al.id, al.title, ar.name, al.image_id
+            ORDER BY al.title COLLATE NOCASE ASC
+            LIMIT ?1 OFFSET ?2
+            "#,
+        )
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await;
+    }
 
     sqlx::query_as::<_, AlbumListRow>(
         r#"
@@ -172,15 +223,20 @@ pub async fn get_albums_paged_filtered(
         LEFT JOIN artists ar ON al.artist_id = ar.id
         LEFT JOIN songs s ON s.album_id = al.id
         WHERE
-            ?1 = ''
-            OR LOWER(al.title) LIKE '%' || ?1 || '%'
-            OR (ar.id IS NOT NULL AND LOWER(ar.name) LIKE '%' || ?1 || '%')
+            al.title LIKE '%' || ?1 || '%' COLLATE NOCASE
+            OR EXISTS (
+                SELECT 1
+                FROM artists ar2
+                WHERE
+                    ar2.id = al.artist_id
+                    AND ar2.name LIKE '%' || ?1 || '%' COLLATE NOCASE
+            )
         GROUP BY al.id, al.title, ar.name, al.image_id
-        ORDER BY LOWER(al.title) ASC
+        ORDER BY al.title COLLATE NOCASE ASC
         LIMIT ?2 OFFSET ?3
         "#,
     )
-    .bind(&query_lower)
+    .bind(query)
     .bind(limit)
     .bind(offset)
     .fetch_all(pool)
@@ -200,7 +256,7 @@ pub async fn get_albums_with_artist(pool: &SqlitePool) -> sqlx::Result<Vec<Album
         LEFT JOIN artists ar ON al.artist_id = ar.id
         LEFT JOIN songs s ON s.album_id = al.id
         GROUP BY al.id, al.title, ar.name, al.image_id
-        ORDER BY LOWER(al.title) ASC
+        ORDER BY al.title COLLATE NOCASE ASC
         "#,
     )
     .fetch_all(pool)
@@ -217,7 +273,7 @@ pub async fn upsert_album(
         "INSERT INTO albums (id, title, artist_id, image_id)
          VALUES (?, ?, ?, ?)
          ON CONFLICT(title, artist_id) DO UPDATE SET
-            image_id = excluded.image_id
+            image_id = COALESCE(excluded.image_id, albums.image_id)
          RETURNING id",
     )
     .bind(Cuid::new())
@@ -237,22 +293,37 @@ pub async fn delete_album(pool: &SqlitePool, id: &Cuid) -> sqlx::Result<()> {
 }
 
 pub async fn get_songs_count_filtered(pool: &SqlitePool, query: &str) -> sqlx::Result<i64> {
-    let query_lower = query.to_lowercase();
+    let query = query.trim();
+    if query.is_empty() {
+        let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM songs")
+            .fetch_one(pool)
+            .await?;
+        return Ok(row.0);
+    }
 
     let row: (i64,) = sqlx::query_as(
         r#"
-        SELECT COUNT(DISTINCT s.id)
+        SELECT COUNT(*)
         FROM songs s
-        LEFT JOIN artists ar ON s.artist_id = ar.id
-        LEFT JOIN albums al ON s.album_id = al.id
         WHERE
-            ?1 = ''
-            OR LOWER(s.title) LIKE '%' || ?1 || '%'
-            OR (ar.id IS NOT NULL AND LOWER(ar.name) LIKE '%' || ?1 || '%')
-            OR (al.id IS NOT NULL AND LOWER(al.title) LIKE '%' || ?1 || '%')
+            s.title LIKE '%' || ?1 || '%' COLLATE NOCASE
+            OR EXISTS (
+                SELECT 1
+                FROM artists ar
+                WHERE
+                    ar.id = s.artist_id
+                    AND ar.name LIKE '%' || ?1 || '%' COLLATE NOCASE
+            )
+            OR EXISTS (
+                SELECT 1
+                FROM albums al
+                WHERE
+                    al.id = s.album_id
+                    AND al.title LIKE '%' || ?1 || '%' COLLATE NOCASE
+            )
         "#,
     )
-    .bind(&query_lower)
+    .bind(query)
     .fetch_one(pool)
     .await?;
 
@@ -263,16 +334,16 @@ fn song_order_clause(sort: SongSort, ascending: bool) -> &'static str {
     match sort {
         SongSort::Title => {
             if ascending {
-                "LOWER(s.title) ASC, s.id ASC"
+                "s.title COLLATE NOCASE ASC, s.id ASC"
             } else {
-                "LOWER(s.title) DESC, s.id ASC"
+                "s.title COLLATE NOCASE DESC, s.id ASC"
             }
         }
         SongSort::Album => {
             if ascending {
-                "LOWER(COALESCE(al.title, '')) ASC, s.id ASC"
+                "COALESCE(al.title, '') COLLATE NOCASE ASC, s.id ASC"
             } else {
-                "LOWER(COALESCE(al.title, '')) DESC, s.id ASC"
+                "COALESCE(al.title, '') COLLATE NOCASE DESC, s.id ASC"
             }
         }
         SongSort::Duration => {
@@ -294,8 +365,33 @@ pub async fn get_songs_paged_filtered(
     limit: i64,
     offset: i64,
 ) -> sqlx::Result<Vec<SongListRow>> {
-    let query_lower = query.to_lowercase();
+    let query = query.trim();
     let order_clause = song_order_clause(sort, ascending);
+
+    if query.is_empty() {
+        let sql = format!(
+            r#"
+            SELECT
+                s.id,
+                s.title,
+                ar.name AS artist_name,
+                al.title AS album_title,
+                s.duration,
+                s.image_id
+            FROM songs s
+            LEFT JOIN artists ar ON s.artist_id = ar.id
+            LEFT JOIN albums al ON s.album_id = al.id
+            ORDER BY {order_clause}
+            LIMIT ?1 OFFSET ?2
+            "#
+        );
+
+        return sqlx::query_as::<_, SongListRow>(&sql)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool)
+            .await;
+    }
 
     let sql = format!(
         r#"
@@ -310,17 +406,28 @@ pub async fn get_songs_paged_filtered(
         LEFT JOIN artists ar ON s.artist_id = ar.id
         LEFT JOIN albums al ON s.album_id = al.id
         WHERE
-            ?1 = ''
-            OR LOWER(s.title) LIKE '%' || ?1 || '%'
-            OR (ar.id IS NOT NULL AND LOWER(ar.name) LIKE '%' || ?1 || '%')
-            OR (al.id IS NOT NULL AND LOWER(al.title) LIKE '%' || ?1 || '%')
+            s.title LIKE '%' || ?1 || '%' COLLATE NOCASE
+            OR EXISTS (
+                SELECT 1
+                FROM artists ar2
+                WHERE
+                    ar2.id = s.artist_id
+                    AND ar2.name LIKE '%' || ?1 || '%' COLLATE NOCASE
+            )
+            OR EXISTS (
+                SELECT 1
+                FROM albums al2
+                WHERE
+                    al2.id = s.album_id
+                    AND al2.title LIKE '%' || ?1 || '%' COLLATE NOCASE
+            )
         ORDER BY {order_clause}
         LIMIT ?2 OFFSET ?3
         "#
     );
 
     sqlx::query_as::<_, SongListRow>(&sql)
-        .bind(&query_lower)
+        .bind(query)
         .bind(limit)
         .bind(offset)
         .fetch_all(pool)
@@ -334,27 +441,52 @@ pub async fn get_song_ids_from_offset_filtered(
     ascending: bool,
     offset: i64,
 ) -> sqlx::Result<Vec<Cuid>> {
-    let query_lower = query.to_lowercase();
+    let query = query.trim();
     let order_clause = song_order_clause(sort, ascending);
+
+    if query.is_empty() {
+        let sql = format!(
+            r#"
+            SELECT s.id
+            FROM songs s
+            LEFT JOIN artists ar ON s.artist_id = ar.id
+            LEFT JOIN albums al ON s.album_id = al.id
+            ORDER BY {order_clause}
+            LIMIT -1 OFFSET ?1
+            "#
+        );
+
+        let rows: Vec<(Cuid,)> = sqlx::query_as(&sql).bind(offset).fetch_all(pool).await?;
+        return Ok(rows.into_iter().map(|(id,)| id).collect());
+    }
 
     let sql = format!(
         r#"
         SELECT s.id
         FROM songs s
-        LEFT JOIN artists ar ON s.artist_id = ar.id
-        LEFT JOIN albums al ON s.album_id = al.id
         WHERE
-            ?1 = ''
-            OR LOWER(s.title) LIKE '%' || ?1 || '%'
-            OR (ar.id IS NOT NULL AND LOWER(ar.name) LIKE '%' || ?1 || '%')
-            OR (al.id IS NOT NULL AND LOWER(al.title) LIKE '%' || ?1 || '%')
+            s.title LIKE '%' || ?1 || '%' COLLATE NOCASE
+            OR EXISTS (
+                SELECT 1
+                FROM artists ar
+                WHERE
+                    ar.id = s.artist_id
+                    AND ar.name LIKE '%' || ?1 || '%' COLLATE NOCASE
+            )
+            OR EXISTS (
+                SELECT 1
+                FROM albums al
+                WHERE
+                    al.id = s.album_id
+                    AND al.title LIKE '%' || ?1 || '%' COLLATE NOCASE
+            )
         ORDER BY {order_clause}
         LIMIT -1 OFFSET ?2
         "#
     );
 
     let rows: Vec<(Cuid,)> = sqlx::query_as(&sql)
-        .bind(&query_lower)
+        .bind(query)
         .bind(offset)
         .fetch_all(pool)
         .await?;
@@ -370,18 +502,23 @@ pub async fn get_album_songs(pool: &SqlitePool, album_id: &Cuid) -> sqlx::Result
 }
 
 pub async fn get_artists_count_filtered(pool: &SqlitePool, query: &str) -> sqlx::Result<i64> {
-    let query_lower = query.to_lowercase();
+    let query = query.trim();
+    if query.is_empty() {
+        let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM artists")
+            .fetch_one(pool)
+            .await?;
+        return Ok(row.0);
+    }
 
     let row: (i64,) = sqlx::query_as(
         r#"
-        SELECT COUNT(DISTINCT ar.id)
+        SELECT COUNT(*)
         FROM artists ar
         WHERE
-            ?1 = ''
-            OR LOWER(ar.name) LIKE '%' || ?1 || '%'
+            ar.name LIKE '%' || ?1 || '%' COLLATE NOCASE
         "#,
     )
-    .bind(&query_lower)
+    .bind(query)
     .fetch_one(pool)
     .await?;
 
@@ -394,7 +531,24 @@ pub async fn get_artists_paged_filtered(
     limit: i64,
     offset: i64,
 ) -> sqlx::Result<Vec<ArtistListRow>> {
-    let query_lower = query.to_lowercase();
+    let query = query.trim();
+    if query.is_empty() {
+        return sqlx::query_as::<_, ArtistListRow>(
+            r#"
+            SELECT
+                ar.id,
+                ar.name,
+                ar.image_id
+            FROM artists ar
+            ORDER BY ar.name COLLATE NOCASE ASC
+            LIMIT ?1 OFFSET ?2
+            "#,
+        )
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await;
+    }
 
     sqlx::query_as::<_, ArtistListRow>(
         r#"
@@ -404,13 +558,12 @@ pub async fn get_artists_paged_filtered(
             ar.image_id
         FROM artists ar
         WHERE
-            ?1 = ''
-            OR LOWER(ar.name) LIKE '%' || ?1 || '%'
-        ORDER BY LOWER(ar.name) ASC
+            ar.name LIKE '%' || ?1 || '%' COLLATE NOCASE
+        ORDER BY ar.name COLLATE NOCASE ASC
         LIMIT ?2 OFFSET ?3
         "#,
     )
-    .bind(&query_lower)
+    .bind(query)
     .bind(limit)
     .bind(offset)
     .fetch_all(pool)
@@ -679,192 +832,133 @@ pub async fn set_pinned<T: Toggleable>(
     Ok(())
 }
 
-pub async fn search_library(pool: &SqlitePool, query: &str) -> sqlx::Result<Vec<SearchResultRow>> {
-    let query_lower = query.to_lowercase();
-    let query_normalized: String = query_lower
-        .chars()
-        .filter(|c| c.is_alphanumeric() || c.is_whitespace())
-        .collect();
+pub async fn search_library(
+    pool: &SqlitePool,
+    query: &str,
+    limit: i64,
+) -> sqlx::Result<Vec<SearchResultRow>> {
+    let query = query.trim();
+    let per_type_limit = (limit.saturating_mul(2)).max(20);
 
     sqlx::query_as::<_, SearchResultRow>(
         r#"
-        WITH RECURSIVE
+        WITH
         search_params AS (
-            SELECT 
-                ?1 AS original_query,
-                ?2 AS query_lower,
-                ?3 AS query_normalized
-        ),
-        album_song_counts AS (
-            SELECT 
-                album_id,
-                COUNT(*) AS song_count
-            FROM songs
-            WHERE album_id IS NOT NULL
-            GROUP BY album_id
+            SELECT ?1 AS query_text
         ),
         song_matches AS (
-            SELECT DISTINCT
+            SELECT
                 s.id,
                 s.title AS name,
                 s.image_id AS image,
                 'Song' AS item_type,
-                s.title AS original_title,
-                (CASE 
-                    WHEN LOWER(s.title) = sp.query_lower 
-                        OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(s.title), '-', ''), '_', ''), '.', ''), '!', ''), '?', '') = sp.query_normalized 
-                    THEN 1000 
-                    ELSE 0 
-                END) +
-                (CASE 
-                    WHEN LOWER(s.title) LIKE '%' || sp.query_lower || '%' 
-                        OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(s.title), '-', ''), '_', ''), '.', ''), '!', ''), '?', '') LIKE '%' || sp.query_normalized || '%' 
-                    THEN 100 
-                    ELSE 0 
-                END) +
-                (CASE 
-                    WHEN LOWER(s.title) LIKE sp.query_lower || '%' 
-                        OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(s.title), '-', ''), '_', ''), '.', ''), '!', ''), '?', '') LIKE sp.query_normalized || '%' 
-                    THEN 50 
-                    ELSE 0 
-                END) +
-                (CASE 
-                    WHEN LENGTH(s.title) <= 30 
-                    THEN 10 
-                    ELSE 0 
-                END) AS score
+                CASE
+                    WHEN s.title = sp.query_text COLLATE NOCASE THEN 400
+                    WHEN s.title LIKE sp.query_text || '%' COLLATE NOCASE THEN 300
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM artists ar
+                        WHERE
+                            ar.id = s.artist_id
+                            AND ar.name LIKE sp.query_text || '%' COLLATE NOCASE
+                    ) THEN 220
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM albums al
+                        WHERE
+                            al.id = s.album_id
+                            AND al.title LIKE sp.query_text || '%' COLLATE NOCASE
+                    ) THEN 200
+                    ELSE 100
+                END AS score
             FROM songs s
             CROSS JOIN search_params sp
-            LEFT JOIN artists ar ON s.artist_id = ar.id
-            LEFT JOIN albums al ON s.album_id = al.id
-            WHERE 
-                LOWER(s.title) LIKE '%' || sp.query_lower || '%'
-                OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(s.title), '-', ''), '_', ''), '.', ''), '!', ''), '?', '') LIKE '%' || sp.query_normalized || '%'
-                OR (ar.id IS NOT NULL AND (
-                    LOWER(ar.name) LIKE '%' || sp.query_lower || '%'
-                    OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(ar.name), '-', ''), '_', ''), '.', ''), '!', ''), '?', '') LIKE '%' || sp.query_normalized || '%'
-                ))
-                OR (al.id IS NOT NULL AND (
-                    LOWER(al.title) LIKE '%' || sp.query_lower || '%'
-                    OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(al.title), '-', ''), '_', ''), '.', ''), '!', ''), '?', '') LIKE '%' || sp.query_normalized || '%'
-                ))
+            WHERE
+                s.title LIKE '%' || sp.query_text || '%' COLLATE NOCASE
+                OR EXISTS (
+                    SELECT 1
+                    FROM artists ar
+                    WHERE
+                        ar.id = s.artist_id
+                        AND ar.name LIKE '%' || sp.query_text || '%' COLLATE NOCASE
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM albums al
+                    WHERE
+                        al.id = s.album_id
+                        AND al.title LIKE '%' || sp.query_text || '%' COLLATE NOCASE
+                )
+            ORDER BY score DESC, s.title COLLATE NOCASE ASC
+            LIMIT ?2
         ),
         album_matches AS (
-            SELECT DISTINCT
+            SELECT
                 al.id,
                 al.title AS name,
                 al.image_id AS image,
                 'Album' AS item_type,
-                al.title AS original_title,
-                (CASE 
-                    WHEN LOWER(al.title) = sp.query_lower 
-                        OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(al.title), '-', ''), '_', ''), '.', ''), '!', ''), '?', '') = sp.query_normalized 
-                    THEN 1000 
-                    ELSE 0 
-                END) +
-                (CASE 
-                    WHEN LOWER(al.title) LIKE '%' || sp.query_lower || '%' 
-                        OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(al.title), '-', ''), '_', ''), '.', ''), '!', ''), '?', '') LIKE '%' || sp.query_normalized || '%' 
-                    THEN 100 
-                    ELSE 0 
-                END) +
-                (CASE 
-                    WHEN LOWER(al.title) LIKE sp.query_lower || '%' 
-                        OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(al.title), '-', ''), '_', ''), '.', ''), '!', ''), '?', '') LIKE sp.query_normalized || '%' 
-                    THEN 50 
-                    ELSE 0 
-                END) +
-                (CASE 
-                    WHEN LENGTH(al.title) <= 30 
-                    THEN 10 
-                    ELSE 0 
-                END) AS score
+                CASE
+                    WHEN al.title = sp.query_text COLLATE NOCASE THEN 350
+                    WHEN al.title LIKE sp.query_text || '%' COLLATE NOCASE THEN 260
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM artists ar
+                        WHERE
+                            ar.id = al.artist_id
+                            AND ar.name LIKE sp.query_text || '%' COLLATE NOCASE
+                    ) THEN 180
+                    ELSE 90
+                END AS score
             FROM albums al
             CROSS JOIN search_params sp
-            LEFT JOIN artists ar ON al.artist_id = ar.id
-            LEFT JOIN album_song_counts asc ON al.id = asc.album_id
-            WHERE 
-                (asc.song_count IS NULL OR asc.song_count > 1)
-                AND (
-                    LOWER(al.title) LIKE '%' || sp.query_lower || '%'
-                    OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(al.title), '-', ''), '_', ''), '.', ''), '!', ''), '?', '') LIKE '%' || sp.query_normalized || '%'
-                    OR (ar.id IS NOT NULL AND (
-                        LOWER(ar.name) LIKE '%' || sp.query_lower || '%'
-                        OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(ar.name), '-', ''), '_', ''), '.', ''), '!', ''), '?', '') LIKE '%' || sp.query_normalized || '%'
-                    ))
+            WHERE
+                al.title LIKE '%' || sp.query_text || '%' COLLATE NOCASE
+                OR EXISTS (
+                    SELECT 1
+                    FROM artists ar
+                    WHERE
+                        ar.id = al.artist_id
+                        AND ar.name LIKE '%' || sp.query_text || '%' COLLATE NOCASE
                 )
+            ORDER BY score DESC, al.title COLLATE NOCASE ASC
+            LIMIT ?2
         ),
         artist_matches AS (
-            SELECT DISTINCT
+            SELECT
                 ar.id,
                 ar.name AS name,
                 ar.image_id AS image,
                 'Artist' AS item_type,
-                ar.name AS original_title,
-                (CASE 
-                    WHEN LOWER(ar.name) = sp.query_lower 
-                        OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(ar.name), '-', ''), '_', ''), '.', ''), '!', ''), '?', '') = sp.query_normalized 
-                    THEN 1000 
-                    ELSE 0 
-                END) +
-                (CASE 
-                    WHEN LOWER(ar.name) LIKE '%' || sp.query_lower || '%' 
-                        OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(ar.name), '-', ''), '_', ''), '.', ''), '!', ''), '?', '') LIKE '%' || sp.query_normalized || '%' 
-                    THEN 100 
-                    ELSE 0 
-                END) +
-                (CASE 
-                    WHEN LOWER(ar.name) LIKE sp.query_lower || '%' 
-                        OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(ar.name), '-', ''), '_', ''), '.', ''), '!', ''), '?', '') LIKE sp.query_normalized || '%' 
-                    THEN 50 
-                    ELSE 0 
-                END) +
-                (CASE 
-                    WHEN LENGTH(ar.name) <= 30 
-                    THEN 10 
-                    ELSE 0 
-                END) AS score
+                CASE
+                    WHEN ar.name = sp.query_text COLLATE NOCASE THEN 320
+                    WHEN ar.name LIKE sp.query_text || '%' COLLATE NOCASE THEN 250
+                    ELSE 80
+                END AS score
             FROM artists ar
             CROSS JOIN search_params sp
-            WHERE 
-                LOWER(ar.name) LIKE '%' || sp.query_lower || '%'
-                OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(ar.name), '-', ''), '_', ''), '.', ''), '!', ''), '?', '') LIKE '%' || sp.query_normalized || '%'
+            WHERE
+                ar.name LIKE '%' || sp.query_text || '%' COLLATE NOCASE
+            ORDER BY score DESC, ar.name COLLATE NOCASE ASC
+            LIMIT ?2
         ),
         playlist_matches AS (
-            SELECT DISTINCT
+            SELECT
                 p.id,
                 p.name AS name,
                 p.image_id AS image,
                 'Playlist' AS item_type,
-                p.name AS original_title,
-                (CASE 
-                    WHEN LOWER(p.name) = sp.query_lower 
-                        OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(p.name), '-', ''), '_', ''), '.', ''), '!', ''), '?', '') = sp.query_normalized 
-                    THEN 1000 
-                    ELSE 0 
-                END) +
-                (CASE 
-                    WHEN LOWER(p.name) LIKE '%' || sp.query_lower || '%' 
-                        OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(p.name), '-', ''), '_', ''), '.', ''), '!', ''), '?', '') LIKE '%' || sp.query_normalized || '%' 
-                    THEN 100 
-                    ELSE 0 
-                END) +
-                (CASE 
-                    WHEN LOWER(p.name) LIKE sp.query_lower || '%' 
-                        OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(p.name), '-', ''), '_', ''), '.', ''), '!', ''), '?', '') LIKE sp.query_normalized || '%' 
-                    THEN 50 
-                    ELSE 0 
-                END) +
-                (CASE 
-                    WHEN LENGTH(p.name) <= 30 
-                    THEN 10 
-                    ELSE 0 
-                END) AS score
+                CASE
+                    WHEN p.name = sp.query_text COLLATE NOCASE THEN 300
+                    WHEN p.name LIKE sp.query_text || '%' COLLATE NOCASE THEN 240
+                    ELSE 70
+                END AS score
             FROM playlists p
             CROSS JOIN search_params sp
-            WHERE 
-                LOWER(p.name) LIKE '%' || sp.query_lower || '%'
-                OR REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(LOWER(p.name), '-', ''), '_', ''), '.', ''), '!', ''), '?', '') LIKE '%' || sp.query_normalized || '%'
+            WHERE
+                p.name LIKE '%' || sp.query_text || '%' COLLATE NOCASE
+            ORDER BY score DESC, p.name COLLATE NOCASE ASC
+            LIMIT ?2
         ),
         all_matches AS (
             SELECT * FROM song_matches
@@ -881,68 +975,41 @@ pub async fn search_library(pool: &SqlitePool, query: &str) -> sqlx::Result<Vec<
             image,
             item_type
         FROM all_matches
-        GROUP BY LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(name, '-', ''), '_', ''), '.', ''), '!', ''), '?', ''))
         ORDER BY 
-            MAX(score) DESC,
-            LOWER(name) ASC
+            score DESC,
+            name COLLATE NOCASE ASC
+        LIMIT ?3
         "#,
     )
     .bind(query)
-    .bind(&query_lower)
-    .bind(&query_normalized)
+    .bind(per_type_limit)
+    .bind(limit)
     .fetch_all(pool)
     .await
 }
 
-pub async fn get_search_match_counts(
-    pool: &SqlitePool,
-    query: &str,
-) -> sqlx::Result<SearchCountsRow> {
-    let query_lower = query.to_lowercase();
+pub async fn get_playlists_count_filtered(pool: &SqlitePool, query: &str) -> sqlx::Result<i64> {
+    let query = query.trim();
+    if query.is_empty() {
+        let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM playlists")
+            .fetch_one(pool)
+            .await?;
+        return Ok(row.0);
+    }
 
-    sqlx::query_as::<_, SearchCountsRow>(
+    let row: (i64,) = sqlx::query_as(
         r#"
-        WITH search_params AS (
-            SELECT ?1 AS query_lower
-        )
-        SELECT 
-            (
-                SELECT COUNT(DISTINCT s.id)
-                FROM songs s
-                CROSS JOIN search_params sp
-                LEFT JOIN artists ar ON s.artist_id = ar.id
-                LEFT JOIN albums al ON s.album_id = al.id
-                WHERE 
-                    LOWER(s.title) LIKE '%' || sp.query_lower || '%'
-                    OR (ar.id IS NOT NULL AND LOWER(ar.name) LIKE '%' || sp.query_lower || '%')
-                    OR (al.id IS NOT NULL AND LOWER(al.title) LIKE '%' || sp.query_lower || '%')
-            ) AS song_count,
-            (
-                SELECT COUNT(DISTINCT al.id)
-                FROM albums al
-                CROSS JOIN search_params sp
-                LEFT JOIN artists ar ON al.artist_id = ar.id
-                WHERE 
-                    LOWER(al.title) LIKE '%' || sp.query_lower || '%'
-                    OR (ar.id IS NOT NULL AND LOWER(ar.name) LIKE '%' || sp.query_lower || '%')
-            ) AS album_count,
-            (
-                SELECT COUNT(DISTINCT ar.id)
-                FROM artists ar
-                CROSS JOIN search_params sp
-                WHERE LOWER(ar.name) LIKE '%' || sp.query_lower || '%'
-            ) AS artist_count,
-            (
-                SELECT COUNT(DISTINCT p.id)
-                FROM playlists p
-                CROSS JOIN search_params sp
-                WHERE LOWER(p.name) LIKE '%' || sp.query_lower || '%'
-            ) AS playlist_count
+        SELECT COUNT(*)
+        FROM playlists p
+        WHERE
+            p.name LIKE '%' || ?1 || '%' COLLATE NOCASE
         "#,
     )
-    .bind(&query_lower)
+    .bind(query)
     .fetch_one(pool)
-    .await
+    .await?;
+
+    Ok(row.0)
 }
 
 pub async fn upsert_image(pool: &SqlitePool, id: &str, data: &[u8]) -> sqlx::Result<()> {

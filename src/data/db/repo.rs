@@ -69,6 +69,11 @@ impl Database {
         queries::delete_song_by_path(&self.pool, file_path).await
     }
 
+    pub async fn delete_songs_by_paths(&self, file_paths: &[String]) -> sqlx::Result<usize> {
+        let rows_affected = queries::delete_songs_by_paths(&self.pool, file_paths).await?;
+        Ok(rows_affected as usize)
+    }
+
     pub async fn get_songs_count(&self) -> sqlx::Result<i64> {
         queries::get_songs_count(&self.pool).await
     }
@@ -316,8 +321,9 @@ impl Database {
     pub async fn search_library(
         &self,
         query: &str,
+        limit: i64,
     ) -> sqlx::Result<Vec<(Cuid, String, Option<String>, String)>> {
-        let results = queries::search_library(&self.pool, query).await?;
+        let results = queries::search_library(&self.pool, query, limit).await?;
 
         Ok(results
             .into_iter()
@@ -329,13 +335,18 @@ impl Database {
         &self,
         query: &str,
     ) -> sqlx::Result<(usize, usize, usize, usize)> {
-        let counts = queries::get_search_match_counts(&self.pool, query).await?;
+        let (song_count, album_count, artist_count, playlist_count) = tokio::try_join!(
+            queries::get_songs_count_filtered(&self.pool, query),
+            queries::get_albums_count_filtered(&self.pool, query),
+            queries::get_artists_count_filtered(&self.pool, query),
+            queries::get_playlists_count_filtered(&self.pool, query)
+        )?;
 
         Ok((
-            counts.song_count as usize,
-            counts.album_count as usize,
-            counts.artist_count as usize,
-            counts.playlist_count as usize,
+            song_count as usize,
+            album_count as usize,
+            artist_count as usize,
+            playlist_count as usize,
         ))
     }
 
