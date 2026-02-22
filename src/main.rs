@@ -7,6 +7,7 @@ use std::sync::LazyLock;
 
 mod data;
 mod media;
+mod single_instance;
 mod ui;
 
 static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
@@ -18,6 +19,15 @@ static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
+
+    let _instance_guard = match crate::single_instance::try_acquire()? {
+        crate::single_instance::AcquireResult::Acquired(guard) => guard,
+        crate::single_instance::AcquireResult::AlreadyRunning => {
+            tracing::warn!("Another Vleer instance is already running. Exiting.");
+            return Ok(());
+        }
+    };
+
     tracing::info!("Starting application");
 
     crate::ui::app::run()
