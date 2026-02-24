@@ -8,5 +8,6 @@ pub mod progress_bar;
 pub mod scrollbar;
 pub mod slider;
 pub mod song_table;
+pub mod switch;
 pub mod title;
 pub mod window_controls;
