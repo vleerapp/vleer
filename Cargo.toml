@@ -47,9 +47,10 @@ uuid = { version = "1.21.0", features = ["serde", "v4"] }
 souvlaki = "0.8.3"
 spectrum-analyzer = "1.7.0"
 discord-rich-presence = "1.1.0"
-chrono = "0.4.43"
+chrono = "0.4.44"
 base64 = "0.22.1"
 itertools = "0.14.0"
+rand = "0.10.0"
 async-trait = "0.1.89"
 raw-window-handle = "0.6.2"
 

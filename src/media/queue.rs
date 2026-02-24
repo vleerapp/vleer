@@ -3,6 +3,7 @@ use crate::data::{
     models::{Cuid, Song},
 };
 use gpui::{App, Global};
+use rand::seq::{IndexedRandom, SliceRandom};
 use std::cell::RefCell;
 use tracing::debug;
 
@@ -96,14 +97,30 @@ impl Queue {
         *self.current_song.borrow_mut() = Some((song_id, song));
     }
 
-    pub fn advance_next_id(&mut self) -> Option<Cuid> {
+    pub fn next(&mut self) -> Option<Cuid> {
         if self.items.is_empty() {
             return None;
         }
-        match self.repeat_mode {
-            RepeatMode::One => {
+        if self.repeat_mode == RepeatMode::One {
+            return self.get_current_song_id();
+        }
+        if self.shuffle && self.items.len() > 1 {
+            let current = self.current_index;
+            let candidates: Vec<usize> = (0..self.items.len())
+                .filter(|&i| Some(i) != current)
+                .collect();
+            if let Some(&next) = candidates.choose(&mut rand::rng()) {
+                self.current_index = Some(next);
+                *self.current_song.borrow_mut() = None;
+                debug!(
+                    "Shuffle: moved to random song. Index: {:?}",
+                    self.current_index
+                );
                 return self.get_current_song_id();
             }
+        }
+        match self.repeat_mode {
+            RepeatMode::One => unreachable!(),
             RepeatMode::All => {
                 if let Some(idx) = self.current_index {
                     self.current_index = Some((idx + 1) % self.items.len());
@@ -128,14 +145,30 @@ impl Queue {
         self.get_current_song_id()
     }
 
-    pub fn advance_previous_id(&mut self) -> Option<Cuid> {
+    pub fn previous(&mut self) -> Option<Cuid> {
         if self.items.is_empty() {
             return None;
         }
-        match self.repeat_mode {
-            RepeatMode::One => {
+        if self.repeat_mode == RepeatMode::One {
+            return self.get_current_song_id();
+        }
+        if self.shuffle && self.items.len() > 1 {
+            let current = self.current_index;
+            let candidates: Vec<usize> = (0..self.items.len())
+                .filter(|&i| Some(i) != current)
+                .collect();
+            if let Some(&next) = candidates.choose(&mut rand::rng()) {
+                self.current_index = Some(next);
+                *self.current_song.borrow_mut() = None;
+                debug!(
+                    "Shuffle: moved to random song. Index: {:?}",
+                    self.current_index
+                );
                 return self.get_current_song_id();
             }
+        }
+        match self.repeat_mode {
+            RepeatMode::One => unreachable!(),
             RepeatMode::All => {
                 if let Some(idx) = self.current_index {
                     if idx == 0 {
@@ -162,74 +195,6 @@ impl Queue {
         debug!("Moved to previous song. Index: {:?}", self.current_index);
         *self.current_song.borrow_mut() = None;
         self.get_current_song_id()
-    }
-
-    pub fn next(&mut self, cx: &App) -> Option<Song> {
-        if self.items.is_empty() {
-            return None;
-        }
-        match self.repeat_mode {
-            RepeatMode::One => {
-                return self.get_current_song(cx);
-            }
-            RepeatMode::All => {
-                if let Some(idx) = self.current_index {
-                    self.current_index = Some((idx + 1) % self.items.len());
-                } else {
-                    self.current_index = Some(0);
-                }
-            }
-            RepeatMode::Off => {
-                if let Some(idx) = self.current_index {
-                    if idx + 1 < self.items.len() {
-                        self.current_index = Some(idx + 1);
-                    } else {
-                        return None;
-                    }
-                } else {
-                    self.current_index = Some(0);
-                }
-            }
-        }
-        debug!("Moved to next song. Index: {:?}", self.current_index);
-        *self.current_song.borrow_mut() = None;
-        self.get_current_song(cx)
-    }
-
-    pub fn previous(&mut self, cx: &App) -> Option<Song> {
-        if self.items.is_empty() {
-            return None;
-        }
-        match self.repeat_mode {
-            RepeatMode::One => {
-                return self.get_current_song(cx);
-            }
-            RepeatMode::All => {
-                if let Some(idx) = self.current_index {
-                    if idx == 0 {
-                        self.current_index = Some(self.items.len() - 1);
-                    } else {
-                        self.current_index = Some(idx - 1);
-                    }
-                } else {
-                    self.current_index = Some(0);
-                }
-            }
-            RepeatMode::Off => {
-                if let Some(idx) = self.current_index {
-                    if idx > 0 {
-                        self.current_index = Some(idx - 1);
-                    } else {
-                        return None;
-                    }
-                } else {
-                    self.current_index = Some(0);
-                }
-            }
-        }
-        debug!("Moved to previous song. Index: {:?}", self.current_index);
-        *self.current_song.borrow_mut() = None;
-        self.get_current_song(cx)
     }
 
     pub fn set_current_index(&mut self, index: usize, cx: &App) -> Option<Song> {

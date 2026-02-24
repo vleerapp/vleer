@@ -542,14 +542,14 @@ impl Playback {
     }
 
     pub fn next(&mut self, cx: &mut App) {
-        let song_id = cx.update_global::<Queue, _>(|queue, _| queue.advance_next_id());
+        let song_id = cx.update_global::<Queue, _>(|queue, _| queue.next());
         if let Some(song_id) = song_id {
             self.load_song_by_id(cx, song_id);
         }
     }
 
     pub fn previous(&mut self, cx: &mut App) {
-        let song_id = cx.update_global::<Queue, _>(|queue, _| queue.advance_previous_id());
+        let song_id = cx.update_global::<Queue, _>(|queue, _| queue.previous());
         if let Some(song_id) = song_id {
             self.load_song_by_id(cx, song_id);
         }
