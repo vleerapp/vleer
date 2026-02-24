@@ -248,8 +248,8 @@ pub async fn run() -> anyhow::Result<()> {
             .create_if_missing(true);
 
         let pool = SqlitePoolOptions::new()
-            .max_connections(20)
-            .min_connections(2)
+            .max_connections(100)
+            .min_connections(100)
             .connect_with(connect_options)
             .await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
