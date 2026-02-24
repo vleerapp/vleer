@@ -11,23 +11,11 @@ const FADE_OUT_DURATION: f32 = 3.0;
 
 pub trait AxisExt {
     fn is_vertical(&self) -> bool;
-    fn is_horizontal(&self) -> bool;
 }
 impl AxisExt for Axis {
     fn is_vertical(&self) -> bool {
         matches!(self, Axis::Vertical)
     }
-    fn is_horizontal(&self) -> bool {
-        matches!(self, Axis::Horizontal)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ScrollbarShow {
-    #[default]
-    Auto,
-    Hover,
-    Always,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,7 +101,6 @@ struct ScrollbarStateInner {
     last_scroll_offset: Point<Pixels>,
     last_scroll_time: Option<Instant>,
     last_update: Instant,
-    idle_timer_scheduled: bool,
 }
 impl Default for ScrollbarState {
     fn default() -> Self {
@@ -125,7 +112,6 @@ impl Default for ScrollbarState {
             last_scroll_offset: point(px(0.), px(0.)),
             last_scroll_time: None,
             last_update: Instant::now(),
-            idle_timer_scheduled: false,
         })))
     }
 }
@@ -173,19 +159,9 @@ impl ScrollbarStateInner {
         state.last_scroll_time = time;
         state
     }
-    fn with_last_scroll_time(&self, t: Option<Instant>) -> Self {
-        let mut state = *self;
-        state.last_scroll_time = t;
-        state
-    }
     fn with_last_update(&self, t: Instant) -> Self {
         let mut state = *self;
         state.last_update = t;
-        state
-    }
-    fn with_idle_timer_scheduled(&self, scheduled: bool) -> Self {
-        let mut state = *self;
-        state.idle_timer_scheduled = scheduled;
         state
     }
     fn is_scrollbar_visible(&self) -> bool {
@@ -204,7 +180,6 @@ impl ScrollbarStateInner {
 pub struct Scrollbar {
     id: ElementId,
     axis: ScrollbarAxis,
-    show: ScrollbarShow,
     scroll_handle: Rc<dyn ScrollbarHandle>,
     scroll_size: Option<Size<Pixels>>,
     max_fps: usize,
@@ -217,39 +192,18 @@ impl Scrollbar {
         Self {
             id: ElementId::CodeLocation(*caller),
             axis: ScrollbarAxis::Both,
-            show: ScrollbarShow::Auto,
             scroll_handle: Rc::new(scroll_handle.clone()),
             max_fps: 120,
             scroll_size: None,
             width: DEFAULT_WIDTH,
         }
     }
-    #[track_caller]
-    pub fn vertical<H: ScrollbarHandle + Clone>(scroll_handle: &H) -> Self {
-        Self::new(scroll_handle).axis(ScrollbarAxis::Vertical)
-    }
-    #[track_caller]
-    pub fn horizontal<H: ScrollbarHandle + Clone>(scroll_handle: &H) -> Self {
-        Self::new(scroll_handle).axis(ScrollbarAxis::Horizontal)
-    }
     pub fn id(mut self, id: impl Into<ElementId>) -> Self {
         self.id = id.into();
         self
     }
-    pub fn show(mut self, show: ScrollbarShow) -> Self {
-        self.show = show;
-        self
-    }
     pub fn axis(mut self, axis: impl Into<ScrollbarAxis>) -> Self {
         self.axis = axis.into();
-        self
-    }
-    pub fn scroll_size(mut self, size: Size<Pixels>) -> Self {
-        self.scroll_size = Some(size);
-        self
-    }
-    pub fn width(mut self, width: impl Into<Pixels>) -> Self {
-        self.width = width.into();
         self
     }
     fn get_colors(
@@ -620,44 +574,6 @@ impl Element for Scrollbar {
 }
 
 pub trait ScrollableElement: IntoElement + Sized {
-    fn scrollbar<H: ScrollbarHandle + Clone>(
-        self,
-        scroll_handle: &H,
-        axis: impl Into<ScrollbarAxis>,
-    ) -> Div {
-        div()
-            .relative()
-            .size_full()
-            .child(self)
-            .child(ScrollbarLayer {
-                id: "scrollbar_layer".into(),
-                axis: axis.into(),
-                scroll_handle: Rc::new(scroll_handle.clone()),
-            })
-    }
-
-    fn vertical_scrollbar<H: ScrollbarHandle + Clone>(self, scroll_handle: &H) -> Div {
-        self.scrollbar(scroll_handle, ScrollbarAxis::Vertical)
-    }
-
-    fn horizontal_scrollbar<H: ScrollbarHandle + Clone>(self, scroll_handle: &H) -> Div {
-        self.scrollbar(scroll_handle, ScrollbarAxis::Horizontal)
-    }
-
-    fn overflow_scrollbar(self) -> Scrollable<Self>
-    where
-        Self: InteractiveElement + Styled + ParentElement + Element,
-    {
-        Scrollable::new(self, ScrollbarAxis::Both)
-    }
-
-    fn overflow_x_scrollbar(self) -> Scrollable<Self>
-    where
-        Self: InteractiveElement + Styled + ParentElement + Element,
-    {
-        Scrollable::new(self, ScrollbarAxis::Horizontal)
-    }
-
     fn overflow_y_scrollbar(self) -> Scrollable<Self>
     where
         Self: InteractiveElement + Styled + ParentElement + Element,
@@ -765,28 +681,3 @@ where
     }
 }
 
-#[derive(IntoElement)]
-struct ScrollbarLayer<H: ScrollbarHandle + Clone> {
-    id: ElementId,
-    axis: ScrollbarAxis,
-    scroll_handle: Rc<H>,
-}
-
-impl<H> RenderOnce for ScrollbarLayer<H>
-where
-    H: ScrollbarHandle + Clone + 'static,
-{
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        div()
-            .absolute()
-            .top_0()
-            .left_0()
-            .right_0()
-            .bottom_0()
-            .child(
-                Scrollbar::new(self.scroll_handle.as_ref())
-                    .id(self.id)
-                    .axis(self.axis),
-            )
-    }
-}
