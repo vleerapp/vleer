@@ -170,9 +170,26 @@ impl Config {
         }
     }
 
-    pub fn set_volume(&mut self, vol: f32) {
-        self.config.audio.volume = vol;
+    pub fn set(&mut self, f: impl FnOnce(&mut SettingsConfig)) {
+        f(&mut self.config);
+        self.config.audio.volume = self.config.audio.volume.clamp(0.0, 1.0);
+        let scan_paths: Vec<String> = self
+            .config
+            .scan
+            .paths
+            .iter()
+            .filter(|p| !p.is_empty())
+            .cloned()
+            .collect();
+        if !scan_paths.is_empty() {
+            self.config.scan.paths = scan_paths;
+        }
+        Self::validate_equalizer(&mut self.config.equalizer);
         self.save().ok();
+    }
+
+    pub fn set_volume(&mut self, vol: f32) {
+        self.set(|s| s.audio.volume = vol);
     }
 
     pub fn save(&self) -> Result<()> {
