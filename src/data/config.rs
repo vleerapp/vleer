@@ -188,10 +188,6 @@ impl Config {
         self.save().ok();
     }
 
-    pub fn set_volume(&mut self, vol: f32) {
-        self.set(|s| s.audio.volume = vol);
-    }
-
     pub fn save(&self) -> Result<()> {
         debug!("Saving config to {:?}", self.config_path);
 

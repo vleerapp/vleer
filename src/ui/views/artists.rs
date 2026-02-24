@@ -305,7 +305,7 @@ impl Render for ArtistsView {
             flex_row()
                 .id("artists-empty")
                 .w_full()
-                .child("No Data")
+                .child("No Results Found")
                 .text_color(variables.text_secondary)
                 .into_any_element()
         } else {

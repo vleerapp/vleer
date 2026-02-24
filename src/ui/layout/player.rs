@@ -275,7 +275,7 @@ impl Render for Player {
                         });
 
                         cx.update_global::<Config, _>(|config, _cx| {
-                            config.set_volume(value);
+                            config.set(|s| s.audio.volume = value);
                         });
                     }),
             );

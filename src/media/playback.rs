@@ -111,7 +111,7 @@ impl Playback {
 
         debug!("Audio file: {:?}Hz, {:?} channels", sample_rate, channels);
 
-        let mut device = DeviceSinkBuilder::from_default_device()
+        let device = DeviceSinkBuilder::from_default_device()
             .and_then(|b| {
                 b.with_sample_rate(sample_rate)
                     .with_channels(channels)
