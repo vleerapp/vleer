@@ -148,6 +148,9 @@ impl Playback {
         self.load_token = self.load_token.wrapping_add(1);
         let token = self.load_token;
         self.loading = true;
+        self.position = 0.0;
+        self.sink = None;
+        self._device = None;
 
         cx.spawn(async move |cx| {
             let song = match crate::RUNTIME
