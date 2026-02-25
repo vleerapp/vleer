@@ -234,6 +234,10 @@ impl Slider {
             let dash_width = dash_end - x;
 
             if dash_width > px(0.0) {
+                if !render_full && x >= thumb_right {
+                    break;
+                }
+
                 let color = if render_full {
                     if x < thumb_right {
                         track_color
