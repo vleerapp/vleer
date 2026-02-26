@@ -1,5 +1,6 @@
 use crate::data::db::models::{
-    AlbumRow, ArtistRow, ImageRow, PlaylistRow, PlaylistTrackRow, SongRow,
+    AlbumListRow, AlbumRow, ArtistListRow, ArtistRow, EventContextRow, EventRow, ImageRow,
+    PinnedItemRow, PlaylistRow, PlaylistTrackRow, SearchResultRow, SongListRow, SongRow,
 };
 use serde::{Deserialize, Serialize};
 
@@ -83,7 +84,7 @@ pub struct Album {
     pub pinned: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AlbumListItem {
     pub id: Cuid,
     pub title: String,
@@ -92,7 +93,7 @@ pub struct AlbumListItem {
     pub year: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ArtistListItem {
     pub id: Cuid,
     pub name: String,
@@ -167,7 +168,7 @@ pub enum RecentItem {
     },
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PinnedItem {
     pub id: Cuid,
     pub name: String,
@@ -258,5 +259,86 @@ impl From<ImageRow> for Image {
             date_created: row.date_created,
             date_updated: row.date_updated,
         }
+    }
+}
+
+impl From<SongListRow> for SongListItem {
+    fn from(row: SongListRow) -> Self {
+        Self {
+            id: row.id,
+            title: row.title,
+            artist_name: row.artist_name,
+            album_title: row.album_title,
+            duration: row.duration,
+            image_id: row.image_id,
+        }
+    }
+}
+
+impl From<ArtistListRow> for ArtistListItem {
+    fn from(row: ArtistListRow) -> Self {
+        Self {
+            id: row.id,
+            name: row.name,
+            image_id: row.image_id,
+        }
+    }
+}
+
+impl From<AlbumListRow> for AlbumListItem {
+    fn from(row: AlbumListRow) -> Self {
+        Self {
+            id: row.id,
+            title: row.title,
+            artist_name: row.artist_name,
+            image_id: row.image_id,
+            year: row.year,
+        }
+    }
+}
+
+impl From<EventRow> for Event {
+    fn from(row: EventRow) -> Self {
+        Self {
+            id: row.id,
+            event_type: match row.event_type.as_str() {
+                "PLAY" => EventType::Play,
+                "STOP" => EventType::Stop,
+                "PAUSE" => EventType::Pause,
+                "RESUME" => EventType::Resume,
+                _ => panic!("Unknown event type: {}", row.event_type),
+            },
+            context_id: row.context_id,
+            date_created: row.date_created,
+            timestamp: row.timestamp,
+        }
+    }
+}
+
+impl From<EventContextRow> for EventContext {
+    fn from(row: EventContextRow) -> Self {
+        Self {
+            id: row.id,
+            song_id: row.song_id,
+            playlist_id: row.playlist_id,
+            date_created: row.date_created,
+        }
+    }
+}
+
+impl From<PinnedItemRow> for PinnedItem {
+    fn from(row: PinnedItemRow) -> Self {
+        Self {
+            id: row.id,
+            name: row.name,
+            image_id: row.image_id,
+            item_type: row.item_type,
+        }
+    }
+}
+
+impl From<SearchResultRow> for (Cuid, String, Option<String>, String) {
+    fn from(r: SearchResultRow) -> Self {
+        (r.id, r.name, r.image, r.item_type)
     }
 }

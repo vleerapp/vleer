@@ -188,11 +188,8 @@ pub struct SearchResultRow {
 
 #[derive(Debug, Clone, FromRow)]
 pub struct RecentItemRow {
-    pub most_recent_date: String,
     pub song_count: i64,
-    pub first_song_id: Cuid,
     pub first_song_title: String,
-    pub first_artist_id: Option<Cuid>,
     pub image_id: Option<String>,
     pub first_year: Option<String>,
     pub album_id: Option<Cuid>,

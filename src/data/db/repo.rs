@@ -1,7 +1,8 @@
 use crate::data::{
     db::models::*,
     models::{
-        Album, AlbumListItem, Artist, ArtistListItem, Cuid, Event, EventContext, EventType, Image, PinnedItem, Playlist, PlaylistTrack, RecentItem, Song, SongListItem, SongSort
+        Album, AlbumListItem, Artist, ArtistListItem, Cuid, Event, EventContext, EventType, Image,
+        PinnedItem, Playlist, PlaylistTrack, RecentItem, Song, SongListItem, SongSort,
     },
 };
 use gpui::Global;
@@ -14,79 +15,6 @@ pub struct Database {
 }
 
 impl Global for Database {}
-
-fn to_fts_prefix_query(query: &str) -> Option<String> {
-    let terms: Vec<String> = query
-        .split(|c: char| !c.is_alphanumeric() && c != '\'' && c != '_')
-        .filter(|term| !term.is_empty())
-        .map(|term| format!("\"{}\"*", term.replace('"', "\"\"")))
-        .collect();
-
-    if terms.is_empty() {
-        None
-    } else {
-        Some(terms.join(" AND "))
-    }
-}
-
-fn song_order_clause(sort: SongSort, ascending: bool, has_query: bool) -> &'static str {
-    match sort {
-        SongSort::Title => {
-            if ascending {
-                "s.title COLLATE NOCASE ASC, s.id ASC"
-            } else {
-                "s.title COLLATE NOCASE DESC, s.id ASC"
-            }
-        }
-        SongSort::Album => {
-            if ascending {
-                "COALESCE(al.title, '') COLLATE NOCASE ASC, s.id ASC"
-            } else {
-                "COALESCE(al.title, '') COLLATE NOCASE DESC, s.id ASC"
-            }
-        }
-        SongSort::Duration => {
-            if ascending {
-                "s.duration ASC, s.id ASC"
-            } else {
-                "s.duration DESC, s.id ASC"
-            }
-        }
-        SongSort::Default => {
-            if has_query {
-                r#"
-                CASE
-                    WHEN s.title = ?1 COLLATE NOCASE THEN 400
-                    WHEN s.title LIKE ?1 || '%' COLLATE NOCASE THEN 300
-                    WHEN EXISTS (
-                        SELECT 1
-                        FROM artists ar3
-                        WHERE
-                            ar3.id = s.artist_id
-                            AND ar3.name LIKE ?1 || '%' COLLATE NOCASE
-                    ) THEN 220
-                    WHEN EXISTS (
-                        SELECT 1
-                        FROM albums al3
-                        WHERE
-                            al3.id = s.album_id
-                            AND al3.title LIKE ?1 || '%' COLLATE NOCASE
-                    ) THEN 200
-                    ELSE 100
-                END DESC,
-                s.title COLLATE NOCASE ASC,
-                s.id ASC
-                "#
-            } else {
-                "s.date_added DESC, s.id ASC"
-            }
-        }
-    }
-}
-
-fn song_order_clause_fts(sort: SongSort, ascending: bool) -> &'static str {
-    song_order_clause(sort, ascending, true)
-}
 
 impl Database {
     pub async fn get_song(&self, id: Cuid) -> sqlx::Result<Option<Song>> {
@@ -237,7 +165,7 @@ impl Database {
             return Ok(row.0);
         }
 
-        let Some(fts_query) = to_fts_prefix_query(query) else {
+        let Some(fts_query) = to_fts_query(query) else {
             return Ok(0);
         };
 
@@ -269,9 +197,9 @@ impl Database {
     ) -> sqlx::Result<Vec<SongListItem>> {
         let has_query = query.map(|q| !q.trim().is_empty()).unwrap_or(false);
         let order_clause = if has_query {
-            song_order_clause_fts(sort, ascending)
+            song_order(sort, ascending, true)
         } else {
-            song_order_clause(sort, ascending, false)
+            song_order(sort, ascending, false)
         };
 
         if !has_query {
@@ -303,7 +231,7 @@ impl Database {
         }
 
         let query = query.unwrap().trim();
-        let Some(fts_query) = to_fts_prefix_query(query) else {
+        let Some(fts_query) = to_fts_query(query) else {
             return Ok(Vec::new());
         };
 
@@ -349,9 +277,9 @@ impl Database {
         let query = query.trim();
         let has_query = !query.is_empty();
         let order_clause = if has_query {
-            song_order_clause_fts(sort, ascending)
+            song_order(sort, ascending, true)
         } else {
-            song_order_clause(sort, ascending, false)
+            song_order(sort, ascending, false)
         };
 
         if !has_query {
@@ -366,12 +294,14 @@ impl Database {
                 "#
             );
 
-            let rows: Vec<(Cuid,)> =
-                sqlx::query_as(&sql).bind(offset).fetch_all(&*self.pool).await?;
+            let rows: Vec<(Cuid,)> = sqlx::query_as(&sql)
+                .bind(offset)
+                .fetch_all(&*self.pool)
+                .await?;
             return Ok(rows.into_iter().map(|(id,)| id).collect());
         }
 
-        let Some(fts_query) = to_fts_prefix_query(query) else {
+        let Some(fts_query) = to_fts_query(query) else {
             return Ok(Vec::new());
         };
 
@@ -831,15 +761,13 @@ impl Database {
         song_id: &Cuid,
     ) -> sqlx::Result<Vec<EventContext>> {
         Ok(
-            sqlx::query_as::<_, EventContextRow>(
-                "SELECT * FROM event_contexts WHERE song_id = ?",
-            )
-            .bind(song_id)
-            .fetch_all(&*self.pool)
-            .await?
-            .into_iter()
-            .map(Into::into)
-            .collect(),
+            sqlx::query_as::<_, EventContextRow>("SELECT * FROM event_contexts WHERE song_id = ?")
+                .bind(song_id)
+                .fetch_all(&*self.pool)
+                .await?
+                .into_iter()
+                .map(Into::into)
+                .collect(),
         )
     }
 
@@ -847,17 +775,15 @@ impl Database {
         &self,
         playlist_id: &Cuid,
     ) -> sqlx::Result<Vec<EventContext>> {
-        Ok(
-            sqlx::query_as::<_, EventContextRow>(
-                "SELECT * FROM event_contexts WHERE playlist_id = ?",
-            )
-            .bind(playlist_id)
-            .fetch_all(&*self.pool)
-            .await?
-            .into_iter()
-            .map(Into::into)
-            .collect(),
+        Ok(sqlx::query_as::<_, EventContextRow>(
+            "SELECT * FROM event_contexts WHERE playlist_id = ?",
         )
+        .bind(playlist_id)
+        .fetch_all(&*self.pool)
+        .await?
+        .into_iter()
+        .map(Into::into)
+        .collect())
     }
 
     pub async fn set_favorite<T: Toggleable>(&self, id: &Cuid, favorite: bool) -> sqlx::Result<()> {
@@ -894,7 +820,7 @@ impl Database {
             return Ok(Vec::new());
         }
 
-        let Some(fts_query) = to_fts_prefix_query(query) else {
+        let Some(fts_query) = to_fts_query(query) else {
             return Ok(Vec::new());
         };
 
@@ -1178,5 +1104,74 @@ impl Database {
         .into_iter()
         .map(Into::into)
         .collect()
+    }
+}
+
+fn to_fts_query(query: &str) -> Option<String> {
+    let terms: Vec<String> = query
+        .split(|c: char| !c.is_alphanumeric() && c != '\'' && c != '_')
+        .filter(|term| !term.is_empty())
+        .map(|term| format!("\"{}\"*", term.replace('"', "\"\"")))
+        .collect();
+
+    if terms.is_empty() {
+        None
+    } else {
+        Some(terms.join(" AND "))
+    }
+}
+
+fn song_order(sort: SongSort, ascending: bool, has_query: bool) -> &'static str {
+    match sort {
+        SongSort::Title => {
+            if ascending {
+                "s.title COLLATE NOCASE ASC, s.id ASC"
+            } else {
+                "s.title COLLATE NOCASE DESC, s.id ASC"
+            }
+        }
+        SongSort::Album => {
+            if ascending {
+                "COALESCE(al.title, '') COLLATE NOCASE ASC, s.id ASC"
+            } else {
+                "COALESCE(al.title, '') COLLATE NOCASE DESC, s.id ASC"
+            }
+        }
+        SongSort::Duration => {
+            if ascending {
+                "s.duration ASC, s.id ASC"
+            } else {
+                "s.duration DESC, s.id ASC"
+            }
+        }
+        SongSort::Default => {
+            if has_query {
+                r#"
+                CASE
+                    WHEN s.title = ?1 COLLATE NOCASE THEN 400
+                    WHEN s.title LIKE ?1 || '%' COLLATE NOCASE THEN 300
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM artists ar3
+                        WHERE
+                            ar3.id = s.artist_id
+                            AND ar3.name LIKE ?1 || '%' COLLATE NOCASE
+                    ) THEN 220
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM albums al3
+                        WHERE
+                            al3.id = s.album_id
+                            AND al3.title LIKE ?1 || '%' COLLATE NOCASE
+                    ) THEN 200
+                    ELSE 100
+                END DESC,
+                s.title COLLATE NOCASE ASC,
+                s.id ASC
+                "#
+            } else {
+                "s.date_added DESC, s.id ASC"
+            }
+        }
     }
 }
