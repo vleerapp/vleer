@@ -111,7 +111,7 @@ impl Playback {
 
         debug!("Audio file: {:?}Hz, {:?} channels", sample_rate, channels);
 
-        let device = DeviceSinkBuilder::from_default_device()
+        let mut device = DeviceSinkBuilder::from_default_device()
             .and_then(|b| {
                 b.with_sample_rate(sample_rate)
                     .with_channels(channels)
@@ -119,6 +119,7 @@ impl Playback {
             })
             .or_else(|_| DeviceSinkBuilder::open_default_sink())
             .context("Failed to open audio device")?;
+        device.log_on_drop(false);
 
         let sink = Sink::connect_new(device.mixer());
 
