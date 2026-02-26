@@ -17,8 +17,7 @@ CREATE TABLE IF NOT EXISTS songs (
     date_added TEXT DEFAULT (DATETIME('now')),
     date_updated TEXT DEFAULT (DATETIME('now')),
     FOREIGN KEY (artist_id) REFERENCES artists(id) ON DELETE CASCADE,
-    FOREIGN KEY (album_id) REFERENCES albums(id) ON DELETE CASCADE
-    FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE CASCADE
+    FOREIGN KEY (album_id) REFERENCES albums(id) ON DELETE CASCADE FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE CASCADE
 );
 CREATE TABLE IF NOT EXISTS artists (
     id TEXT PRIMARY KEY,
@@ -227,5 +226,113 @@ WHERE id = OLD.image_id
         SELECT 1
         FROM playlists
         WHERE image_id = OLD.image_id
+    );
+END;
+CREATE VIRTUAL TABLE IF NOT EXISTS songs_fts USING fts5(
+    song_id,
+    title,
+    artist_name,
+    album_title
+);
+DELETE FROM songs_fts;
+INSERT INTO songs_fts(song_id, title, artist_name, album_title)
+SELECT s.id,
+    s.title,
+    COALESCE(ar.name, ''),
+    COALESCE(al.title, '')
+FROM songs s
+    LEFT JOIN artists ar ON s.artist_id = ar.id
+    LEFT JOIN albums al ON s.album_id = al.id;
+CREATE TRIGGER IF NOT EXISTS songs_ai
+AFTER
+INSERT ON songs BEGIN
+INSERT INTO songs_fts(song_id, title, artist_name, album_title)
+SELECT NEW.id,
+    NEW.title,
+    COALESCE(
+        (
+            SELECT name
+            FROM artists
+            WHERE id = NEW.artist_id
+        ),
+        ''
+    ),
+    COALESCE(
+        (
+            SELECT title
+            FROM albums
+            WHERE id = NEW.album_id
+        ),
+        ''
+    );
+END;
+CREATE TRIGGER IF NOT EXISTS songs_ad
+AFTER DELETE ON songs BEGIN
+DELETE FROM songs_fts
+WHERE song_id = OLD.id;
+END;
+CREATE TRIGGER IF NOT EXISTS songs_au
+AFTER
+UPDATE ON songs BEGIN
+UPDATE songs_fts
+SET title = NEW.title,
+    artist_name = COALESCE(
+        (
+            SELECT name
+            FROM artists
+            WHERE id = NEW.artist_id
+        ),
+        ''
+    ),
+    album_title = COALESCE(
+        (
+            SELECT title
+            FROM albums
+            WHERE id = NEW.album_id
+        ),
+        ''
+    )
+WHERE song_id = NEW.id;
+END;
+CREATE TRIGGER IF NOT EXISTS artists_au
+AFTER
+UPDATE ON artists BEGIN
+UPDATE songs_fts
+SET artist_name = NEW.name
+WHERE song_id IN (
+        SELECT id
+        FROM songs
+        WHERE artist_id = NEW.id
+    );
+END;
+CREATE TRIGGER IF NOT EXISTS artists_ad
+AFTER DELETE ON artists BEGIN
+UPDATE songs_fts
+SET artist_name = ''
+WHERE song_id IN (
+        SELECT id
+        FROM songs
+        WHERE artist_id = OLD.id
+    );
+END;
+CREATE TRIGGER IF NOT EXISTS albums_au
+AFTER
+UPDATE ON albums BEGIN
+UPDATE songs_fts
+SET album_title = NEW.title
+WHERE song_id IN (
+        SELECT id
+        FROM songs
+        WHERE album_id = NEW.id
+    );
+END;
+CREATE TRIGGER IF NOT EXISTS albums_ad
+AFTER DELETE ON albums BEGIN
+UPDATE songs_fts
+SET album_title = ''
+WHERE song_id IN (
+        SELECT id
+        FROM songs
+        WHERE album_id = OLD.id
     );
 END;
