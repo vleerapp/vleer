@@ -1,5 +1,5 @@
-use gpui::*;
 use gpui::prelude::FluentBuilder;
+use gpui::*;
 use std::time::Duration;
 
 use crate::{
@@ -27,7 +27,9 @@ impl Navbar {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let refresh_task = cx.spawn(async move |this, cx: &mut AsyncApp| {
             loop {
-                cx.background_executor().timer(Duration::from_millis(200)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(200))
+                    .await;
                 if cx
                     .update(|cx| {
                         this.update(cx, |_this, cx| {
@@ -51,7 +53,9 @@ impl NavbarScanProgressBar {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let refresh_task = cx.spawn(async move |this, cx: &mut AsyncApp| {
             loop {
-                cx.background_executor().timer(Duration::from_millis(200)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(200))
+                    .await;
                 if cx
                     .update(|cx| {
                         this.update(cx, |_this, cx| {
@@ -78,7 +82,7 @@ impl Render for Navbar {
             .try_global::<Scanner>()
             .map(|scanner| {
                 let progress = scanner.get_scan_progress();
-                if !progress.active || progress.total == 0 {
+                if !progress.active || progress.total == 0 || progress.current == 0 {
                     return None;
                 }
 
@@ -135,8 +139,13 @@ impl Render for NavbarScanProgressBar {
             })
             .unwrap_or(0.0);
 
-        div().absolute().left_0().bottom_0().h(px(2.0)).when(scan_ratio > 0.0, |this| {
-            this.w(relative(scan_ratio)).bg(variables.accent)
-        })
+        div()
+            .absolute()
+            .left_0()
+            .bottom_0()
+            .h(px(2.0))
+            .when(scan_ratio > 0.0, |this| {
+                this.w(relative(scan_ratio)).bg(variables.accent)
+            })
     }
 }

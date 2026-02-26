@@ -1,9 +1,10 @@
 use gpui::{
-    actions, fill, point, prelude::*, px, relative, rgba, size, App, Bounds, ClipboardItem,
-    ContentMask, Context, CursorStyle, Element, ElementId, ElementInputHandler, Entity,
-    EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, IntoElement,
-    KeyBinding, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
-    Pixels, Point, Render, Rgba, ShapedLine, SharedString, Style, TextRun, UTF16Selection, Window,
+    App, Bounds, ClipboardItem, ContentMask, Context, CursorStyle, Element, ElementId,
+    ElementInputHandler, Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable,
+    GlobalElementId, IntoElement, KeyBinding, LayoutId, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, Render, Rgba, ShapedLine, SharedString,
+    Style, TextRun, UTF16Selection, Window, actions, fill, point, prelude::*, px, relative, rgba,
+    size,
 };
 use std::cell::RefCell;
 use std::ops::Range;
@@ -606,8 +607,14 @@ impl EntityInputHandler for TextInput {
         let origin_x = bounds.left() - self.scroll_offset + x_offset;
         let range = self.range_from_utf16(&range_utf16);
         Some(Bounds::from_corners(
-            point(origin_x + last_layout.x_for_index(range.start), bounds.top()),
-            point(origin_x + last_layout.x_for_index(range.end), bounds.bottom()),
+            point(
+                origin_x + last_layout.x_for_index(range.start),
+                bounds.top(),
+            ),
+            point(
+                origin_x + last_layout.x_for_index(range.end),
+                bounds.bottom(),
+            ),
         ))
     }
 
@@ -620,8 +627,8 @@ impl EntityInputHandler for TextInput {
         let last_bounds = self.last_bounds.as_ref()?;
         let last_layout = self.last_layout.as_ref()?;
         let x_offset = self.horizontal_text_offset(last_bounds.size.width, last_layout.width);
-        let utf8_index =
-            last_layout.index_for_x(point.x - last_bounds.left() + self.scroll_offset - x_offset)?;
+        let utf8_index = last_layout
+            .index_for_x(point.x - last_bounds.left() + self.scroll_offset - x_offset)?;
         Some(self.offset_to_utf16(utf8_index))
     }
 }

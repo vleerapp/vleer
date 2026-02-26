@@ -4,7 +4,7 @@ use crate::media::queue::Queue;
 use crate::ui::components::div::{flex_col, flex_row};
 use crate::ui::components::icons::icon::icon;
 use crate::ui::components::icons::icons::{ARROW_DOWN, ARROW_UP, DURATION, PLAY};
-use crate::ui::components::scrollbar::{Scrollbar, ScrollbarAxis};
+use crate::ui::components::scrollbar::{Scrollbar, ScrollbarAxis, ScrollbarHandle};
 use crate::ui::variables::Variables;
 use gpui::{prelude::*, *};
 use rustc_hash::FxHashMap;
@@ -459,10 +459,14 @@ impl SongTable {
             cx.observe(&sort_method, move |this: &mut SongTable, sort, cx| {
                 let sort_method = *sort.read(cx);
                 let row_count = (this.get_row_count)(cx, sort_method);
+                let should_reset_scroll = row_count < this.row_count;
 
                 this.views.update(cx, |v, _| v.clear());
                 this.render_counter.update(cx, |c, _| *c = 0);
                 this.row_count = row_count;
+                if should_reset_scroll {
+                    this.scroll_handle.set_offset(point(px(0.0), px(0.0)));
+                }
 
                 cx.notify();
             })
@@ -473,10 +477,14 @@ impl SongTable {
                 SongTableEvent::NewRows => {
                     let sort_method = *this.sort_method.read(cx);
                     let row_count = (get_row_count_for_event)(cx, sort_method);
+                    let should_reset_scroll = row_count < this.row_count;
 
                     this.views.update(cx, |v, _| v.clear());
                     this.render_counter.update(cx, |c, _| *c = 0);
                     this.row_count = row_count;
+                    if should_reset_scroll {
+                        this.scroll_handle.set_offset(point(px(0.0), px(0.0)));
+                    }
 
                     cx.notify();
                 }

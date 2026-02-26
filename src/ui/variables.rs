@@ -1,5 +1,6 @@
 use gpui::*;
 
+#[derive(Clone, Copy)]
 pub struct Variables {
     pub background: Rgba,
     pub element: Rgba,
