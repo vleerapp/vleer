@@ -64,7 +64,6 @@ pub struct TableSort {
 #[derive(Clone)]
 pub struct SongEntry {
     pub id: Cuid,
-    pub number: usize,
     pub title: String,
     pub artist: String,
     pub album: String,
@@ -75,7 +74,7 @@ pub struct SongEntry {
 impl SongEntry {
     fn get_column_value(&self, column: SongColumn) -> SharedString {
         match column {
-            SongColumn::Number => self.number.to_string().into(),
+            SongColumn::Number => unreachable!(),
             SongColumn::Title => self.title.clone().into(),
             SongColumn::Album => self.album.clone().into(),
             SongColumn::Duration => self.duration.clone().into(),
@@ -122,13 +121,13 @@ where
 
 #[derive(Clone)]
 pub struct SongTableItem {
-    data: Option<Arc<SongEntry>>,
     on_select: Option<OnSelectHandler>,
+    get_row: GetRowHandler,
     get_queue: Option<QueueHandler>,
     sort_method: Option<TableSort>,
     number_width: f32,
     duration_width: f32,
-    row_number: usize,
+    show_numbers: bool,
     row_index: usize,
     is_animating: bool,
 }
@@ -137,24 +136,22 @@ impl SongTableItem {
     pub fn new(
         cx: &mut App,
         row_index: usize,
-        get_row: &GetRowHandler,
+        get_row: GetRowHandler,
         on_select: Option<OnSelectHandler>,
         get_queue: Option<QueueHandler>,
         sort_method: Option<TableSort>,
         number_width: f32,
         duration_width: f32,
-        row_number: usize,
+        show_numbers: bool,
     ) -> Entity<Self> {
-        let data = get_row(cx, row_index, sort_method);
-
         cx.new(|_| Self {
-            data: data.clone(),
             on_select,
+            get_row,
             get_queue,
             sort_method,
             number_width,
             duration_width,
-            row_number,
+            show_numbers,
             row_index,
             is_animating: false,
         })
@@ -163,15 +160,16 @@ impl SongTableItem {
 
 impl Render for SongTableItem {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let variables = cx.global::<Variables>();
-        let row_data = self.data.clone();
+        let variables = *cx.global::<Variables>();
+        let row_data = (self.get_row)(cx, self.row_index, self.sort_method);
         let row_data_for_select = row_data.clone();
         let on_select = self.on_select.clone();
         let get_queue = self.get_queue.clone();
         let sort_method = self.sort_method.clone();
         let row_index = self.row_index;
 
-        let element_id = ElementId::Name(format!("song-{}", self.row_number).into());
+        let element_id = ElementId::Name(format!("song-{}", self.row_index).into());
+        let show_numbers = self.show_numbers;
 
         let mut row = flex_row()
             .w_full()
@@ -191,7 +189,7 @@ impl Render for SongTableItem {
                 .cursor_pointer()
             });
 
-        if let Some(data) = &self.data {
+        if let Some(data) = &row_data {
             let is_playing = if let Some(current_song) = cx.global::<Queue>().get_current_song(cx) {
                 current_song.id == data.id && cx.global::<Playback>().get_playing()
             } else {
@@ -214,7 +212,9 @@ impl Render for SongTableItem {
                                 let should_continue = view.update(
                                     &mut cx,
                                     |this: &mut SongTableItem, cx: &mut Context<SongTableItem>| {
-                                        let still_playing = if let Some(data) = &this.data {
+                                        let still_playing = if let Some(data) =
+                                            (this.get_row)(cx, this.row_index, this.sort_method)
+                                        {
                                             cx.global::<Queue>()
                                                 .get_current_song(cx)
                                                 .map_or(false, |s| s.id == data.id)
@@ -250,6 +250,9 @@ impl Render for SongTableItem {
             };
 
             for column in SongColumn::ALL {
+                if matches!(column, SongColumn::Number) && !show_numbers {
+                    continue;
+                }
                 let size = column.size(self.number_width, self.duration_width);
                 let mut column_div = div();
 
@@ -383,7 +386,7 @@ impl Render for SongTableItem {
                     )
                 } else {
                     let value = if matches!(column, SongColumn::Number) {
-                        self.row_number.to_string().into()
+                        (self.row_index + 1).to_string().into()
                     } else {
                         data.get_column_value(column)
                     };
@@ -417,6 +420,7 @@ pub struct SongTable {
     get_queue: Option<QueueHandler>,
     number_width: f32,
     duration_width: f32,
+    show_numbers: bool,
     scroll_handle: UniformListScrollHandle,
 }
 
@@ -424,16 +428,13 @@ impl EventEmitter<SongTableEvent> for SongTable {}
 
 fn calculate_column_widths(item_count: usize) -> (f32, f32) {
     const CHAR_WIDTH: f32 = 8.5;
-
     let digit_count = if item_count == 0 {
         1
     } else {
         (item_count as f32).log10().floor() as usize + 1
     };
-
     let number_width = digit_count as f32 * CHAR_WIDTH;
     let duration_width = 6.0 * CHAR_WIDTH;
-
     (number_width, duration_width)
 }
 
@@ -444,6 +445,7 @@ impl SongTable {
         get_row: GetRowHandler,
         get_queue: Option<QueueHandler>,
         on_select: Option<OnSelectHandler>,
+        show_numbers: bool,
     ) -> Entity<Self> {
         cx.new(|cx| {
             let views = cx.new(|_| FxHashMap::default());
@@ -457,30 +459,24 @@ impl SongTable {
             cx.observe(&sort_method, move |this: &mut SongTable, sort, cx| {
                 let sort_method = *sort.read(cx);
                 let row_count = (this.get_row_count)(cx, sort_method);
-                let (number_width, duration_width) = calculate_column_widths(row_count);
 
-                this.views = cx.new(|_| FxHashMap::default());
-                this.render_counter = cx.new(|_| 0);
+                this.views.update(cx, |v, _| v.clear());
+                this.render_counter.update(cx, |c, _| *c = 0);
                 this.row_count = row_count;
-                this.number_width = number_width;
-                this.duration_width = duration_width;
 
                 cx.notify();
             })
             .detach();
 
             let get_row_count_for_event = get_row_count_clone;
-            cx.subscribe(&cx.entity(), move |this, _, event, cx| match event {
+            cx.subscribe_self(move |this, event: &SongTableEvent, cx| match event {
                 SongTableEvent::NewRows => {
                     let sort_method = *this.sort_method.read(cx);
                     let row_count = (get_row_count_for_event)(cx, sort_method);
-                    let (number_width, duration_width) = calculate_column_widths(row_count);
 
-                    this.views = cx.new(|_| FxHashMap::default());
-                    this.render_counter = cx.new(|_| 0);
+                    this.views.update(cx, |v, _| v.clear());
+                    this.render_counter.update(cx, |c, _| *c = 0);
                     this.row_count = row_count;
-                    this.number_width = number_width;
-                    this.duration_width = duration_width;
 
                     cx.notify();
                 }
@@ -498,6 +494,7 @@ impl SongTable {
                 get_queue,
                 number_width,
                 duration_width,
+                show_numbers,
                 scroll_handle: UniformListScrollHandle::default(),
             }
         })
@@ -515,6 +512,7 @@ impl Render for SongTable {
         let get_queue = self.get_queue.clone();
         let number_width = self.number_width;
         let duration_width = self.duration_width;
+        let show_numbers = self.show_numbers;
         let row_count = self.row_count;
 
         let mut header = flex_row()
@@ -528,6 +526,9 @@ impl Render for SongTable {
 
         for (i, column) in SongColumn::ALL.iter().enumerate() {
             let column_id = *column;
+            if matches!(column_id, SongColumn::Number) && !show_numbers {
+                continue;
+            }
             let size = column.size(number_width, duration_width);
             let is_sortable = !matches!(column_id, SongColumn::Number);
 
@@ -617,7 +618,6 @@ impl Render for SongTable {
                                 range
                                     .map(|idx| {
                                         prune_views(&views_model, &render_counter, idx, cx);
-                                        let get_row_clone = get_row.clone();
                                         let get_queue_clone = get_queue.clone();
                                         create_or_retrieve_view(
                                             &views_model,
@@ -626,13 +626,13 @@ impl Render for SongTable {
                                                 SongTableItem::new(
                                                     cx,
                                                     idx,
-                                                    &get_row_clone,
+                                                    get_row.clone(),
                                                     handler.clone(),
                                                     get_queue_clone,
                                                     sort_method,
                                                     number_width,
                                                     duration_width,
-                                                    idx + 1,
+                                                    show_numbers,
                                                 )
                                             },
                                             cx,
