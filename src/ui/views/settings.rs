@@ -3,10 +3,115 @@ use gpui::{Context, Entity, IntoElement, Render, *};
 use crate::data::config::Config;
 use crate::media::playback::Playback;
 use crate::ui::components::div::{flex_col, flex_row};
+use crate::ui::components::icons::icon::icon;
+use crate::ui::components::icons::icons::{PLUS, X};
 use crate::ui::components::input::{InputEvent, TextInput};
 use crate::ui::components::slider::slider;
 use crate::ui::components::switch::Switch;
 use crate::ui::variables::Variables;
+
+#[derive(IntoElement)]
+struct ScanPathsSection;
+
+impl RenderOnce for ScanPathsSection {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let variables = cx.global::<Variables>();
+        let paths = cx.global::<Config>().get().scan.paths.clone();
+
+        flex_col()
+            .gap(px(variables.padding_16))
+            .items_start()
+            .child(
+                flex_col()
+                    .gap(px(variables.padding_8))
+                    .max_w(px(650.0))
+                    .w_full()
+                    .children(paths.into_iter().enumerate().map(move |(i, path)| {
+                        flex_row()
+                            .items_center()
+                            .justify_between()
+                            .w_full()
+                            .p(px(variables.padding_16))
+                            .bg(variables.element)
+                            .child(
+                                div()
+                                    .text_color(variables.text)
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .child(path.clone()),
+                            )
+                            .child(
+                                div()
+                                    .id(SharedString::from(format!("remove-path-{i}")))
+                                    .cursor_pointer()
+                                    .child(
+                                        icon(X)
+                                            .text_color(variables.text_secondary)
+                                            .hover(|s| s.text_color(variables.text)),
+                                    )
+                                    .on_click(move |_event, _window, cx| {
+                                        cx.update_global::<Config, _>(|config, _cx| {
+                                            config.set(|s| {
+                                                s.scan.paths.retain(|p| p != &path);
+                                            });
+                                        });
+                                    }),
+                            )
+                    })),
+            )
+            .child(
+                div()
+                    .id("add-scan-path")
+                    .cursor_pointer()
+                    .group("add-scan-path-btn")
+                    .child(
+                        flex_row()
+                            .items_center()
+                            .gap(px(variables.padding_8))
+                            .child(
+                                div()
+                                    .id("add-scan-path-text")
+                                    .text_color(variables.text_secondary)
+                                    .group_hover("add-scan-path-btn", |s| {
+                                        s.text_color(variables.text)
+                                    })
+                                    .child("Add new path"),
+                            )
+                            .child(icon(PLUS).group_hover("add-scan-path-btn", |s| {
+                                s.text_color(variables.text)
+                            })),
+                    )
+                    .on_click(move |_event, _window, cx| {
+                        let options = PathPromptOptions {
+                            files: false,
+                            directories: true,
+                            multiple: false,
+                            prompt: None,
+                        };
+                        let receiver = cx.prompt_for_paths(options);
+                        cx.spawn(async move |cx| {
+                            if let Ok(Ok(Some(paths))) = receiver.await {
+                                if let Some(path) = paths.into_iter().next() {
+                                    if let Some(path_str) = path.to_str() {
+                                        let path_str = path_str.to_string();
+                                        let _ = cx.update_global::<Config, _>(
+                                            |config: &mut Config, _cx| {
+                                                config.set(|s| {
+                                                    if !s.scan.paths.contains(&path_str) {
+                                                        s.scan.paths.push(path_str);
+                                                    }
+                                                });
+                                            },
+                                        );
+                                    }
+                                }
+                            }
+                        })
+                        .detach();
+                    }),
+            )
+    }
+}
 
 #[derive(IntoElement)]
 struct EqSection {
@@ -357,7 +462,25 @@ impl Render for SettingsView {
                             .text_color(variables.text)
                             .text_xl()
                             .font_weight(FontWeight::BOLD)
-                            .child("Equalizer"),
+                            .child("Audio"),
+                    )
+                    .child(
+                        flex_row()
+                            .gap(px(variables.padding_8))
+                            .child(
+                                Switch::new("normalization-switch", normalization).on_change(
+                                    move |value, _window, cx| {
+                                        cx.update_global::<Config, _>(|config, _cx| {
+                                            config.set(|s| s.audio.normalization = value);
+                                        });
+                                    },
+                                ),
+                            )
+                            .child(
+                                div()
+                                    .text_color(variables.text_secondary)
+                                    .child("Normalization"),
+                            ),
                     )
                     .child(
                         flex_row()
@@ -379,7 +502,11 @@ impl Render for SettingsView {
                                     });
                                 },
                             ))
-                            .child(div().text_color(variables.text_secondary).child("Enabled")),
+                            .child(
+                                div()
+                                    .text_color(variables.text_secondary)
+                                    .child("Equalizer"),
+                            ),
                     )
                     .child(EqSection {
                         gain_inputs: self.gain_inputs.clone(),
@@ -395,26 +522,9 @@ impl Render for SettingsView {
                             .text_color(variables.text)
                             .text_xl()
                             .font_weight(FontWeight::BOLD)
-                            .child("Audio"),
+                            .child("Scan Paths"),
                     )
-                    .child(
-                        flex_row()
-                            .gap(px(variables.padding_8))
-                            .child(
-                                Switch::new("normalization-switch", normalization).on_change(
-                                    move |value, _window, cx| {
-                                        cx.update_global::<Config, _>(|config, _cx| {
-                                            config.set(|s| s.audio.normalization = value);
-                                        });
-                                    },
-                                ),
-                            )
-                            .child(
-                                div()
-                                    .text_color(variables.text_secondary)
-                                    .child("Normalization"),
-                            ),
-                    ),
+                    .child(ScanPathsSection),
             )
     }
 }
