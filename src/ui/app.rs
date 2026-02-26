@@ -20,7 +20,7 @@ use crate::{
         global_actions::register_actions,
         layout::{
             library::{Library, Search},
-            navbar::Navbar,
+            navbar::{Navbar, NavbarScanProgressBar},
             player::Player,
         },
         variables::Variables,
@@ -31,6 +31,7 @@ use crate::{
 pub(crate) struct MainWindow {
     library: Entity<Library>,
     navbar: Entity<Navbar>,
+    navbar_scan_progress: Entity<NavbarScanProgressBar>,
     player: Entity<Player>,
     views: HashMap<AppView, AnyView>,
     current_view: AppView,
@@ -156,11 +157,13 @@ impl Render for MainWindow {
                                         .h(px(48.0))
                                         .w_full()
                                         .flex_shrink_0()
+                                        .relative()
                                         .child(
                                             pane("navbar")
                                                 .title("Navbar")
                                                 .child(self.navbar.clone()),
-                                        ),
+                                        )
+                                        .child(self.navbar_scan_progress.clone()),
                                 )
                                 .child(
                                     div()
@@ -318,7 +321,9 @@ pub async fn run() -> anyhow::Result<()> {
                         Playback::start_monitor(window, cx);
 
                         let library_entity = cx.new(|cx| Library::new(cx));
-                        let navbar_entity = cx.new(|_cx| Navbar::new());
+                        let navbar_entity = cx.new(|cx| Navbar::new(cx));
+                        let navbar_scan_progress_entity =
+                            cx.new(|cx| NavbarScanProgressBar::new(cx));
                         let player_entity = cx.new(|cx| Player::new(cx));
 
                         let views = ViewRegistry::register_all(window, cx);
@@ -326,6 +331,7 @@ pub async fn run() -> anyhow::Result<()> {
                         MainWindow {
                             library: library_entity,
                             navbar: navbar_entity,
+                            navbar_scan_progress: navbar_scan_progress_entity,
                             player: player_entity,
                             views,
                             current_view: AppView::Home,
