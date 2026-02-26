@@ -19,10 +19,20 @@ use crate::ui::{
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use std::time::Duration;
+use tracing::{error, info};
 
-const SEARCH_RESULT_LIMIT: i64 = 30;
-const SEARCH_QUERY_DEBOUNCE: Duration = Duration::from_millis(140);
-const SEARCH_COUNT_DEBOUNCE: Duration = Duration::from_millis(180);
+const SEARCH_RESULT_LIMIT: i64 = 20;
+
+fn run_sync<F, T>(future: F) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        tokio::task::block_in_place(|| handle.block_on(future))
+    } else {
+        crate::RUNTIME.block_on(future)
+    }
+}
 
 #[derive(Default)]
 pub struct Search {
@@ -38,105 +48,56 @@ pub struct Library {
     search_counts: (usize, usize, usize, usize),
     search_pending: bool,
     last_query: String,
-    search_request_seq: u64,
-    search_query_task: Option<Task<()>>,
-    search_count_task: Option<Task<()>>,
+    _search_debounce: Option<Task<()>>,
 }
 
 impl Library {
-    fn cancel_inflight_search(&mut self) {
-        self.search_query_task = None;
-        self.search_count_task = None;
-    }
+    fn run_search_sync(&mut self, query: &str, cx: &mut Context<Self>) {
+        let db = cx.global::<Database>().clone();
+        let results = match run_sync(db.search_library(query, SEARCH_RESULT_LIMIT)) {
+            Ok(results) => results,
+            Err(e) => {
+                error!("library search failed: {}", e);
+                Vec::new()
+            }
+        };
+        let counts = match run_sync(db.get_search_match_counts(query)) {
+            Ok(counts) => counts,
+            Err(e) => {
+                error!("library search counts failed: {}", e);
+                (0, 0, 0, 0)
+            }
+        };
 
-    fn on_search_query_changed(&mut self, query: String, cx: &mut Context<Self>) {
-        if query == self.last_query {
-            return;
-        }
-        self.last_query = query.clone();
-        self.cancel_inflight_search();
+        info!(
+            "Library search resolved, query: '{}', results: {}, counts: ({}, {}, {}, {})",
+            query,
+            results.len(),
+            counts.0,
+            counts.1,
+            counts.2,
+            counts.3
+        );
 
-        if query.is_empty() {
-            self.search_request_seq = self.search_request_seq.wrapping_add(1);
-            self.search_results.clear();
-            self.search_counts = (0, 0, 0, 0);
-            self.search_pending = false;
+        let mapped_results: Vec<PinnedItem> = results
+            .into_iter()
+            .map(|(id, name, image_id, item_type)| PinnedItem {
+                id,
+                name,
+                image_id,
+                item_type,
+            })
+            .collect();
+        let data_changed = self.search_results != mapped_results || self.search_counts != counts;
+        let pending_changed = self.search_pending;
+
+        self.search_results = mapped_results;
+        self.search_counts = counts;
+        self.search_pending = false;
+
+        if data_changed || pending_changed {
             cx.notify();
-            return;
         }
-
-        self.search_pending = true;
-        self.search_request_seq = self.search_request_seq.wrapping_add(1);
-        let request_seq = self.search_request_seq;
-        cx.notify();
-
-        let search_query = query.clone();
-        let db = cx.global::<Database>().clone();
-        let query_task = cx.spawn(async move |this, cx: &mut AsyncApp| {
-            cx.background_executor().timer(SEARCH_QUERY_DEBOUNCE).await;
-
-            let query_for_spawn = search_query.clone();
-            let results = match crate::RUNTIME
-                .spawn(async move {
-                    db.search_library(&query_for_spawn, SEARCH_RESULT_LIMIT)
-                        .await
-                })
-                .await
-            {
-                Ok(Ok(results)) => results,
-                _ => Vec::new(),
-            };
-
-            cx.update(|cx| {
-                this.update(cx, |lib, cx| {
-                    if lib.last_query != search_query || lib.search_request_seq != request_seq {
-                        return;
-                    }
-
-                    lib.search_results = results
-                        .into_iter()
-                        .map(|(id, name, image_id, item_type)| PinnedItem {
-                            id,
-                            name,
-                            image_id,
-                            item_type,
-                        })
-                        .collect();
-                    lib.search_pending = false;
-                    cx.notify();
-                })
-            })
-            .ok();
-        });
-        self.search_query_task = Some(query_task);
-
-        let count_query = query.clone();
-        let db = cx.global::<Database>().clone();
-        let count_task = cx.spawn(async move |this, cx: &mut AsyncApp| {
-            cx.background_executor().timer(SEARCH_COUNT_DEBOUNCE).await;
-
-            let query_for_spawn = count_query.clone();
-            let counts = match crate::RUNTIME
-                .spawn(async move { db.get_search_match_counts(&query_for_spawn).await })
-                .await
-            {
-                Ok(Ok(counts)) => counts,
-                _ => (0, 0, 0, 0),
-            };
-
-            cx.update(|cx| {
-                this.update(cx, |lib, cx| {
-                    if lib.last_query != count_query || lib.search_request_seq != request_seq {
-                        return;
-                    }
-
-                    lib.search_counts = counts;
-                    cx.notify();
-                })
-            })
-            .ok();
-        });
-        self.search_count_task = Some(count_task);
     }
 
     pub fn new(cx: &mut Context<Self>) -> Self {
@@ -163,17 +124,41 @@ impl Library {
                 InputEvent::Change(text) | InputEvent::Submit(text) => text,
             };
             let query = text.trim().to_string();
-            cx.update_global::<Search, _>(|s, _cx| {
-                s.query = query.clone().into();
+            info!("Library search_input subscribe, query: '{}'", query);
+            let task = cx.spawn(async move |_, cx: &mut AsyncApp| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(200))
+                    .await;
+                cx.update(|cx| {
+                    cx.update_global::<Search, _>(|s, _cx| {
+                        s.query = query.into();
+                    });
+                });
             });
-            this.on_search_query_changed(query, cx);
+            this._search_debounce = Some(task);
         })
         .detach();
 
         cx.observe_global::<Search>(|this, cx| {
-            let query = cx.global::<Search>().query.to_string();
-            let query = query.trim().to_string();
-            this.on_search_query_changed(query, cx);
+            let query = cx.global::<Search>().query.trim().to_string();
+            info!("Library observe_global::<Search>, query: '{}'", query);
+
+            if query == this.last_query {
+                return;
+            }
+            this.last_query = query.clone();
+
+            if query.is_empty() {
+                this.search_results.clear();
+                this.search_counts = (0, 0, 0, 0);
+                this.search_pending = false;
+                cx.notify();
+                return;
+            }
+
+            this.search_pending = true;
+            cx.notify();
+            this.run_search_sync(&query, cx);
         })
         .detach();
 
@@ -184,9 +169,7 @@ impl Library {
             search_counts: (0, 0, 0, 0),
             search_pending: false,
             last_query: String::new(),
-            search_request_seq: 0,
-            search_query_task: None,
-            search_count_task: None,
+            _search_debounce: None,
         }
     }
 }
@@ -252,31 +235,23 @@ fn pinned_item(
                                 let db = cx.global::<Database>().clone();
 
                                 cx.spawn(async move |cx: &mut AsyncApp| {
-                                    let song_ids = match crate::RUNTIME
-                                        .spawn(async move {
-                                            match item_type.as_str() {
-                                                "Album" => db
-                                                    .get_album_songs(&id)
-                                                    .await
-                                                    .unwrap_or_default()
-                                                    .into_iter()
-                                                    .map(|s| s.id)
-                                                    .collect(),
-                                                "Playlist" => db
-                                                    .get_playlist_songs(&id)
-                                                    .await
-                                                    .unwrap_or_default()
-                                                    .into_iter()
-                                                    .map(|pt| pt.song.id)
-                                                    .collect(),
-                                                "Song" => vec![id],
-                                                _ => Vec::new(),
-                                            }
-                                        })
-                                        .await
-                                    {
-                                        Ok(song_ids) => song_ids,
-                                        Err(_) => Vec::new(),
+                                    let song_ids = match item_type.as_str() {
+                                        "Album" => db
+                                            .get_album_songs(&id)
+                                            .await
+                                            .unwrap_or_default()
+                                            .into_iter()
+                                            .map(|s| s.id)
+                                            .collect(),
+                                        "Playlist" => db
+                                            .get_playlist_songs(&id)
+                                            .await
+                                            .unwrap_or_default()
+                                            .into_iter()
+                                            .map(|pt| pt.song.id)
+                                            .collect(),
+                                        "Song" => vec![id],
+                                        _ => Vec::new(),
                                     };
 
                                     if !song_ids.is_empty() {
