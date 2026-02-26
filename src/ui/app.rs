@@ -1,5 +1,6 @@
 use anyhow::Ok;
 use gpui::*;
+use gpui_platform::application;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use std::{collections::HashMap, fs, sync::Arc};
 use tracing::{debug, error};
@@ -272,7 +273,7 @@ pub async fn run() -> anyhow::Result<()> {
         Arc::new(pool)
     };
 
-    Application::new()
+    application()
         .with_assets(VleerAssetSource::new(image_pool))
         .run(move |cx| {
             cx.set_global(Database { pool: pool.clone() });
