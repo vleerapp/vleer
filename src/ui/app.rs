@@ -248,12 +248,12 @@ pub async fn run() -> anyhow::Result<()> {
             .optimize_on_close(true, None)
             .synchronous(SqliteSynchronous::Normal)
             .journal_mode(SqliteJournalMode::Wal)
-            .busy_timeout(std::time::Duration::from_secs(30))
+            .busy_timeout(std::time::Duration::from_secs(3))
             .create_if_missing(true);
 
         let pool = SqlitePoolOptions::new()
-            .max_connections(100)
-            .min_connections(100)
+            .max_connections(8)
+            .min_connections(1)
             .connect_with(connect_options)
             .await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
