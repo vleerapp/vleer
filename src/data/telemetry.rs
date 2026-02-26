@@ -73,7 +73,7 @@ impl Telemetry {
             user_id,
             app_version: env!("CARGO_PKG_VERSION").to_string(),
             os: self.current_os(),
-            song_count: db.get_songs_count().await.unwrap_or(0),
+            song_count: db.get_songs_count(None).await.unwrap_or(0),
         };
 
         let res = self.client.post(url).json(&payload).send().await;

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use std::time::UNIX_EPOCH;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, mpsc, watch};
 use tracing::{debug, error, info, warn};
 use walkdir::WalkDir;
 
@@ -22,7 +22,7 @@ use crate::data::telemetry::Telemetry;
 const SUPPORTED_EXTENSIONS: &[&str] = &[
     "aac", "aiff", "aif", "flac", "mp3", "mp4", "m4a", "mp4a", "ogg", "oga", "opus", "wav", "wv",
 ];
-const MAX_CONCURRENT_SCANS: usize = 4;
+const MAX_CONCURRENT_SCANS: usize = 2;
 const STALE_DELETE_BATCH_SIZE: usize = 400;
 
 #[derive(Debug, Clone)]
@@ -31,6 +31,13 @@ pub struct ScanStats {
     pub added: usize,
     pub updated: usize,
     pub removed: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ScanProgress {
+    pub current: usize,
+    pub total: usize,
+    pub active: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -58,18 +65,43 @@ pub struct Scanner {
     scan_lock: Arc<Mutex<()>>,
     pending_changed_paths: Arc<Mutex<HashSet<PathBuf>>>,
     incremental_worker_running: Arc<AtomicBool>,
+    scan_progress: Arc<std::sync::Mutex<ScanProgress>>,
+    scan_progress_tx: watch::Sender<ScanProgress>,
 }
 
 impl Global for Scanner {}
 
 impl Scanner {
     pub fn new(scan_paths: Vec<PathBuf>) -> Self {
+        let initial_progress = ScanProgress::default();
+        let (scan_progress_tx, _scan_progress_rx) = watch::channel(initial_progress);
+
         Self {
             scan_paths,
             scan_lock: Arc::new(Mutex::new(())),
             pending_changed_paths: Arc::new(Mutex::new(HashSet::new())),
             incremental_worker_running: Arc::new(AtomicBool::new(false)),
+            scan_progress: Arc::new(std::sync::Mutex::new(initial_progress)),
+            scan_progress_tx,
         }
+    }
+
+    fn update_scan_progress(&self, progress: ScanProgress) {
+        if let Ok(mut state) = self.scan_progress.lock() {
+            *state = progress;
+        }
+        let _ = self.scan_progress_tx.send(progress);
+    }
+
+    fn clear_scan_progress(&self) {
+        self.update_scan_progress(ScanProgress::default());
+    }
+
+    pub fn get_scan_progress(&self) -> ScanProgress {
+        self.scan_progress
+            .lock()
+            .map(|state| *state)
+            .unwrap_or_default()
     }
 
     pub fn init(cx: &mut App) {
@@ -87,12 +119,14 @@ impl Scanner {
 
         match MusicWatcher::new(scanner.clone(), Arc::new(db.clone())) {
             Ok((watcher, mut rx)) => {
+                // Keep watcher alive for the duration of the program
+                std::mem::forget(watcher);
+
                 let db_clone = db.clone();
                 let telemetry_clone = telemetry.clone();
                 let config_clone = config.clone();
 
                 tokio::spawn(async move {
-                    let _watcher = watcher;
                     while let Some(stats) = rx.recv().await {
                         info!(
                             "Library scan completed - Scanned: {}, Added: {}, Updated: {}, Removed: {}",
@@ -110,7 +144,7 @@ impl Scanner {
                 let config_clone = config.clone();
 
                 tokio::spawn(async move {
-                    let existing_song_count = db_clone.get_songs_count().await.unwrap_or(0);
+                    let existing_song_count = db_clone.get_songs_count(None).await.unwrap_or(0);
                     info!(
                         "Starting initial library scan immediately (existing songs: {})...",
                         existing_song_count
@@ -232,45 +266,18 @@ impl Scanner {
     }
 
     async fn collect_song_paths(&self, db: &Database) -> Result<Vec<String>> {
-        let mut offset = 0i64;
-        let limit = 500i64;
-        let mut paths = Vec::new();
-
-        loop {
-            let songs = db.get_songs_paged(offset, limit).await?;
-            if songs.is_empty() {
-                break;
-            }
-
-            paths.extend(songs.into_iter().map(|song| song.file_path));
-            offset += limit;
-        }
-
-        Ok(paths)
+        Ok(db.get_song_paths().await?)
     }
 
     async fn collect_existing_track_state(
         &self,
         db: &Database,
     ) -> Result<HashMap<String, (i64, i64)>> {
-        let mut offset = 0i64;
-        let limit = 1000i64;
-        let mut state_by_path = HashMap::new();
-
-        loop {
-            let songs = db.get_songs_paged(offset, limit).await?;
-            if songs.is_empty() {
-                break;
-            }
-
-            for song in songs {
-                state_by_path.insert(song.file_path, (song.file_size, song.file_modified));
-            }
-
-            offset += limit;
-        }
-
-        Ok(state_by_path)
+        let states = db.get_song_file_states().await?;
+        Ok(states
+            .into_iter()
+            .map(|(path, size, modified)| (path, (size, modified)))
+            .collect())
     }
 
     async fn remove_missing_tracks(&self, db: &Database) -> Result<usize> {
@@ -333,6 +340,15 @@ impl Scanner {
         let audio_files = self.collect_audio_files().await?;
         let existing_track_state = Arc::new(self.collect_existing_track_state(db).await?);
         let total_files = audio_files.len();
+
+        if total_files > 0 {
+            self.update_scan_progress(ScanProgress {
+                current: 0,
+                total: total_files,
+                active: true,
+            });
+        }
+
         info!("Found {} audio files to scan", total_files);
         info!(
             "Loaded {} existing tracks from database",
@@ -476,6 +492,15 @@ impl Scanner {
                     failed
                 );
             }
+
+            let current = scanned + skipped + failed;
+            if current % 25 == 0 || current == total_files {
+                self.update_scan_progress(ScanProgress {
+                    current,
+                    total: total_files,
+                    active: true,
+                });
+            }
         }
 
         let removed = self.remove_missing_tracks(db).await?;
@@ -484,6 +509,12 @@ impl Scanner {
             "Scan complete: {} scanned, {} added, {} updated, {} skipped, {} failed, {} removed",
             scanned, added, updated, skipped, failed, removed
         );
+
+        self.update_scan_progress(ScanProgress {
+            current: total_files,
+            total: total_files,
+            active: false,
+        });
 
         Ok(ScanStats {
             scanned,
@@ -495,13 +526,22 @@ impl Scanner {
 
     pub async fn scan(&self, db: &Database) -> Result<ScanStats> {
         let _scan_guard = self.scan_lock.lock().await;
-        self.scan_with_options(db, ScanOptions::default()).await
+        let result = self.scan_with_options(db, ScanOptions::default()).await;
+        if result.is_err() {
+            self.clear_scan_progress();
+        }
+        result
     }
 
     pub async fn force_scan(&self, db: &Database) -> Result<ScanStats> {
         let _scan_guard = self.scan_lock.lock().await;
-        self.scan_with_options(db, ScanOptions { force: true })
-            .await
+        let result = self
+            .scan_with_options(db, ScanOptions { force: true })
+            .await;
+        if result.is_err() {
+            self.clear_scan_progress();
+        }
+        result
     }
 
     pub async fn process_changed_files(
