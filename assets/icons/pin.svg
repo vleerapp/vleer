@@ -1,21 +1,36 @@
 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-<g clip-path="url(#clip0_39_162)">
-<path d="M11.75 1.25H10.25V8.75H11.75V1.25Z" fill="#E6E6E6"/>
-<path d="M10.25 2.75H8.75V10.25H10.25V2.75Z" fill="#E6E6E6"/>
-<path d="M13.25 2.75H11.75V7.25H13.25V2.75Z" fill="#E6E6E6"/>
-<path d="M8.75 4.25H7.25V11.75H8.75V4.25Z" fill="#E6E6E6"/>
-<path d="M14.75 4.25H13.25V5.75H14.75V4.25Z" fill="#E6E6E6"/>
-<path d="M4.25 5.75H2.75V7.25H4.25V5.75Z" fill="#E6E6E6"/>
-<path d="M7.25 5.75H5.75V10.25H7.25V5.75Z" fill="#E6E6E6"/>
-<path d="M5.75 7.25H4.25V8.75H5.75V7.25Z" fill="#E6E6E6"/>
-<path d="M5.75 10.25H4.25V11.75H5.75V10.25Z" fill="#E6E6E6"/>
-<path d="M4.25 11.75H2.75V13.25H4.25V11.75Z" fill="#E6E6E6"/>
-<path d="M10.25 11.75H8.75V13.25H10.25V11.75Z" fill="#E6E6E6"/>
-<path d="M2.75 13.25H1.25V14.75H2.75V13.25Z" fill="#E6E6E6"/>
-</g>
-<defs>
-<clipPath id="clip0_39_162">
-<rect width="16" height="16" fill="white" style="fill:white;fill-opacity:1;"/>
-</clipPath>
-</defs>
+  <path d="M11.3333 2H10V3.33333H11.3333V2Z" fill="#E6E6E6"
+    style="fill:#E6E6E6;fill:color(display-p3 0.9020 0.9020 0.9020);fill-opacity:1;" />
+  <path d="M9.99999 3.33334H8.66666V4.66668H9.99999V3.33334Z" fill="#E6E6E6"
+    style="fill:#E6E6E6;fill:color(display-p3 0.9020 0.9020 0.9020);fill-opacity:1;" />
+  <path d="M12.6667 3.33334H11.3333V4.66668H12.6667V3.33334Z" fill="#E6E6E6"
+    style="fill:#E6E6E6;fill:color(display-p3 0.9020 0.9020 0.9020);fill-opacity:1;" />
+  <path d="M8.66668 4.66666H7.33334V5.99999H8.66668V4.66666Z" fill="#E6E6E6"
+    style="fill:#E6E6E6;fill:color(display-p3 0.9020 0.9020 0.9020);fill-opacity:1;" />
+  <path d="M14 4.66666H12.6667V5.99999H14V4.66666Z" fill="#E6E6E6"
+    style="fill:#E6E6E6;fill:color(display-p3 0.9020 0.9020 0.9020);fill-opacity:1;" />
+  <path d="M4.66668 6H3.33334V7.33333H4.66668V6Z" fill="#E6E6E6"
+    style="fill:#E6E6E6;fill:color(display-p3 0.9020 0.9020 0.9020);fill-opacity:1;" />
+  <path d="M7.33333 6H6V7.33333H7.33333V6Z" fill="#E6E6E6"
+    style="fill:#E6E6E6;fill:color(display-p3 0.9020 0.9020 0.9020);fill-opacity:1;" />
+  <path d="M12.6667 6H11.3333V7.33333H12.6667V6Z" fill="#E6E6E6"
+    style="fill:#E6E6E6;fill:color(display-p3 0.9020 0.9020 0.9020);fill-opacity:1;" />
+  <path d="M5.99999 7.33334H4.66666V8.66668H5.99999V7.33334Z" fill="#E6E6E6"
+    style="fill:#E6E6E6;fill:color(display-p3 0.9020 0.9020 0.9020);fill-opacity:1;" />
+  <path d="M11.3333 7.33334H10V8.66668H11.3333V7.33334Z" fill="#E6E6E6"
+    style="fill:#E6E6E6;fill:color(display-p3 0.9020 0.9020 0.9020);fill-opacity:1;" />
+  <path d="M7.33333 8.66666H6V9.99999H7.33333V8.66666Z" fill="#E6E6E6"
+    style="fill:#E6E6E6;fill:color(display-p3 0.9020 0.9020 0.9020);fill-opacity:1;" />
+  <path d="M9.99999 8.66666H8.66666V9.99999H9.99999V8.66666Z" fill="#E6E6E6"
+    style="fill:#E6E6E6;fill:color(display-p3 0.9020 0.9020 0.9020);fill-opacity:1;" />
+  <path d="M5.99999 10H4.66666V11.3333H5.99999V10Z" fill="#E6E6E6"
+    style="fill:#E6E6E6;fill:color(display-p3 0.9020 0.9020 0.9020);fill-opacity:1;" />
+  <path d="M8.66668 10H7.33334V11.3333H8.66668V10Z" fill="#E6E6E6"
+    style="fill:#E6E6E6;fill:color(display-p3 0.9020 0.9020 0.9020);fill-opacity:1;" />
+  <path d="M4.66668 11.3333H3.33334V12.6667H4.66668V11.3333Z" fill="#E6E6E6"
+    style="fill:#E6E6E6;fill:color(display-p3 0.9020 0.9020 0.9020);fill-opacity:1;" />
+  <path d="M9.99999 11.3333H8.66666V12.6667H9.99999V11.3333Z" fill="#E6E6E6"
+    style="fill:#E6E6E6;fill:color(display-p3 0.9020 0.9020 0.9020);fill-opacity:1;" />
+  <path d="M3.33333 12.6667H2V14H3.33333V12.6667Z" fill="#E6E6E6"
+    style="fill:#E6E6E6;fill:color(display-p3 0.9020 0.9020 0.9020);fill-opacity:1;" />
 </svg>
