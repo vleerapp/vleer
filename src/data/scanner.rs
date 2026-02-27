@@ -119,7 +119,6 @@ impl Scanner {
 
         match MusicWatcher::new(scanner.clone(), Arc::new(db.clone())) {
             Ok((watcher, mut rx)) => {
-                // Keep watcher alive for the duration of the program
                 std::mem::forget(watcher);
 
                 let db_clone = db.clone();
@@ -542,15 +541,6 @@ impl Scanner {
             self.clear_scan_progress();
         }
         result
-    }
-
-    pub async fn process_changed_files(
-        &self,
-        db: &Database,
-        changed_paths: Vec<PathBuf>,
-    ) -> Result<ScanStats> {
-        let _scan_guard = self.scan_lock.lock().await;
-        self.process_changed_files_inner(db, changed_paths).await
     }
 
     async fn process_changed_files_inner(
