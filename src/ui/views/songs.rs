@@ -14,6 +14,7 @@ use crate::{
     ui::{
         assets::image_cache::app_image_cache,
         components::{
+            context_menu::LibraryDataChanged,
             div::flex_col,
             song_table::{
                 GetRowCountHandler, GetRowHandler, QueueHandler, SongColumn, SongEntry, SongTable,
@@ -134,6 +135,7 @@ impl SongPageCache {
 pub struct SongsView {
     table: Entity<SongTable>,
     last_query: String,
+    cache: Rc<RefCell<SongPageCache>>,
 }
 
 impl SongsView {
@@ -313,9 +315,23 @@ impl SongsView {
         })
         .detach();
 
+        cx.observe_global::<LibraryDataChanged>(|this, cx| {
+            {
+                let mut c = this.cache.borrow_mut();
+                c.pages.clear();
+                c.count = None;
+            }
+            let table_handle = this.table.clone();
+            cx.update_entity(&table_handle, |_table, cx| {
+                cx.emit(SongTableEvent::NewRows);
+            });
+        })
+        .detach();
+
         Self {
             table,
             last_query: initial_query,
+            cache,
         }
     }
 }

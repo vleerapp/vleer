@@ -3,6 +3,7 @@ use crate::{
     ui::{
         assets::image_cache::app_image_cache,
         components::{
+            context_menu::{ContextMenu, album_context_menu_items, song_context_menu_items},
             div::{flex_col, flex_row},
             icons::{
                 icon::icon,
@@ -18,6 +19,7 @@ pub struct HomeView {
     recently_added: Vec<RecentItem>,
     recently_added_offset: usize,
     container_width: Option<f32>,
+    context_menu: Entity<ContextMenu>,
 }
 
 const MIN_COVER_SIZE: f32 = 180.0;
@@ -30,6 +32,7 @@ impl HomeView {
             recently_added: Vec::new(),
             recently_added_offset: 0,
             container_width: None,
+            context_menu: cx.new(|_| ContextMenu::new()),
         };
 
         view.load_recently_added(window, cx);
@@ -95,9 +98,104 @@ impl HomeView {
     }
 }
 
+fn recent_item_tile(
+    idx: usize,
+    item: RecentItem,
+    cover_size: f32,
+    variables: &Variables,
+    context_menu: Entity<ContextMenu>,
+) -> impl IntoElement {
+    let (item_id, title, subtitle, cover_uri, is_song) = match item.clone() {
+        RecentItem::Song {
+            id,
+            title,
+            artist_name,
+            image_id,
+        } => {
+            let artist = artist_name
+                .clone()
+                .unwrap_or_else(|| "Unknown Artist".to_string());
+            (id, title.clone(), artist, image_id.clone(), true)
+        }
+        RecentItem::Album {
+            id,
+            title,
+            artist_name,
+            image_id,
+            year,
+        } => {
+            let artist = artist_name
+                .clone()
+                .unwrap_or_else(|| "Unknown Artist".to_string());
+            let subtitle = if let Some(y) = year {
+                format!("{} · {}", y, artist)
+            } else {
+                artist
+            };
+            (id, title.clone(), subtitle, image_id.clone(), false)
+        }
+    };
+
+    let cover_element = if let Some(uri) = cover_uri {
+        img(format!("!image://{}", uri))
+            .id(ElementId::Name(format!("recent-cover-{}", idx).into()))
+            .size(px(cover_size))
+            .object_fit(ObjectFit::Cover)
+            .into_any_element()
+    } else {
+        div()
+            .id(ElementId::Name(
+                format!("recent-cover-placeholder-{}", idx).into(),
+            ))
+            .size(px(cover_size))
+            .bg(variables.border)
+            .into_any_element()
+    };
+
+    flex_col()
+        .id(ElementId::Name(format!("recent-item-{}", idx).into()))
+        .w(px(cover_size))
+        .gap(px(8.0))
+        .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
+            let menu_items = if is_song {
+                song_context_menu_items(item_id.clone(), cx)
+            } else {
+                album_context_menu_items(item_id.clone(), cx)
+            };
+            context_menu.update(cx, |menu, cx| {
+                menu.show(event.position, menu_items, cx);
+            });
+        })
+        .child(cover_element)
+        .child(
+            flex_col()
+                .id(ElementId::Name(format!("recent-item-info-{}", idx).into()))
+                .gap(px(4.0))
+                .child(
+                    div()
+                        .id(ElementId::Name(format!("recent-title-{}", idx).into()))
+                        .text_ellipsis()
+                        .font_weight(FontWeight(500.0))
+                        .overflow_x_hidden()
+                        .max_w(px(cover_size))
+                        .child(title),
+                )
+                .child(
+                    div()
+                        .id(ElementId::Name(format!("recent-subtitle-{}", idx).into()))
+                        .text_ellipsis()
+                        .overflow_x_hidden()
+                        .max_w(px(cover_size))
+                        .text_color(variables.text_secondary)
+                        .child(subtitle),
+                ),
+        )
+}
+
 impl Render for HomeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
+        let context_menu = self.context_menu.clone();
 
         let bounds = window.bounds();
         let window_width: f32 = bounds.size.width.into();
@@ -133,81 +231,13 @@ impl Render for HomeView {
                 .w_full()
                 .gap(px(GAP_SIZE))
                 .children(visible_items.into_iter().map(|(idx, item)| {
-                    let (title, subtitle, cover_uri) = match item {
-                        RecentItem::Song {
-                            title,
-                            artist_name,
-                            image_id,
-                        } => {
-                            let artist = artist_name
-                                .clone()
-                                .unwrap_or_else(|| "Unknown Artist".to_string());
-                            (title.clone(), artist, image_id.clone())
-                        }
-                        RecentItem::Album {
-                            title,
-                            artist_name,
-                            image_id,
-                            year,
-                        } => {
-                            let artist = artist_name
-                                .clone()
-                                .unwrap_or_else(|| "Unknown Artist".to_string());
-                            let subtitle = if let Some(y) = year {
-                                format!("{} · {}", y, artist)
-                            } else {
-                                artist
-                            };
-                            (title.clone(), subtitle, image_id.clone())
-                        }
-                    };
-
-                    let cover_element = if let Some(uri) = cover_uri {
-                        img(format!("!image://{}", uri))
-                            .id(ElementId::Name(format!("recent-cover-{}", idx).into()))
-                            .size(px(cover_size))
-                            .object_fit(ObjectFit::Cover)
-                            .into_any_element()
-                    } else {
-                        div()
-                            .id(ElementId::Name(
-                                format!("recent-cover-placeholder-{}", idx).into(),
-                            ))
-                            .size(px(cover_size))
-                            .bg(variables.border)
-                            .into_any_element()
-                    };
-
-                    flex_col()
-                        .id(ElementId::Name(format!("recent-item-{}", idx).into()))
-                        .w(px(cover_size))
-                        .gap(px(8.0))
-                        .child(cover_element)
-                        .child(
-                            flex_col()
-                                .id(ElementId::Name(format!("recent-item-info-{}", idx).into()))
-                                .gap(px(4.0))
-                                .child(
-                                    div()
-                                        .id(ElementId::Name(format!("recent-title-{}", idx).into()))
-                                        .text_ellipsis()
-                                        .font_weight(FontWeight(500.0))
-                                        .overflow_x_hidden()
-                                        .max_w(px(cover_size))
-                                        .child(title),
-                                )
-                                .child(
-                                    div()
-                                        .id(ElementId::Name(
-                                            format!("recent-subtitle-{}", idx).into(),
-                                        ))
-                                        .text_ellipsis()
-                                        .overflow_x_hidden()
-                                        .max_w(px(cover_size))
-                                        .text_color(variables.text_secondary)
-                                        .child(subtitle),
-                                ),
-                        )
+                    recent_item_tile(
+                        idx,
+                        item.clone(),
+                        cover_size,
+                        variables,
+                        context_menu.clone(),
+                    )
                 }))
                 .into_any_element()
         };
@@ -352,7 +382,8 @@ impl Render for HomeView {
                             )
                             .child(recently_played)
                             .child(recently_added),
-                    ),
+                    )
+                    .child(self.context_menu.clone()),
             )
     }
 }

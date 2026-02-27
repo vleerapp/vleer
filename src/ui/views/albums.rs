@@ -6,6 +6,7 @@ use crate::{
     ui::{
         assets::image_cache::app_image_cache,
         components::{
+            context_menu::{ContextMenu, LibraryDataChanged, album_context_menu_items},
             div::{flex_col, flex_row},
             scrollbar::{Scrollbar, ScrollbarAxis},
         },
@@ -32,6 +33,7 @@ pub struct AlbumsView {
     request_inflight: bool,
     container_width: Option<f32>,
     scroll_handle: UniformListScrollHandle,
+    context_menu: Entity<ContextMenu>,
 }
 
 impl AlbumsView {
@@ -124,6 +126,7 @@ impl AlbumsView {
             request_inflight: false,
             container_width: None,
             scroll_handle: UniformListScrollHandle::default(),
+            context_menu: cx.new(|_| ContextMenu::new()),
         };
 
         if cx.global::<ActiveView>().0 == AppView::Albums {
@@ -146,6 +149,15 @@ impl AlbumsView {
             }
 
             let query = cx.global::<Search>().query.trim().to_string();
+            this.request_query(query, cx);
+        })
+        .detach();
+
+        cx.observe_global::<LibraryDataChanged>(|this, cx| {
+            this.page_cache.clear();
+            this.page_pending.clear();
+            this.query_version = this.query_version.wrapping_add(1);
+            let query = this.last_query.clone();
             this.request_query(query, cx);
         })
         .detach();
@@ -270,6 +282,7 @@ fn album_tile(
     album: &AlbumListItem,
     cover_size: f32,
     variables: &Variables,
+    context_menu: Entity<ContextMenu>,
 ) -> impl IntoElement {
     let artist = album
         .artist_name
@@ -297,10 +310,18 @@ fn album_tile(
             .into_any_element()
     };
 
+    let album_id = album.id.clone();
+
     flex_col()
         .id(ElementId::Name(format!("album-item-{}", idx).into()))
         .w(px(cover_size))
         .gap(px(8.0))
+        .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
+            let items = album_context_menu_items(album_id.clone(), cx);
+            context_menu.update(cx, |menu, cx| {
+                menu.show(event.position, items, cx);
+            });
+        })
         .child(cover_element)
         .child(
             flex_col()
@@ -348,6 +369,7 @@ impl Render for AlbumsView {
         };
 
         let view_handle = cx.entity();
+        let context_menu = self.context_menu.clone();
 
         let grid_content = if row_count == 0 {
             flex_row()
@@ -391,7 +413,11 @@ impl Render for AlbumsView {
 
                                         if let Some(album) = album_opt {
                                             row = row.child(album_tile(
-                                                item_idx, &album, cover_size, variables,
+                                                item_idx,
+                                                &album,
+                                                cover_size,
+                                                variables,
+                                                context_menu.clone(),
                                             ));
                                         } else {
                                             row = row.child(
@@ -434,7 +460,8 @@ impl Render for AlbumsView {
                             .size_full()
                             .p(px(variables.padding_24))
                             .child(grid_content),
-                    ),
+                    )
+                    .child(self.context_menu.clone()),
             )
             .when(row_count > 0, |this| {
                 let scroll_handle = self.scroll_handle.clone();

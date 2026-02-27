@@ -6,6 +6,7 @@ use crate::{
     ui::{
         assets::image_cache::app_image_cache,
         components::{
+            context_menu::{ContextMenu, LibraryDataChanged, artist_context_menu_items},
             div::{flex_col, flex_row},
             scrollbar::{Scrollbar, ScrollbarAxis},
         },
@@ -32,6 +33,7 @@ pub struct ArtistsView {
     request_inflight: bool,
     container_width: Option<f32>,
     scroll_handle: UniformListScrollHandle,
+    context_menu: Entity<ContextMenu>,
 }
 
 impl ArtistsView {
@@ -124,6 +126,7 @@ impl ArtistsView {
             request_inflight: false,
             container_width: None,
             scroll_handle: UniformListScrollHandle::default(),
+            context_menu: cx.new(|_| ContextMenu::new()),
         };
 
         if cx.global::<ActiveView>().0 == AppView::Artists {
@@ -146,6 +149,15 @@ impl ArtistsView {
             }
 
             let query = cx.global::<Search>().query.trim().to_string();
+            this.request_query(query, cx);
+        })
+        .detach();
+
+        cx.observe_global::<LibraryDataChanged>(|this, cx| {
+            this.page_cache.clear();
+            this.page_pending.clear();
+            this.query_version = this.query_version.wrapping_add(1);
+            let query = this.last_query.clone();
             this.request_query(query, cx);
         })
         .detach();
@@ -270,6 +282,7 @@ fn artist_tile(
     artist: &ArtistListItem,
     cover_size: f32,
     variables: &Variables,
+    context_menu: Entity<ContextMenu>,
 ) -> impl IntoElement {
     let cover_element = if let Some(uri) = &artist.image_id {
         img(format!("!image://{}", uri))
@@ -289,10 +302,18 @@ fn artist_tile(
             .into_any_element()
     };
 
+    let artist_id = artist.id.clone();
+
     flex_col()
         .id(ElementId::Name(format!("artist-item-{}", idx).into()))
         .w(px(cover_size))
         .gap(px(8.0))
+        .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
+            let items = artist_context_menu_items(artist_id.clone(), cx);
+            context_menu.update(cx, |menu, cx| {
+                menu.show(event.position, items, cx);
+            });
+        })
         .child(cover_element)
         .child(
             div()
@@ -326,6 +347,7 @@ impl Render for ArtistsView {
         };
 
         let view_handle = cx.entity();
+        let context_menu = self.context_menu.clone();
 
         let grid_content = if row_count == 0 {
             flex_row()
@@ -370,7 +392,11 @@ impl Render for ArtistsView {
 
                                         if let Some(artist) = artist_opt {
                                             row = row.child(artist_tile(
-                                                item_idx, &artist, cover_size, variables,
+                                                item_idx,
+                                                &artist,
+                                                cover_size,
+                                                variables,
+                                                context_menu.clone(),
                                             ));
                                         } else {
                                             row = row.child(
@@ -414,7 +440,8 @@ impl Render for ArtistsView {
                             .size_full()
                             .p(px(variables.padding_24))
                             .child(grid_content),
-                    ),
+                    )
+                    .child(self.context_menu.clone()),
             )
             .when(row_count > 0, |this| {
                 let scroll_handle = self.scroll_handle.clone();
