@@ -10,9 +10,9 @@ license = "AGPL-3.0"
 categories = ["multimedia::audio"]
 
 [dependencies]
-gpui = { git = "https://github.com/zed-industries/zed" }
-gpui_macros = { git = "https://github.com/zed-industries/zed" }
-gpui_platform = { git = "https://github.com/zed-industries/zed", features = [
+gpui = { git = "https://github.com/vleerapp/zed" }
+gpui_macros = { git = "https://github.com/vleerapp/zed" }
+gpui_platform = { git = "https://github.com/vleerapp/zed", features = [
   "font-kit",
   "x11",
   "wayland",
