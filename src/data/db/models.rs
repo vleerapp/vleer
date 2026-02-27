@@ -189,6 +189,7 @@ pub struct SearchResultRow {
 #[derive(Debug, Clone, FromRow)]
 pub struct RecentItemRow {
     pub song_count: i64,
+    pub first_song_id: Cuid,
     pub first_song_title: String,
     pub image_id: Option<String>,
     pub first_year: Option<String>,
@@ -201,6 +202,7 @@ impl RecentItemRow {
     pub fn into_recent_item(self) -> RecentItem {
         if self.song_count > 1 && self.album_id.is_some() {
             RecentItem::Album {
+                id: self.album_id.unwrap(),
                 title: self
                     .album_title
                     .unwrap_or_else(|| "Unknown Album".to_string()),
@@ -210,6 +212,7 @@ impl RecentItemRow {
             }
         } else {
             RecentItem::Song {
+                id: self.first_song_id,
                 title: self.first_song_title,
                 artist_name: self.artist_name,
                 image_id: self.image_id,

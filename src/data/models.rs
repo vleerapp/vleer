@@ -156,11 +156,13 @@ pub enum EventType {
 #[derive(Debug, Clone)]
 pub enum RecentItem {
     Song {
+        id: Cuid,
         title: String,
         artist_name: Option<String>,
         image_id: Option<String>,
     },
     Album {
+        id: Cuid,
         title: String,
         artist_name: Option<String>,
         year: Option<String>,
