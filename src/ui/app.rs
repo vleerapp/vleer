@@ -11,6 +11,7 @@ use crate::{
     ui::{
         assets::VleerAssetSource,
         components::{
+            context_menu::{LibraryDataChanged, PinnedItemsChanged},
             div::{flex_col, flex_row},
             input::bind_input_keys,
             pane::pane,
@@ -282,6 +283,8 @@ pub async fn run() -> anyhow::Result<()> {
             cx.set_global(Database { pool: pool.clone() });
             cx.set_global(Search::default());
             cx.set_global(ActiveView::default());
+            cx.set_global(PinnedItemsChanged::default());
+            cx.set_global(LibraryDataChanged::default());
 
             Config::init(cx, &config_dir).expect("unable to initizalize settings");
             Playback::init(cx).expect("unable to initizalize playback context");

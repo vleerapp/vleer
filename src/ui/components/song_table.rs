@@ -1,6 +1,7 @@
 use crate::data::models::Cuid;
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
+use crate::ui::components::context_menu::{ContextMenu, song_context_menu_items};
 use crate::ui::components::div::{flex_col, flex_row};
 use crate::ui::components::icons::icon::icon;
 use crate::ui::components::icons::icons::{ARROW_DOWN, ARROW_UP, DURATION, PLAY};
@@ -130,6 +131,7 @@ pub struct SongTableItem {
     show_numbers: bool,
     row_index: usize,
     is_animating: bool,
+    context_menu: Entity<ContextMenu>,
 }
 
 impl SongTableItem {
@@ -144,7 +146,7 @@ impl SongTableItem {
         duration_width: f32,
         show_numbers: bool,
     ) -> Entity<Self> {
-        cx.new(|_| Self {
+        cx.new(|cx| Self {
             on_select,
             get_row,
             get_queue,
@@ -154,6 +156,7 @@ impl SongTableItem {
             show_numbers,
             row_index,
             is_animating: false,
+            context_menu: cx.new(|_| ContextMenu::new()),
         })
     }
 }
@@ -170,6 +173,7 @@ impl Render for SongTableItem {
 
         let element_id = ElementId::Name(format!("song-{}", self.row_index).into());
         let show_numbers = self.show_numbers;
+        let context_menu_entity = self.context_menu.clone();
 
         let mut row = flex_row()
             .w_full()
@@ -187,7 +191,18 @@ impl Render for SongTableItem {
                     }
                 })
                 .cursor_pointer()
-            });
+            })
+            .when_some(row_data.clone(), |div, data| {
+                let song_id = data.id.clone();
+                let ctx_menu = context_menu_entity.clone();
+                div.on_mouse_down(MouseButton::Right, move |event, _window, cx| {
+                    let items = song_context_menu_items(song_id.clone(), cx);
+                    ctx_menu.update(cx, |menu, cx| {
+                        menu.show(event.position, items, cx);
+                    });
+                })
+            })
+            .child(div().absolute().size_0().child(context_menu_entity));
 
         if let Some(data) = &row_data {
             let is_playing = if let Some(current_song) = cx.global::<Queue>().get_current_song(cx) {

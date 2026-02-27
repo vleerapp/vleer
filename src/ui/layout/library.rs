@@ -2,6 +2,10 @@ use crate::data::db::repo::Database;
 use crate::data::models::{Cuid, PinnedItem};
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
+use crate::ui::components::context_menu::{
+    ContextMenu, PinnedItemsChanged, album_context_menu_items, artist_context_menu_items,
+    playlist_context_menu_items, song_context_menu_items,
+};
 use crate::ui::components::div::flex_row;
 use crate::ui::components::icons::icon::icon;
 use crate::ui::components::scrollbar::ScrollableElement;
@@ -49,6 +53,7 @@ pub struct Library {
     search_pending: bool,
     last_query: String,
     _search_debounce: Option<Task<()>>,
+    context_menu: Entity<ContextMenu>,
 }
 
 impl Library {
@@ -162,6 +167,22 @@ impl Library {
         })
         .detach();
 
+        cx.observe_global::<PinnedItemsChanged>(|_, cx| {
+            let db = cx.global::<Database>().clone();
+            cx.spawn(async move |this, cx: &mut AsyncApp| {
+                let items = db.get_pinned_items().await;
+                cx.update(|cx| {
+                    this.update(cx, |lib, cx| {
+                        lib.pinned_items = items;
+                        cx.notify();
+                    })
+                })
+                .ok();
+            })
+            .detach();
+        })
+        .detach();
+
         Self {
             search_input,
             pinned_items: Vec::new(),
@@ -170,6 +191,7 @@ impl Library {
             search_pending: false,
             last_query: String::new(),
             _search_debounce: None,
+            context_menu: cx.new(|_| ContextMenu::new()),
         }
     }
 }
@@ -180,10 +202,13 @@ fn pinned_item(
     image_id: Option<String>,
     item_type: String,
     variables: &Variables,
+    context_menu: Entity<ContextMenu>,
 ) -> impl IntoElement {
     let is_artist = item_type == "Artist";
     let item_type_clone = item_type.clone();
+    let item_type_for_ctx = item_type.clone();
     let id_clone = id.clone();
+    let id_for_ctx = id.clone();
 
     let cover_element = if let Some(uri) = image_id {
         img(format!("!image://{}", uri))
@@ -200,6 +225,18 @@ fn pinned_item(
         .hover(|s| s.bg(variables.element_hover))
         .gap(px(variables.padding_8))
         .pr(px(variables.padding_8))
+        .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
+            let items = match item_type_for_ctx.as_str() {
+                "Song" => song_context_menu_items(id_for_ctx.clone(), cx),
+                "Album" => album_context_menu_items(id_for_ctx.clone(), cx),
+                "Artist" => artist_context_menu_items(id_for_ctx.clone(), cx),
+                "Playlist" => playlist_context_menu_items(id_for_ctx.clone(), cx),
+                _ => vec![],
+            };
+            context_menu.update(cx, |menu, cx| {
+                menu.show(event.position, items, cx);
+            });
+        })
         .child(
             div()
                 .size(px(36.0))
@@ -302,6 +339,7 @@ impl Render for Library {
 
         let has_display = !displayed_items.is_empty();
         let is_search_pending = is_searching && self.search_pending;
+        let context_menu = self.context_menu.clone();
 
         div()
             .image_cache(app_image_cache())
@@ -309,6 +347,7 @@ impl Render for Library {
             .min_w_0()
             .min_h_0()
             .group("library")
+            .child(div().absolute().size_0().child(context_menu.clone()))
             .child(
                 flex_col()
                     .size_full()
@@ -388,6 +427,7 @@ impl Render for Library {
                                                             item.image_id.clone(),
                                                             item.item_type.clone(),
                                                             variables,
+                                                            context_menu.clone(),
                                                         )
                                                     },
                                                 )),
