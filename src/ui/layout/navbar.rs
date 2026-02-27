@@ -3,7 +3,7 @@ use gpui::*;
 use std::time::Duration;
 
 use crate::{
-    data::scanner::Scanner,
+    data::scanner::{ScanPhase, Scanner},
     ui::{
         components::{
             div::flex_row,
@@ -28,7 +28,7 @@ impl Navbar {
         let refresh_task = cx.spawn(async move |this, cx: &mut AsyncApp| {
             loop {
                 cx.background_executor()
-                    .timer(Duration::from_millis(200))
+                    .timer(Duration::from_millis(100))
                     .await;
                 if cx
                     .update(|cx| {
@@ -54,7 +54,7 @@ impl NavbarScanProgressBar {
         let refresh_task = cx.spawn(async move |this, cx: &mut AsyncApp| {
             loop {
                 cx.background_executor()
-                    .timer(Duration::from_millis(200))
+                    .timer(Duration::from_millis(100))
                     .await;
                 if cx
                     .update(|cx| {
@@ -80,20 +80,25 @@ impl Render for Navbar {
         let variables = cx.global::<Variables>();
         let scanning_text = cx
             .try_global::<Scanner>()
-            .map(|scanner| {
+            .and_then(|scanner| {
                 let progress = scanner.get_scan_progress();
-                if !progress.active || progress.total == 0 || progress.current == 0 {
-                    return None;
+                match progress.phase {
+                    ScanPhase::Idle => None,
+                    ScanPhase::Completed => Some("Scanning: done".to_string()),
+                    ScanPhase::Scanning => {
+                        if progress.total == 0 {
+                            return None;
+                        }
+                        let ratio =
+                            (progress.current as f32 / progress.total as f32).clamp(0.0, 1.0);
+                        let percent = (ratio as f64) * 100.0;
+                        Some(format!(
+                            "Scanning: {}/{} - {:.0}%",
+                            progress.current, progress.total, percent
+                        ))
+                    }
                 }
-
-                let ratio = (progress.current as f32 / progress.total as f32).clamp(0.0, 1.0);
-                let percent = (ratio as f64) * 100.0;
-                Some(format!(
-                    "Scanning: {}/{} - {:.2}%",
-                    progress.current, progress.total, percent
-                ))
-            })
-            .unwrap_or(None);
+            });
 
         flex_row()
             .h_full()
@@ -132,10 +137,16 @@ impl Render for NavbarScanProgressBar {
             .try_global::<Scanner>()
             .and_then(|scanner| {
                 let progress = scanner.get_scan_progress();
-                if !progress.active || progress.total == 0 {
-                    return None;
+                match progress.phase {
+                    ScanPhase::Idle => None,
+                    ScanPhase::Completed => Some(1.0f32),
+                    ScanPhase::Scanning => {
+                        if progress.total == 0 {
+                            return None;
+                        }
+                        Some((progress.current as f32 / progress.total as f32).clamp(0.0, 1.0))
+                    }
                 }
-                Some((progress.current as f32 / progress.total as f32).clamp(0.0, 1.0))
             })
             .unwrap_or(0.0);
 

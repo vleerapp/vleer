@@ -33,11 +33,19 @@ pub struct ScanStats {
     pub removed: usize,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub enum ScanPhase {
+    #[default]
+    Idle,
+    Scanning,
+    Completed,
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ScanProgress {
     pub current: usize,
     pub total: usize,
-    pub active: bool,
+    pub phase: ScanPhase,
 }
 
 #[derive(Debug, Clone)]
@@ -340,13 +348,11 @@ impl Scanner {
         let existing_track_state = Arc::new(self.collect_existing_track_state(db).await?);
         let total_files = audio_files.len();
 
-        if total_files > 0 {
-            self.update_scan_progress(ScanProgress {
-                current: 0,
-                total: total_files,
-                active: true,
-            });
-        }
+        self.update_scan_progress(ScanProgress {
+            current: 0,
+            total: total_files.max(1),
+            phase: ScanPhase::Scanning,
+        });
 
         info!("Found {} audio files to scan", total_files);
         info!(
@@ -482,24 +488,19 @@ impl Scanner {
                 failed += 1;
             }
 
-            if (scanned + skipped + failed) % 1000 == 0 {
+            let current = scanned + skipped + failed;
+            if current % 1000 == 0 {
                 info!(
                     "Progress: {}/{} scanned, {} skipped, {} failed",
-                    scanned + skipped + failed,
-                    total_files,
-                    skipped,
-                    failed
+                    current, total_files, skipped, failed
                 );
             }
 
-            let current = scanned + skipped + failed;
-            if current % 25 == 0 || current == total_files {
-                self.update_scan_progress(ScanProgress {
-                    current,
-                    total: total_files,
-                    active: true,
-                });
-            }
+            self.update_scan_progress(ScanProgress {
+                current,
+                total: total_files.max(1),
+                phase: ScanPhase::Scanning,
+            });
         }
 
         let removed = self.remove_missing_tracks(db).await?;
@@ -510,10 +511,12 @@ impl Scanner {
         );
 
         self.update_scan_progress(ScanProgress {
-            current: total_files,
-            total: total_files,
-            active: false,
+            current: total_files.max(1),
+            total: total_files.max(1),
+            phase: ScanPhase::Completed,
         });
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        self.clear_scan_progress();
 
         Ok(ScanStats {
             scanned,
