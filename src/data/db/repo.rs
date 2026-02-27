@@ -125,12 +125,15 @@ impl Database {
             .join(", ");
         let sql = format!("DELETE FROM songs WHERE file_path IN ({placeholders})");
 
+        let mut tx = self.pool.begin().await?;
+
         let mut query = sqlx::query(&sql);
         for path in file_paths {
             query = query.bind(path);
         }
 
-        let result = query.execute(&*self.pool).await?;
+        let result = query.execute(&mut *tx).await?;
+        tx.commit().await?;
         Ok(result.rows_affected() as usize)
     }
 
