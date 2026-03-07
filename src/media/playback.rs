@@ -472,38 +472,6 @@ impl Playback {
         *self.visualizer_state.bands.lock().unwrap()
     }
 
-    pub fn set_eq_gain(&mut self, band: usize, gain_db: f32) {
-        if band < 10 {
-            self.equalizer.lock().unwrap().set_gain(band, gain_db);
-        }
-    }
-
-    pub fn set_eq_q(&mut self, band: usize, q: f32) {
-        if band < 10 {
-            self.equalizer.lock().unwrap().set_q(band, q);
-        }
-    }
-
-    pub fn set_eq_gains(&self) -> Vec<f32> {
-        self.equalizer
-            .lock()
-            .unwrap()
-            .get_bands()
-            .iter()
-            .map(|b| b.gain_db)
-            .collect()
-    }
-
-    pub fn set_eq_qs(&self) -> Vec<f32> {
-        self.equalizer
-            .lock()
-            .unwrap()
-            .get_bands()
-            .iter()
-            .map(|b| b.q)
-            .collect()
-    }
-
     pub fn apply_eq_settings(&mut self, gains: &[f32], q_values: &[f32]) {
         let mut eq = self.equalizer.lock().unwrap();
         for i in 0..10.min(gains.len()).min(q_values.len()) {

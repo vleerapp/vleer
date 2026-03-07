@@ -15,7 +15,7 @@ pub struct Band {
 }
 
 #[derive(Clone, Copy)]
-struct Coeffs {
+pub(crate) struct Coeffs {
     b0: f32,
     b1: f32,
     b2: f32,
@@ -107,11 +107,7 @@ impl Equalizer {
         );
     }
 
-    pub fn get_bands(&self) -> &[Band] {
-        &self.bands
-    }
-
-    pub fn get_coeffs(&self) -> Arc<RwLock<Vec<Coeffs>>> {
+    pub(crate) fn get_coeffs(&self) -> Arc<RwLock<Vec<Coeffs>>> {
         self.coeffs.clone()
     }
 }
