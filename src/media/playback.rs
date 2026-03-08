@@ -14,8 +14,6 @@ use std::fs::File;
 use std::io::BufReader;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
-use symphonia::core::codecs::CodecRegistry;
-use symphonia::default::register_enabled_codecs;
 use symphonia_adapter_libopus::OpusDecoder;
 use tokio::sync::mpsc;
 use tracing::{debug, error};
@@ -59,18 +57,6 @@ impl Global for Playback {}
 
 static PLAYBACK_CMD_TX: OnceLock<mpsc::UnboundedSender<PlaybackCommand>> = OnceLock::new();
 
-fn get_codec_registry() -> Arc<CodecRegistry> {
-    static REGISTRY: OnceLock<Arc<CodecRegistry>> = OnceLock::new();
-    REGISTRY
-        .get_or_init(|| {
-            let mut registry = CodecRegistry::new();
-            registry.register_all::<OpusDecoder>();
-            register_enabled_codecs(&mut registry);
-            Arc::new(registry)
-        })
-        .clone()
-}
-
 impl Playback {
     fn compute_normalization_gain_for(
         normalization_enabled: bool,
@@ -100,7 +86,7 @@ impl Playback {
             File::open(&path).with_context(|| format!("Failed to open audio file: {:?}", path))?;
 
         let decoder = DecoderBuilder::new()
-            .with_codec_registry(get_codec_registry())
+            .with_decoder::<OpusDecoder>()
             .with_data(BufReader::new(file))
             .build()
             .context("Failed to decode audio file")?;
@@ -401,7 +387,7 @@ impl Playback {
 
             let file = File::open(file_path)?;
             let mut source: Decoder<BufReader<File>> = DecoderBuilder::new()
-                .with_codec_registry(get_codec_registry())
+                .with_decoder::<OpusDecoder>()
                 .with_data(BufReader::new(file))
                 .build()?;
             source.try_seek(Duration::from_secs_f32(position)).ok();
