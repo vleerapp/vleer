@@ -979,7 +979,7 @@ dependencies = [
 [[package]]
 name = "collections"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#1d39afe6459cb22f7b1ee388814160857d6a5136"
+source = "git+https://github.com/vleerapp/zed#6cbdbee08d45a633ef5482c18057c451b4da6a0f"
 dependencies = [
  "indexmap",
  "rustc-hash 2.1.1",
@@ -1530,7 +1530,7 @@ dependencies = [
 [[package]]
 name = "derive_refineable"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#1d39afe6459cb22f7b1ee388814160857d6a5136"
+source = "git+https://github.com/vleerapp/zed#6cbdbee08d45a633ef5482c18057c451b4da6a0f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2507,7 +2507,7 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "git+https://github.com/vleerapp/zed#1d39afe6459cb22f7b1ee388814160857d6a5136"
+source = "git+https://github.com/vleerapp/zed#6cbdbee08d45a633ef5482c18057c451b4da6a0f"
 dependencies = [
  "anyhow",
  "async-channel 2.5.0",
@@ -2586,7 +2586,7 @@ dependencies = [
 [[package]]
 name = "gpui_linux"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#1d39afe6459cb22f7b1ee388814160857d6a5136"
+source = "git+https://github.com/vleerapp/zed#6cbdbee08d45a633ef5482c18057c451b4da6a0f"
 dependencies = [
  "anyhow",
  "as-raw-xcb-connection",
@@ -2634,7 +2634,7 @@ dependencies = [
 [[package]]
 name = "gpui_macos"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#1d39afe6459cb22f7b1ee388814160857d6a5136"
+source = "git+https://github.com/vleerapp/zed#6cbdbee08d45a633ef5482c18057c451b4da6a0f"
 dependencies = [
  "anyhow",
  "async-task",
@@ -2676,7 +2676,7 @@ dependencies = [
 [[package]]
 name = "gpui_macros"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#1d39afe6459cb22f7b1ee388814160857d6a5136"
+source = "git+https://github.com/vleerapp/zed#6cbdbee08d45a633ef5482c18057c451b4da6a0f"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -2687,7 +2687,7 @@ dependencies = [
 [[package]]
 name = "gpui_platform"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#1d39afe6459cb22f7b1ee388814160857d6a5136"
+source = "git+https://github.com/vleerapp/zed#6cbdbee08d45a633ef5482c18057c451b4da6a0f"
 dependencies = [
  "console_error_panic_hook",
  "gpui",
@@ -2700,7 +2700,7 @@ dependencies = [
 [[package]]
 name = "gpui_util"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#1d39afe6459cb22f7b1ee388814160857d6a5136"
+source = "git+https://github.com/vleerapp/zed#6cbdbee08d45a633ef5482c18057c451b4da6a0f"
 dependencies = [
  "anyhow",
  "log",
@@ -2709,7 +2709,7 @@ dependencies = [
 [[package]]
 name = "gpui_web"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#1d39afe6459cb22f7b1ee388814160857d6a5136"
+source = "git+https://github.com/vleerapp/zed#6cbdbee08d45a633ef5482c18057c451b4da6a0f"
 dependencies = [
  "anyhow",
  "console_error_panic_hook",
@@ -2733,7 +2733,7 @@ dependencies = [
 [[package]]
 name = "gpui_wgpu"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#1d39afe6459cb22f7b1ee388814160857d6a5136"
+source = "git+https://github.com/vleerapp/zed#6cbdbee08d45a633ef5482c18057c451b4da6a0f"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2761,7 +2761,7 @@ dependencies = [
 [[package]]
 name = "gpui_windows"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#1d39afe6459cb22f7b1ee388814160857d6a5136"
+source = "git+https://github.com/vleerapp/zed#6cbdbee08d45a633ef5482c18057c451b4da6a0f"
 dependencies = [
  "anyhow",
  "collections",
@@ -2963,7 +2963,7 @@ dependencies = [
 [[package]]
 name = "http_client"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#1d39afe6459cb22f7b1ee388814160857d6a5136"
+source = "git+https://github.com/vleerapp/zed#6cbdbee08d45a633ef5482c18057c451b4da6a0f"
 dependencies = [
  "anyhow",
  "async-compression",
@@ -3795,7 +3795,7 @@ dependencies = [
 [[package]]
 name = "media"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#1d39afe6459cb22f7b1ee388814160857d6a5136"
+source = "git+https://github.com/vleerapp/zed#6cbdbee08d45a633ef5482c18057c451b4da6a0f"
 dependencies = [
  "anyhow",
  "bindgen",
@@ -3942,7 +3942,7 @@ dependencies = [
 [[package]]
 name = "naga"
 version = "28.0.1"
-source = "git+https://github.com/zed-industries/wgpu?rev=9459e95113c5bd116b2cc2c87e8424b28059e17c#9459e95113c5bd116b2cc2c87e8424b28059e17c"
+source = "git+https://github.com/zed-industries/wgpu?rev=465557eccfe77c840a9b4936f1408da9503372c4#465557eccfe77c840a9b4936f1408da9503372c4"
 dependencies = [
  "arrayvec",
  "bit-set",
@@ -4737,7 +4737,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "perf"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#1d39afe6459cb22f7b1ee388814160857d6a5136"
+source = "git+https://github.com/vleerapp/zed#6cbdbee08d45a633ef5482c18057c451b4da6a0f"
 dependencies = [
  "collections",
  "serde",
@@ -5396,7 +5396,7 @@ dependencies = [
 [[package]]
 name = "refineable"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#1d39afe6459cb22f7b1ee388814160857d6a5136"
+source = "git+https://github.com/vleerapp/zed#6cbdbee08d45a633ef5482c18057c451b4da6a0f"
 dependencies = [
  "derive_refineable",
 ]
@@ -5774,7 +5774,7 @@ dependencies = [
 [[package]]
 name = "scheduler"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#1d39afe6459cb22f7b1ee388814160857d6a5136"
+source = "git+https://github.com/vleerapp/zed#6cbdbee08d45a633ef5482c18057c451b4da6a0f"
 dependencies = [
  "async-task",
  "backtrace",
@@ -6555,7 +6555,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "sum_tree"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#1d39afe6459cb22f7b1ee388814160857d6a5136"
+source = "git+https://github.com/vleerapp/zed#6cbdbee08d45a633ef5482c18057c451b4da6a0f"
 dependencies = [
  "arrayvec",
  "log",
@@ -7596,7 +7596,7 @@ checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 [[package]]
 name = "util"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#1d39afe6459cb22f7b1ee388814160857d6a5136"
+source = "git+https://github.com/vleerapp/zed#6cbdbee08d45a633ef5482c18057c451b4da6a0f"
 dependencies = [
  "anyhow",
  "async-fs",
@@ -7635,7 +7635,7 @@ dependencies = [
 [[package]]
 name = "util_macros"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#1d39afe6459cb22f7b1ee388814160857d6a5136"
+source = "git+https://github.com/vleerapp/zed#6cbdbee08d45a633ef5482c18057c451b4da6a0f"
 dependencies = [
  "perf",
  "quote",
@@ -8105,7 +8105,7 @@ checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 [[package]]
 name = "wgpu"
 version = "28.0.1"
-source = "git+https://github.com/zed-industries/wgpu?rev=9459e95113c5bd116b2cc2c87e8424b28059e17c#9459e95113c5bd116b2cc2c87e8424b28059e17c"
+source = "git+https://github.com/zed-industries/wgpu?rev=465557eccfe77c840a9b4936f1408da9503372c4#465557eccfe77c840a9b4936f1408da9503372c4"
 dependencies = [
  "arrayvec",
  "bitflags 2.11.0",
@@ -8134,7 +8134,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core"
 version = "28.0.1"
-source = "git+https://github.com/zed-industries/wgpu?rev=9459e95113c5bd116b2cc2c87e8424b28059e17c#9459e95113c5bd116b2cc2c87e8424b28059e17c"
+source = "git+https://github.com/zed-industries/wgpu?rev=465557eccfe77c840a9b4936f1408da9503372c4#465557eccfe77c840a9b4936f1408da9503372c4"
 dependencies = [
  "arrayvec",
  "bit-set",
@@ -8165,7 +8165,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-apple"
 version = "28.0.1"
-source = "git+https://github.com/zed-industries/wgpu?rev=9459e95113c5bd116b2cc2c87e8424b28059e17c#9459e95113c5bd116b2cc2c87e8424b28059e17c"
+source = "git+https://github.com/zed-industries/wgpu?rev=465557eccfe77c840a9b4936f1408da9503372c4#465557eccfe77c840a9b4936f1408da9503372c4"
 dependencies = [
  "wgpu-hal",
 ]
@@ -8173,7 +8173,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-emscripten"
 version = "28.0.1"
-source = "git+https://github.com/zed-industries/wgpu?rev=9459e95113c5bd116b2cc2c87e8424b28059e17c#9459e95113c5bd116b2cc2c87e8424b28059e17c"
+source = "git+https://github.com/zed-industries/wgpu?rev=465557eccfe77c840a9b4936f1408da9503372c4#465557eccfe77c840a9b4936f1408da9503372c4"
 dependencies = [
  "wgpu-hal",
 ]
@@ -8181,7 +8181,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-windows-linux-android"
 version = "28.0.1"
-source = "git+https://github.com/zed-industries/wgpu?rev=9459e95113c5bd116b2cc2c87e8424b28059e17c#9459e95113c5bd116b2cc2c87e8424b28059e17c"
+source = "git+https://github.com/zed-industries/wgpu?rev=465557eccfe77c840a9b4936f1408da9503372c4#465557eccfe77c840a9b4936f1408da9503372c4"
 dependencies = [
  "wgpu-hal",
 ]
@@ -8189,7 +8189,7 @@ dependencies = [
 [[package]]
 name = "wgpu-hal"
 version = "28.0.1"
-source = "git+https://github.com/zed-industries/wgpu?rev=9459e95113c5bd116b2cc2c87e8424b28059e17c#9459e95113c5bd116b2cc2c87e8424b28059e17c"
+source = "git+https://github.com/zed-industries/wgpu?rev=465557eccfe77c840a9b4936f1408da9503372c4#465557eccfe77c840a9b4936f1408da9503372c4"
 dependencies = [
  "android_system_properties",
  "arrayvec",
@@ -8236,7 +8236,7 @@ dependencies = [
 [[package]]
 name = "wgpu-types"
 version = "28.0.1"
-source = "git+https://github.com/zed-industries/wgpu?rev=9459e95113c5bd116b2cc2c87e8424b28059e17c#9459e95113c5bd116b2cc2c87e8424b28059e17c"
+source = "git+https://github.com/zed-industries/wgpu?rev=465557eccfe77c840a9b4936f1408da9503372c4#465557eccfe77c840a9b4936f1408da9503372c4"
 dependencies = [
  "bitflags 2.11.0",
  "bytemuck",
@@ -9400,7 +9400,7 @@ dependencies = [
 [[package]]
 name = "zlog"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#1d39afe6459cb22f7b1ee388814160857d6a5136"
+source = "git+https://github.com/vleerapp/zed#6cbdbee08d45a633ef5482c18057c451b4da6a0f"
 dependencies = [
  "anyhow",
  "chrono",
@@ -9417,7 +9417,7 @@ checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 [[package]]
 name = "ztracing"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#1d39afe6459cb22f7b1ee388814160857d6a5136"
+source = "git+https://github.com/vleerapp/zed#6cbdbee08d45a633ef5482c18057c451b4da6a0f"
 dependencies = [
  "tracing",
  "tracing-subscriber",
@@ -9428,7 +9428,7 @@ dependencies = [
 [[package]]
 name = "ztracing_macro"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#1d39afe6459cb22f7b1ee388814160857d6a5136"
+source = "git+https://github.com/vleerapp/zed#6cbdbee08d45a633ef5482c18057c451b4da6a0f"
 
 [[package]]
 name = "zune-core"
