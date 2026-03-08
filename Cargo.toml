@@ -21,7 +21,7 @@ gpui_platform = { git = "https://github.com/vleerapp/zed", features = [
 anyhow = "1.0.102"
 dirs = "6.0.0"
 tracing = "0.1.44"
-tracing-subscriber = "0.3.22"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 tokio = { version = "1.50.0", features = ["full"] }
 futures = "0.3.32"
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "chrono"] }
