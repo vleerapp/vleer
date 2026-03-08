@@ -20,11 +20,17 @@ static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    let _instance_guard = match crate::single_instance::try_acquire()? {
-        crate::single_instance::AcquireResult::Acquired(guard) => guard,
-        crate::single_instance::AcquireResult::AlreadyRunning => {
-            tracing::warn!("Another Vleer instance is already running. Exiting.");
-            return Ok(());
+    let skip_single_instance = std::env::args().any(|arg| arg == "--skip-single-instance");
+
+    let _instance_guard = if skip_single_instance {
+        None
+    } else {
+        match crate::single_instance::try_acquire()? {
+            crate::single_instance::AcquireResult::Acquired(guard) => Some(guard),
+            crate::single_instance::AcquireResult::AlreadyRunning => {
+                tracing::warn!("Another Vleer instance is already running. Exiting.");
+                return Ok(());
+            }
         }
     };
 
