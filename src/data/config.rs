@@ -33,7 +33,10 @@ pub struct ScanSettings {
 impl Default for ScanSettings {
     fn default() -> Self {
         Self {
-            paths: vec!["~/Music".to_string()],
+            paths: dirs::audio_dir()
+                .map(|p| p.to_string_lossy().to_string())
+                .into_iter()
+                .collect(),
         }
     }
 }
