@@ -32,6 +32,22 @@ impl Database {
         .map(Into::into))
     }
 
+    pub async fn get_songs_by_ids(&self, ids: &[Cuid]) -> sqlx::Result<Vec<Song>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders = ids.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT s.*, ar.name AS artist_name FROM songs s LEFT JOIN artists ar ON s.artist_id = ar.id WHERE s.id IN ({})",
+            placeholders
+        );
+        let mut query = sqlx::query_as::<_, SongRow>(&sql);
+        for id in ids {
+            query = query.bind(id);
+        }
+        Ok(query.fetch_all(&*self.pool).await?.into_iter().map(Into::into).collect())
+    }
+
     pub async fn get_song_by_path(&self, file_path: &str) -> sqlx::Result<Option<Song>> {
         Ok(sqlx::query_as::<_, SongRow>(
             r#"
