@@ -12,9 +12,8 @@ use crate::{
     },
     media::queue::Queue,
     ui::{
-        assets::image_cache::app_image_cache,
         components::{
-            context_menu::LibraryDataChanged,
+            context_menu::{LibraryDataChanged, QueueChanged},
             div::flex_col,
             song_table::{
                 GetRowCountHandler, GetRowHandler, QueueHandler, SongColumn, SongEntry, SongTable,
@@ -262,6 +261,7 @@ impl SongsView {
             cx.update_global::<Queue, _>(|queue, _cx| {
                 queue.add_songs(song_ids);
             });
+            cx.set_global(QueueChanged::default());
         });
 
         let table = SongTable::new(
@@ -339,7 +339,6 @@ impl SongsView {
 impl Render for SongsView {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         flex_col()
-            .image_cache(app_image_cache())
             .id("songs-border")
             .size_full()
             .child(self.table.clone())

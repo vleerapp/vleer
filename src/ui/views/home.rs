@@ -1,7 +1,6 @@
 use crate::{
     data::{db::repo::Database, models::RecentItem},
     ui::{
-        assets::image_cache::app_image_cache,
         components::{
             context_menu::{ContextMenu, album_context_menu_items, song_context_menu_items},
             div::{flex_col, flex_row},
@@ -9,8 +8,7 @@ use crate::{
                 icon::icon,
                 icons::{ARROW_LEFT, ARROW_RIGHT},
             },
-        },
-        variables::Variables,
+        }, layout::queue::QueueVisible, variables::Variables
     },
 };
 use gpui::{prelude::FluentBuilder, *};
@@ -195,11 +193,15 @@ fn recent_item_tile(
 impl Render for HomeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
+        let queue_visible = cx.global::<QueueVisible>();
         let context_menu = self.context_menu.clone();
 
         let bounds = window.bounds();
         let window_width: f32 = bounds.size.width.into();
-        let estimated_width = window_width - 300.0 - 98.0;
+        let mut estimated_width = window_width - 300.0 - 98.0;
+        if queue_visible.0 {
+            estimated_width -= 316.0;
+        }
         if estimated_width > 0.0 {
             self.container_width = Some(estimated_width);
         }
@@ -349,7 +351,6 @@ impl Render for HomeView {
             .gap(px(variables.padding_16));
 
         div()
-            .image_cache(app_image_cache())
             .id("home-container")
             .flex()
             .flex_col()

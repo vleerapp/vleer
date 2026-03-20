@@ -4,13 +4,12 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::{
     data::{db::repo::Database, models::AlbumListItem},
     ui::{
-        assets::image_cache::app_image_cache,
         components::{
             context_menu::{ContextMenu, LibraryDataChanged, album_context_menu_items},
             div::{flex_col, flex_row},
             scrollbar::{Scrollbar, ScrollbarAxis},
         },
-        layout::library::Search,
+        layout::{library::Search, queue::QueueVisible},
         variables::Variables,
         views::{ActiveView, AppView},
     },
@@ -351,10 +350,14 @@ fn album_tile(
 impl Render for AlbumsView {
     fn render(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
+        let queue_visible = cx.global::<QueueVisible>();
 
         let bounds = window.bounds();
         let window_width: f32 = bounds.size.width.into();
-        let estimated_width = window_width - 300.0 - 98.0;
+        let mut estimated_width = window_width - 300.0 - 98.0;
+        if queue_visible.0 {
+            estimated_width -= 316.0;
+        }
         if estimated_width > 0.0 {
             self.container_width = Some(estimated_width);
         }
@@ -445,7 +448,6 @@ impl Render for AlbumsView {
         };
 
         flex_col()
-            .image_cache(app_image_cache())
             .size_full()
             .child(
                 div()
