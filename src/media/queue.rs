@@ -346,16 +346,74 @@ impl Queue {
         }
     }
 
-    pub fn get_items(&self) -> &[Cuid] {
-        &self.items
+    pub fn get_items(&self) -> Vec<Cuid> {
+        if self.shuffle && !self.shuffle_order.is_empty() {
+            self.shuffle_order
+                .iter()
+                .filter_map(|&i| self.items.get(i).cloned())
+                .collect()
+        } else {
+            self.items.clone()
+        }
     }
 
-    pub fn len(&self) -> usize {
-        self.items.len()
-    }
+    pub fn move_song(&mut self, from: usize, to: usize) {
+        if from == to || from >= self.items.len() || to >= self.items.len() {
+            return;
+        }
 
-    pub fn is_empty(&self) -> bool {
-        self.items.is_empty()
+        let item = self.items.remove(from);
+        self.items.insert(to, item);
+
+        if let Some(current) = self.current_index {
+            self.current_index = Some(if current == from {
+                to
+            } else if from < to {
+                if current > from && current <= to {
+                    current - 1
+                } else {
+                    current
+                }
+            } else {
+                if current >= to && current < from {
+                    current + 1
+                } else {
+                    current
+                }
+            });
+        }
+
+        if self.shuffle {
+            self.shuffle_order = self
+                .shuffle_order
+                .iter()
+                .map(|&idx| {
+                    if idx == from {
+                        to
+                    } else if from < to {
+                        if idx > from && idx <= to {
+                            idx - 1
+                        } else {
+                            idx
+                        }
+                    } else {
+                        if idx >= to && idx < from {
+                            idx + 1
+                        } else {
+                            idx
+                        }
+                    }
+                })
+                .collect();
+        }
+
+        *self.current_song.borrow_mut() = None;
+        debug!(
+            "Moved song from {} to {}. Queue size: {}",
+            from,
+            to,
+            self.items.len()
+        );
     }
 
     pub fn set_shuffle(&mut self, shuffle: bool) {
@@ -392,11 +450,6 @@ impl Queue {
 
     pub fn get_shuffle(&self) -> bool {
         self.shuffle
-    }
-
-    pub fn set_repeat_mode(&mut self, mode: RepeatMode) {
-        self.repeat_mode = mode;
-        debug!("Repeat mode set to: {:?}", mode);
     }
 
     pub fn get_repeat_mode(&self) -> RepeatMode {
