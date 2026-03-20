@@ -185,6 +185,7 @@ pub struct Scrollbar {
     max_fps: usize,
     width: Pixels,
 }
+
 impl Scrollbar {
     #[track_caller]
     pub fn new<H: ScrollbarHandle + Clone>(scroll_handle: &H) -> Self {
@@ -193,7 +194,7 @@ impl Scrollbar {
             id: ElementId::CodeLocation(*caller),
             axis: ScrollbarAxis::Both,
             scroll_handle: Rc::new(scroll_handle.clone()),
-            max_fps: 120,
+            max_fps: 60,
             scroll_size: None,
             width: DEFAULT_WIDTH,
         }
@@ -410,12 +411,15 @@ impl Element for Scrollbar {
         let view_id = window.current_view();
         let hitbox_bounds = prepaint.hitbox.bounds;
         if self.scroll_handle.offset() != state.get().last_scroll_offset {
+            let was_dragging = state.get().dragged_axis.is_some();
             state.set(
                 state
                     .get()
                     .with_last_scroll(self.scroll_handle.offset(), Some(Instant::now())),
             );
-            cx.notify(view_id);
+            if !was_dragging {
+                cx.notify(view_id);
+            }
         }
         window.with_content_mask(
             Some(ContentMask {
@@ -498,57 +502,58 @@ impl Element for Scrollbar {
                         let max_fps_duration =
                             std::time::Duration::from_millis((1000 / self.max_fps) as u64);
                         move |event: &MouseMoveEvent, _, _, cx| {
+                            let is_dragging =
+                                state.get().dragged_axis == Some(axis) && event.dragging();
+
                             let mut notify = false;
-                            if bounds.contains(&event.position) {
-                                if state.get().hovered_axis != Some(axis) {
-                                    state.set(state.get().with_hovered(Some(axis)));
-                                    notify = true;
-                                }
-                            } else if state.get().hovered_axis == Some(axis) {
-                                state.set(state.get().with_hovered(None));
-                                notify = true;
-                            }
-                            if thumb_bounds.contains(&event.position) {
-                                if state.get().hovered_on_thumb != Some(axis) {
-                                    state.set(state.get().with_hovered_on_thumb(Some(axis)));
-                                    notify = true;
-                                }
-                            } else if state.get().hovered_on_thumb == Some(axis) {
-                                state.set(state.get().with_hovered_on_thumb(None));
-                                notify = true;
-                            }
-                            if state.get().dragged_axis == Some(axis) && event.dragging() {
-                                cx.stop_propagation();
-                                let drag_pos = state.get().drag_pos;
-                                let percentage = (if axis.is_vertical() {
-                                    (event.position.y - drag_pos.y - bounds.origin.y)
-                                        / (bounds.size.height - thumb_size)
-                                } else {
-                                    (event.position.x - drag_pos.x - bounds.origin.x)
-                                        / (bounds.size.width - thumb_size - margin_end)
-                                })
-                                .clamp(0., 1.);
-                                let offset = if axis.is_vertical() {
-                                    point(
-                                        scroll_handle.offset().x,
-                                        (-(scroll_area_size - container_size) * percentage)
-                                            .clamp(safe_range.start, safe_range.end),
-                                    )
-                                } else {
-                                    point(
-                                        (-(scroll_area_size - container_size) * percentage)
-                                            .clamp(safe_range.start, safe_range.end),
-                                        scroll_handle.offset().y,
-                                    )
-                                };
-                                if (scroll_handle.offset().y - offset.y).abs() > px(1.)
-                                    || (scroll_handle.offset().x - offset.x).abs() > px(1.)
-                                {
-                                    if state.get().last_update.elapsed() > max_fps_duration {
-                                        scroll_handle.set_offset(offset);
-                                        state.set(state.get().with_last_update(Instant::now()));
+                            if !is_dragging {
+                                if bounds.contains(&event.position) {
+                                    if state.get().hovered_axis != Some(axis) {
+                                        state.set(state.get().with_hovered(Some(axis)));
                                         notify = true;
                                     }
+                                } else if state.get().hovered_axis == Some(axis) {
+                                    state.set(state.get().with_hovered(None));
+                                    notify = true;
+                                }
+                                if thumb_bounds.contains(&event.position) {
+                                    if state.get().hovered_on_thumb != Some(axis) {
+                                        state.set(state.get().with_hovered_on_thumb(Some(axis)));
+                                        notify = true;
+                                    }
+                                } else if state.get().hovered_on_thumb == Some(axis) {
+                                    state.set(state.get().with_hovered_on_thumb(None));
+                                    notify = true;
+                                }
+                            }
+                            if is_dragging {
+                                cx.stop_propagation();
+                                if state.get().last_update.elapsed() > max_fps_duration {
+                                    let drag_pos = state.get().drag_pos;
+                                    let percentage = (if axis.is_vertical() {
+                                        (event.position.y - drag_pos.y - bounds.origin.y)
+                                            / (bounds.size.height - thumb_size)
+                                    } else {
+                                        (event.position.x - drag_pos.x - bounds.origin.x)
+                                            / (bounds.size.width - thumb_size - margin_end)
+                                    })
+                                    .clamp(0., 1.);
+                                    let offset = if axis.is_vertical() {
+                                        point(
+                                            scroll_handle.offset().x,
+                                            (-(scroll_area_size - container_size) * percentage)
+                                                .clamp(safe_range.start, safe_range.end),
+                                        )
+                                    } else {
+                                        point(
+                                            (-(scroll_area_size - container_size) * percentage)
+                                                .clamp(safe_range.start, safe_range.end),
+                                            scroll_handle.offset().y,
+                                        )
+                                    };
+                                    scroll_handle.set_offset(offset);
+                                    state.set(state.get().with_last_update(Instant::now()));
+                                    notify = true;
                                 }
                             }
                             if notify {
