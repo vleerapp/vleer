@@ -21,7 +21,7 @@ gpui_platform = { git = "https://github.com/vleerapp/zed", features = [
 anyhow = "1.0.102"
 dirs = "6.0.0"
 tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tokio = { version = "1.50.0", features = ["full"] }
 futures = "0.3.32"
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "chrono"] }
@@ -36,11 +36,11 @@ symphonia = "0.5.5"
 cuid2 = "0.1.4"
 url = "2.5.8"
 rust-embed = "8.11.0"
-lofty = "0.23.2"
+lofty = "0.23.3"
 walkdir = "2.5.0"
 notify = "8.2.0"
 notify-debouncer-full = "0.7.0"
-image = "0.25.9"
+image = "0.25.10"
 sha2 = "0.10.9"
 indexmap = "2.13.0"
 rustc-hash = "2.1.1"
