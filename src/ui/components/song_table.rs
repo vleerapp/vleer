@@ -1,7 +1,7 @@
 use crate::data::models::Cuid;
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
-use crate::ui::components::context_menu::{ContextMenu, song_context_menu_items};
+use crate::ui::components::context_menu::{ContextMenu, QueueChanged, song_context_menu_items};
 use crate::ui::components::div::{flex_col, flex_row};
 use crate::ui::components::icons::icon::icon;
 use crate::ui::components::icons::icons::{ARROW_DOWN, ARROW_UP, DURATION, PLAY};
@@ -13,7 +13,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use tracing::debug;
 
-const ANIMATION_FPS: f32 = 60.0;
+const ANIMATION_FPS: f32 = 15.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ColumnSize {
@@ -332,7 +332,7 @@ impl Render for SongTableItem {
                                         .bg(black().opacity(0.5))
                                         .invisible()
                                         .group_hover("cover-container", |s| s.visible())
-                                        .child(icon(PLAY).size(px(16.0)).text_color(white())),
+                                        .child(icon(PLAY).size(px(16.0)).text_color(variables.text)),
                                 )
                                 .cursor_pointer()
                                 .on_mouse_down(MouseButton::Left, {
@@ -350,6 +350,8 @@ impl Render for SongTableItem {
                                         cx.update_global::<Playback, _>(|playback, cx| {
                                             playback.play_queue(cx);
                                         });
+
+                                        cx.set_global(QueueChanged::default());
 
                                         if let Some(get_queue) = &get_queue {
                                             (get_queue)(
