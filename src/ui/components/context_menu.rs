@@ -19,6 +19,10 @@ impl Global for PinnedItemsChanged {}
 pub struct LibraryDataChanged;
 impl Global for LibraryDataChanged {}
 
+#[derive(Default)]
+pub struct QueueChanged;
+impl Global for QueueChanged {}
+
 fn run_sync<F, T>(future: F) -> T
 where
     F: std::future::Future<Output = T>,

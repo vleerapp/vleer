@@ -3,14 +3,13 @@ use crate::data::models::{Cuid, PinnedItem};
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
 use crate::ui::components::context_menu::{
-    ContextMenu, PinnedItemsChanged, album_context_menu_items, artist_context_menu_items,
-    playlist_context_menu_items, song_context_menu_items,
+    ContextMenu, PinnedItemsChanged, QueueChanged, album_context_menu_items,
+    artist_context_menu_items, playlist_context_menu_items, song_context_menu_items,
 };
 use crate::ui::components::div::flex_row;
 use crate::ui::components::icons::icon::icon;
 use crate::ui::components::scrollbar::ScrollableElement;
 use crate::ui::{
-    assets::image_cache::app_image_cache,
     components::{
         div::flex_col,
         icons::icons::{self, PLAY},
@@ -264,7 +263,7 @@ fn pinned_item(
                             .bg(black().opacity(0.5))
                             .invisible()
                             .group_hover("pinned-item", |s| s.visible())
-                            .child(icon(PLAY).size(px(16.0)).text_color(white()))
+                            .child(icon(PLAY).size(px(16.0)).text_color(variables.text))
                             .cursor_pointer()
                             .on_mouse_down(MouseButton::Left, move |_event, _window, cx| {
                                 let item_type = item_type_clone.clone();
@@ -301,6 +300,8 @@ fn pinned_item(
                                             cx.update_global::<Playback, _>(|playback, cx| {
                                                 playback.play_queue(cx);
                                             });
+
+                                            cx.set_global(QueueChanged::default());
                                         })
                                     }
                                 })
@@ -342,7 +343,6 @@ impl Render for Library {
         let context_menu = self.context_menu.clone();
 
         div()
-            .image_cache(app_image_cache())
             .size_full()
             .min_w_0()
             .min_h_0()
@@ -419,7 +419,7 @@ impl Render for Library {
                                                 .gap(px(variables.padding_8))
                                                 .pr(px(variables.padding_16))
                                                 .py(px(variables.padding_16))
-                                                .children(displayed_items.iter().take(30).map(
+                                                .children(displayed_items.iter().map(
                                                     |item| {
                                                         pinned_item(
                                                             item.id.clone(),
@@ -433,20 +433,18 @@ impl Render for Library {
                                                 )),
                                         )
                                         .into_any_element()
+                                } else if is_search_pending {
+                                    div()
+                                        .pt(px(variables.padding_16))
+                                        .text_color(variables.text_secondary)
+                                        .child("")
+                                        .into_any_element()
                                 } else {
-                                    if is_search_pending {
-                                        div()
-                                            .pt(px(variables.padding_16))
-                                            .text_color(variables.text_secondary)
-                                            .child("")
-                                            .into_any_element()
-                                    } else {
-                                        div()
-                                            .pt(px(variables.padding_16))
-                                            .text_color(variables.text_secondary)
-                                            .child("No Results Found")
-                                            .into_any_element()
-                                    }
+                                    div()
+                                        .pt(px(variables.padding_16))
+                                        .text_color(variables.text_secondary)
+                                        .child("No Results Found")
+                                        .into_any_element()
                                 }),
                         )
                     }),

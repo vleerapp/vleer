@@ -8,14 +8,15 @@ use crate::{
         queue::{Queue, RepeatMode},
     },
     ui::{
-        assets::image_cache::app_image_cache,
         components::{
             button::Button,
+            context_menu::QueueChanged,
             div::{flex_col, flex_row},
             icons::{icon::icon, icons::*},
             progress_bar::progress_slider,
             slider::slider,
         },
+        layout::queue::QueueVisible,
         variables::Variables,
     },
 };
@@ -95,6 +96,10 @@ impl Render for Player {
         let volume = cx.global::<Playback>().get_volume();
         let repeat_mode = cx.global::<Queue>().get_repeat_mode();
         let is_shuffle = cx.global::<Queue>().get_shuffle();
+        let queue_visible = cx
+            .try_global::<QueueVisible>()
+            .map(|q| q.0)
+            .unwrap_or(false);
 
         let play_button = Button::new("play_pause")
             .group("playpause-button")
@@ -147,7 +152,7 @@ impl Render for Player {
                 cx.update_global::<Queue, _>(|queue, _cx| {
                     queue.set_shuffle(queue.get_shuffle() ^ true);
                 });
-                cx.notify();
+                cx.set_global(QueueChanged::default());
             }));
 
         let repeat_icon = match repeat_mode {
@@ -258,10 +263,31 @@ impl Render for Player {
             _ => VOLUME_1,
         };
 
+        let queue_button = Button::new("queue-toggle")
+            .group("queue-toggle-button")
+            .child(
+                icon(QUEUE)
+                    .when(queue_visible, |s| s.text_color(variables.accent))
+                    .group_hover("queue-toggle-button", |s| {
+                        if !queue_visible {
+                            s.text_color(variables.text)
+                        } else {
+                            s
+                        }
+                    }),
+            )
+            .on_click(cx.listener(|_this, _event, _window, cx| {
+                cx.update_global::<QueueVisible, _>(|q, _cx| {
+                    q.0 = !q.0;
+                });
+                cx.notify();
+            }));
+
         let volume_display = flex_row()
             .gap(px(variables.padding_8))
             .items_center()
             .justify_end()
+            .child(queue_button)
             .child(icon(volume_icon))
             .child(
                 slider()
@@ -281,7 +307,6 @@ impl Render for Player {
             );
 
         flex_col()
-            .image_cache(app_image_cache())
             .h_full()
             .p(px(variables.padding_16))
             .gap(px(variables.padding_16))

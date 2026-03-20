@@ -2,16 +2,16 @@ use anyhow::Ok;
 use gpui::*;
 use gpui_platform::application;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
-use std::{collections::HashMap, fs, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 use tracing::{debug, error};
 
 use crate::{
     data::{config::Config, db::repo::Database, scanner::Scanner, telemetry::Telemetry},
     media::{controller::MediaController, playback::Playback, queue::Queue},
     ui::{
-        assets::VleerAssetSource,
+        assets::{VleerAssetSource, image_cache::app_image_cache},
         components::{
-            context_menu::{LibraryDataChanged, PinnedItemsChanged},
+            context_menu::{LibraryDataChanged, PinnedItemsChanged, QueueChanged},
             div::{flex_col, flex_row},
             input::bind_input_keys,
             pane::pane,
@@ -23,6 +23,7 @@ use crate::{
             library::{Library, Search},
             navbar::{Navbar, NavbarScanProgressBar},
             player::Player,
+            queue::{QueuePane, QueueVisible},
         },
         variables::Variables,
         views::{ActiveView, AppView, ViewRegistry},
@@ -34,6 +35,7 @@ pub(crate) struct MainWindow {
     navbar: Entity<Navbar>,
     navbar_scan_progress: Entity<NavbarScanProgressBar>,
     player: Entity<Player>,
+    queue: Entity<QueuePane>,
     views: HashMap<AppView, AnyView>,
     current_view: AppView,
     titlebar_should_move: bool,
@@ -67,13 +69,22 @@ impl Render for MainWindow {
             .map(|view| view.clone().into_any_element())
             .unwrap_or_else(|| div().into_any_element());
 
+        let queue_visible = cx
+            .try_global::<QueueVisible>()
+            .map(|q| q.0)
+            .unwrap_or(false);
+
         let show_linux_controls = cfg!(target_os = "linux")
             && matches!(window.window_decorations(), Decorations::Client { .. });
         let show_titlebar = cfg!(target_os = "windows") || show_linux_controls;
         let is_macos = cfg!(target_os = "macos");
         let titlebar_height = px(32.0);
 
-        let mut element = flex_col().size_full().min_h_0().bg(variables.background);
+        let mut element = flex_col()
+            .size_full()
+            .min_h_0()
+            .bg(variables.background)
+            .image_cache(app_image_cache());
 
         if show_titlebar {
             let mut titlebar = flex_row()
@@ -166,18 +177,44 @@ impl Render for MainWindow {
                                         )
                                         .child(self.navbar_scan_progress.clone()),
                                 )
-                                .child(
-                                    div()
-                                        .id("current-view-container")
+                                .child({
+                                    let mut row = div()
+                                        .flex()
+                                        .flex_row()
                                         .flex_1()
                                         .min_h_0()
                                         .size_full()
+                                        .gap(px(variables.padding_16))
                                         .child(
-                                            pane("current-view")
-                                                .title(self.current_view.title())
-                                                .child(content),
-                                        ),
-                                ),
+                                            div()
+                                                .id("current-view-container")
+                                                .flex_1()
+                                                .min_w_0()
+                                                .min_h_0()
+                                                .h_full()
+                                                .child(
+                                                    pane("current-view")
+                                                        .title(self.current_view.title())
+                                                        .child(content),
+                                                ),
+                                        );
+                                    if queue_visible {
+                                        row = row.child(
+                                            div()
+                                                .id("queue-container")
+                                                .w(px(300.0))
+                                                .flex_shrink_0()
+                                                .min_h_0()
+                                                .h_full()
+                                                .child(
+                                                    pane("queue")
+                                                        .title("Queue")
+                                                        .child(self.queue.clone()),
+                                                ),
+                                        );
+                                    }
+                                    row
+                                }),
                         ),
                 )
                 .child(
@@ -229,17 +266,10 @@ pub async fn run() -> anyhow::Result<()> {
     let data_dir = dirs::data_dir()
         .expect("couldn't get data directory")
         .join("vleer");
+
     let config_dir = dirs::config_dir()
         .expect("couldn't get config directory")
         .join("vleer");
-
-    fs::create_dir_all(&data_dir).inspect_err(|error| {
-        tracing::error!(
-            ?error,
-            "couldn't create data directory '{}'",
-            data_dir.display(),
-        )
-    })?;
 
     let db_path = data_dir.join("library.db");
 
@@ -250,6 +280,7 @@ pub async fn run() -> anyhow::Result<()> {
             .synchronous(SqliteSynchronous::Normal)
             .journal_mode(SqliteJournalMode::Wal)
             .busy_timeout(std::time::Duration::from_secs(3))
+            .pragma("auto_vacuum", "FULL")
             .create_if_missing(true);
 
         let pool = SqlitePoolOptions::new()
@@ -285,6 +316,8 @@ pub async fn run() -> anyhow::Result<()> {
             cx.set_global(ActiveView::default());
             cx.set_global(PinnedItemsChanged::default());
             cx.set_global(LibraryDataChanged::default());
+            cx.set_global(QueueVisible::default());
+            cx.set_global(QueueChanged::default());
 
             Config::init(cx, &config_dir).expect("unable to initizalize settings");
             Playback::init(cx).expect("unable to initizalize playback context");
@@ -328,6 +361,7 @@ pub async fn run() -> anyhow::Result<()> {
                         let navbar_scan_progress_entity =
                             cx.new(|cx| NavbarScanProgressBar::new(cx));
                         let player_entity = cx.new(|cx| Player::new(cx));
+                        let queue_entity = cx.new(|cx| QueuePane::new(cx));
 
                         let views = ViewRegistry::register_all(window, cx);
 
@@ -336,6 +370,7 @@ pub async fn run() -> anyhow::Result<()> {
                             navbar: navbar_entity,
                             navbar_scan_progress: navbar_scan_progress_entity,
                             player: player_entity,
+                            queue: queue_entity,
                             views,
                             current_view: AppView::Home,
                             titlebar_should_move: false,
