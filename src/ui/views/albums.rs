@@ -378,6 +378,7 @@ impl Render for AlbumsView {
             flex_row()
                 .id("albums-empty")
                 .w_full()
+                .p(px(variables.padding_24))
                 .child("No Results Found")
                 .text_color(variables.text_secondary)
                 .into_any_element()
@@ -403,6 +404,7 @@ impl Render for AlbumsView {
                                             format!("albums-row-{}", row_idx).into(),
                                         ))
                                         .w_full()
+                                        .px(px(variables.padding_24))
                                         .gap(px(GAP_SIZE))
                                         .pb(px(GAP_SIZE));
 
@@ -442,7 +444,9 @@ impl Render for AlbumsView {
                         },
                     )
                     .track_scroll(&scroll_handle)
-                    .size_full(),
+                    .size_full()
+                    .pt(px(variables.padding_24))
+                    .pb(px(variables.padding_24 - GAP_SIZE)),
                 )
                 .into_any_element()
         };
@@ -460,7 +464,6 @@ impl Render for AlbumsView {
                         div()
                             .id("albums-content")
                             .size_full()
-                            .p(px(variables.padding_24))
                             .child(grid_content),
                     )
                     .child(self.context_menu.clone()),

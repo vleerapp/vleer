@@ -8,6 +8,7 @@ use crate::{
                 icon::icon,
                 icons::{ARROW_LEFT, ARROW_RIGHT},
             },
+            scrollbar::ScrollableElement,
         }, layout::queue::QueueVisible, variables::Variables
     },
 };
@@ -355,17 +356,19 @@ impl Render for HomeView {
             .flex()
             .flex_col()
             .size_full()
-            .p(px(variables.padding_24))
             .child(
                 div()
                     .id("home-scroll-container")
                     .flex_1()
                     .size_full()
                     .min_h_0()
-                    .overflow_y_scroll()
+                    .overflow_y_scrollbar()
                     .child(
                         flex_col()
                             .id("home-content")
+                            .pt(px(variables.padding_24))
+                            .px(px(variables.padding_24))
+                            .pb(px(variables.padding_24))
                             .gap(px(variables.padding_24))
                             .child(
                                 flex_row()

@@ -356,6 +356,7 @@ impl Render for ArtistsView {
             flex_row()
                 .id("artists-empty")
                 .w_full()
+                .p(px(variables.padding_24))
                 .child("No Results Found")
                 .text_color(variables.text_secondary)
                 .into_any_element()
@@ -381,6 +382,7 @@ impl Render for ArtistsView {
                                             format!("artists-row-{}", row_idx).into(),
                                         ))
                                         .w_full()
+                                        .px(px(variables.padding_24))
                                         .gap(px(GAP_SIZE))
                                         .pb(px(GAP_SIZE));
 
@@ -422,7 +424,9 @@ impl Render for ArtistsView {
                         },
                     )
                     .track_scroll(&scroll_handle)
-                    .size_full(),
+                    .size_full()
+                    .pt(px(variables.padding_24))
+                    .pb(px(variables.padding_24 - GAP_SIZE)),
                 )
                 .into_any_element()
         };
@@ -440,7 +444,6 @@ impl Render for ArtistsView {
                         div()
                             .id("artists-content")
                             .size_full()
-                            .p(px(variables.padding_24))
                             .child(grid_content),
                     )
                     .child(self.context_menu.clone()),

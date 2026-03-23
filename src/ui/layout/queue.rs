@@ -229,7 +229,10 @@ fn render_row(
     let drag_view = view.clone();
     let drop_view = view.clone();
 
-    div().pb(px(variables.padding_8)).child(
+    div()
+        .px(px(variables.padding_16))
+        .pb(px(variables.padding_8))
+        .child(
         flex_row()
             .w_full()
             .id(ElementId::Name(
@@ -369,6 +372,7 @@ fn render_drop_slot(
         .id(ElementId::Name(
             format!("queue-slot-{}", display_idx).into(),
         ))
+        .px(px(variables.padding_16))
         .pb(px(variables.padding_8))
         .child(div().w_full().h(px(ROW_HEIGHT)))
         .on_drag_move(move |e: &DragMoveEvent<QueueDragPayload>, _window, cx| {
@@ -495,8 +499,6 @@ impl Render for QueuePane {
                         .child(
                             div()
                                 .size_full()
-                                .p(px(variables.padding_16))
-                                .pb(px(0.0))
                                 .child(
                                     uniform_list(
                                         ElementId::Name("queue-list".into()),
@@ -540,7 +542,9 @@ impl Render for QueuePane {
                                         },
                                     )
                                     .track_scroll(&scroll_handle)
-                                    .size_full(),
+                                    .size_full()
+                                    .pt(px(variables.padding_16))
+                                    .pb(px(variables.padding_16 - variables.padding_8)),
                                 ),
                         )
                         .child(

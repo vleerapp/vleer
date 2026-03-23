@@ -7,6 +7,7 @@ use crate::ui::components::icons::icon::icon;
 use crate::ui::components::icons::icons::{PLUS, X};
 use crate::ui::components::input::{InputEvent, TextInput};
 use crate::ui::components::slider::slider;
+use crate::ui::components::scrollbar::ScrollableElement;
 use crate::ui::components::switch::Switch;
 use crate::ui::variables::Variables;
 
@@ -407,10 +408,18 @@ impl Render for SettingsView {
         let normalization = cx.global::<Config>().get().audio.normalization;
         let eq_enabled = cx.global::<Config>().get().equalizer.enabled;
 
-        flex_col()
-            .p(px(variables.padding_24))
-            .gap(px(variables.padding_24))
+        div()
+            .flex_1()
+            .size_full()
+            .min_h_0()
+            .overflow_y_scrollbar()
             .child(
+                flex_col()
+                    .pt(px(variables.padding_24))
+                    .px(px(variables.padding_24))
+                    .pb(px(variables.padding_24))
+                    .gap(px(variables.padding_24))
+                    .child(
                 flex_col()
                     .gap(px(variables.padding_16))
                     .child(
@@ -525,6 +534,6 @@ impl Render for SettingsView {
                             .child("Scan Paths"),
                     )
                     .child(ScanPathsSection),
-            )
+            ))
     }
 }
