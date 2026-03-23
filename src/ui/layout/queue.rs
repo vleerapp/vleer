@@ -5,7 +5,7 @@ use crate::data::db::repo::Database;
 use crate::data::models::{Cuid, Song};
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
-use crate::ui::components::context_menu::QueueChanged;
+use crate::ui::components::context_menu::{ContextMenu, QueueChanged, song_context_menu_items};
 use crate::ui::components::div::{flex_col, flex_row};
 use crate::ui::components::icons::icon::icon;
 use crate::ui::components::icons::icons::{PLAY, X};
@@ -102,6 +102,7 @@ pub struct QueuePane {
     is_animating: bool,
     scroll_handle: UniformListScrollHandle,
     last_current_song_id: Option<Cuid>,
+    context_menu: Entity<ContextMenu>,
 }
 
 impl QueuePane {
@@ -120,6 +121,7 @@ impl QueuePane {
             is_animating: false,
             scroll_handle: UniformListScrollHandle::default(),
             last_current_song_id: None,
+            context_menu: cx.new(|_| ContextMenu::new()),
         };
         pane.reload_songs(cx);
         pane
@@ -207,6 +209,7 @@ fn render_row(
     is_playing: bool,
     spectrum: [f32; 4],
     variables: &Variables,
+    context_menu: Entity<ContextMenu>,
 ) -> impl IntoElement {
     let song = song.clone();
     let variables = *variables;
@@ -228,6 +231,7 @@ fn render_row(
 
     let drag_view = view.clone();
     let drop_view = view.clone();
+    let song_id_for_ctx = song.id.clone();
 
     div()
         .px(px(variables.padding_16))
@@ -244,6 +248,12 @@ fn render_row(
             .gap(px(variables.padding_8))
             .pr(px(variables.padding_8))
             .cursor_move()
+            .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
+                let items = song_context_menu_items(song_id_for_ctx.clone(), cx);
+                context_menu.update(cx, |menu, cx| {
+                    menu.show(event.position, items, cx);
+                });
+            })
             .on_drag(
                 drag_payload,
                 move |payload: &QueueDragPayload, pos, _window, cx| {
@@ -444,6 +454,7 @@ impl Render for QueuePane {
         let songs = self.songs.clone();
         let row_count = songs.len();
         let view_handle = cx.entity();
+        let context_menu = self.context_menu.clone();
 
         let display_order: Vec<usize> = if let (Some(from), Some(over)) = (drag_from, drag_over) {
             if from < row_count && over < row_count {
@@ -534,6 +545,7 @@ impl Render for QueuePane {
                                                             is_playing,
                                                             spectrum,
                                                             &variables,
+                                                            context_menu.clone(),
                                                         )
                                                         .into_any_element()
                                                     }
@@ -558,7 +570,8 @@ impl Render for QueuePane {
                                     Scrollbar::new(&self.scroll_handle)
                                         .axis(ScrollbarAxis::Vertical),
                                 ),
-                        ),
+                        )
+                        .child(div().absolute().size_0().child(self.context_menu.clone()))
                 )
             })
     }
