@@ -130,7 +130,6 @@ pub struct EventRow {
     pub id: Cuid,
     pub event_type: String,
     pub context_id: Option<Cuid>,
-    pub date_created: String,
     pub timestamp: String,
 }
 
@@ -146,7 +145,6 @@ impl EventRow {
                 _ => panic!("Unknown event type"),
             },
             context_id: self.context_id,
-            date_created: self.date_created,
             timestamp: self.timestamp,
         }
     }

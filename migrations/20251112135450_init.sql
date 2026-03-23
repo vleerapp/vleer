@@ -62,7 +62,6 @@ CREATE TABLE IF NOT EXISTS events (
         event_type IN ('PLAY', 'STOP', 'PAUSE', 'RESUME')
     ) NOT NULL,
     context_id TEXT,
-    date_created TEXT DEFAULT (DATETIME('now')),
     timestamp TEXT DEFAULT (DATETIME('now')),
     FOREIGN KEY (context_id) REFERENCES event_contexts(id) ON DELETE CASCADE
 );

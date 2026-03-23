@@ -133,7 +133,6 @@ pub struct Event {
     pub id: Cuid,
     pub event_type: EventType,
     pub context_id: Option<Cuid>,
-    pub date_created: String,
     pub timestamp: String,
 }
 
@@ -311,7 +310,6 @@ impl From<EventRow> for Event {
                 _ => panic!("Unknown event type: {}", row.event_type),
             },
             context_id: row.context_id,
-            date_created: row.date_created,
             timestamp: row.timestamp,
         }
     }
