@@ -21,38 +21,16 @@ A free, open-source music app powered by the OpenMusic API Spec—the open stand
 - [ ] Stable local music player
 - [ ] OpenMusic API integration
 
-## Installation & Security
+## Installation
 
-### Verifying Downloads
-
-**Simple method** - Download your installer and `SHA256SUMS.txt`, then check the hash:
-
-- Linux/macOS: `sha256sum -c SHA256SUMS.txt --ignore-missing`
-- Windows: `certutil -hashfile vleer_setup.msi SHA256`
-
-**GPG verification** - For advanced users who want cryptographic proof:
+All releases are signed with [minisign](https://jedisct1.github.io/minisign/). To verify a download:
 
 ```bash
-# Import our signing key (Key ID: 852407171261C8A4)
-gpg --locate-keys hello@vleer.app
-
-# Verify the fingerprint matches: 7E48 1786 6409 4A19 EF60  EEC8 8524 0717 1261 C8A4
-gpg --fingerprint 852407171261C8A4
-
-# Verify your download
-gpg --verify vleer_setup.msi.asc vleer_setup.msi
+minisign -Vm <file> -P RWQc0Dzx5Dhao5YtQGj79Y4AN7U1pjJFctj3dCLr4tQqkjewjl5xnSqe
 ```
 
-### First-Time Installation Warnings
+> [!NOTE]
+> **macOS:** You may see a warning that the app is damaged. Run `xattr -dr com.apple.quarantine /Applications/Vleer.app` to fix it.
 
-<details>
-  <summary><kbd>macOS</kbd></summary>
-  When you try to open the app, you'll get a warning that the app is damaged. Open the terminal and run this command <code>xattr -dr com.apple.quarantine /Applications/Vleer.app</code> after that it should open without any problems. 
-</details>
-
-<details>
-  <summary><kbd>Windows</kbd></summary>
-  Click "More info" then "Run anyway" to bypass SmartScreen.
-</details>
-
-These warnings appear because we don't pay Apple/Microsoft for certificates. The GPG signatures above prove the files haven't been tampered with.
+> [!NOTE]
+> **Windows:** SmartScreen may block the installer. Click "More info" then "Run anyway".
