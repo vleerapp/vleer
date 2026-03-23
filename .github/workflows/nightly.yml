@@ -66,54 +66,30 @@ jobs:
       - name: Build and Package
         run: cargo packager --release
 
-      - name: Install minisign
-        shell: bash
-        run: |
-          if [[ "$RUNNER_OS" == "Linux" ]]; then
-            curl -sL https://github.com/jedisct1/minisign/releases/latest/download/minisign-linux-x86_64.tar.gz | tar xz -C /usr/local/bin --strip-components=1
-          elif [[ "$RUNNER_OS" == "macOS" ]]; then
-            brew install minisign
-          elif [[ "$RUNNER_OS" == "Windows" ]]; then
-            choco install minisign -y
-          fi
-
-      - name: Write minisign secret key
-        shell: bash
-        run: printf '%s' "$MINISIGN_SECRET_KEY" | base64 -d > /tmp/minisign.key
-        env:
-          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+      - name: CodeSign macOS
+        if: runner.os == 'macOS'
+        run: codesign --force --deep --sign - target/release/bundles/*.app
 
       - name: Sign binaries
-        shell: bash
-        run: |
-          # macOS: ad-hoc codesigning
-          if [[ "$RUNNER_OS" == "macOS" ]]; then
-            codesign --force --deep --sign - target/release/bundles/*.app
-          fi
+        uses: thomasdesr/minisign-action@v1
+        with:
+          args: -Sm target/release/bundles/*
+          minisign_key: ${{ secrets.MINISIGN_SECRET_KEY }}
+          password: ${{ secrets.MINISIGN_PASSWORD }}
 
-          # All platforms: minisign signatures
-          for file in target/release/bundles/*; do
-            if [[ -f "$file" && ! "$file" =~ \.minisig$ ]]; then
-              echo "Signing $file"
-              minisign -Sm "$file" -s /tmp/minisign.key <<< "$MINISIGN_PASSWORD"
-            fi
-          done
-        env:
-          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
-
-      - name: Create SHA256SUMS
+      - name: Sign SHA256SUMS
         shell: bash
         run: |
           cd target/release/bundles
           sha256sum *.{dmg,msi,deb,AppImage,tar.gz} 2>/dev/null > SHA256SUMS.txt || true
-          minisign -Sm SHA256SUMS.txt -s /tmp/minisign.key <<< "$MINISIGN_PASSWORD"
-        env:
-          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
-
-      - name: Clean up secret key
         if: always()
-        shell: bash
-        run: rm -f /tmp/minisign.key
+
+      - name: Sign SHA256SUMS
+        uses: thomasdesr/minisign-action@v1
+        with:
+          args: -Sm target/release/bundles/SHA256SUMS.txt
+          minisign_key: ${{ secrets.MINISIGN_SECRET_KEY }}
+          password: ${{ secrets.MINISIGN_PASSWORD }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
