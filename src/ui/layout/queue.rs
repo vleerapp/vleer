@@ -101,6 +101,7 @@ pub struct QueuePane {
     drag_over: Option<usize>,
     is_animating: bool,
     scroll_handle: UniformListScrollHandle,
+    last_current_song_id: Option<Cuid>,
 }
 
 impl QueuePane {
@@ -118,6 +119,7 @@ impl QueuePane {
             drag_over: None,
             is_animating: false,
             scroll_handle: UniformListScrollHandle::default(),
+            last_current_song_id: None,
         };
         pane.reload_songs(cx);
         pane
@@ -404,6 +406,17 @@ impl Render for QueuePane {
         let is_empty = self.songs.is_empty();
 
         let current_song_id = cx.global::<Queue>().get_current_song_id();
+
+        if current_song_id != self.last_current_song_id {
+            self.last_current_song_id = current_song_id.clone();
+            if let Some(ref song_id) = current_song_id {
+                if let Some(display_idx) = self.songs.iter().position(|s| &s.id == song_id) {
+                    self.scroll_handle
+                        .scroll_to_item_strict(display_idx, ScrollStrategy::Top);
+                }
+            }
+        }
+
         let is_globally_playing = cx.global::<Playback>().get_playing();
         let spectrum = if is_globally_playing {
             cx.global::<Playback>().get_spectrum()
