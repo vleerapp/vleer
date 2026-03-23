@@ -207,6 +207,10 @@ impl Scrollbar {
         self.axis = axis.into();
         self
     }
+    pub fn scroll_size(mut self, size: Size<Pixels>) -> Self {
+        self.scroll_size = Some(size);
+        self
+    }
     fn get_colors(
         &self,
         cx: &App,

@@ -7,7 +7,7 @@ use crate::{
         components::{
             context_menu::{ContextMenu, LibraryDataChanged, album_context_menu_items},
             div::{flex_col, flex_row},
-            scrollbar::{Scrollbar, ScrollbarAxis},
+            scrollbar::{Scrollbar, ScrollbarAxis, ScrollbarHandle},
         },
         layout::{library::Search, queue::QueueVisible},
         variables::Variables,
@@ -470,6 +470,9 @@ impl Render for AlbumsView {
             )
             .when(row_count > 0, |this| {
                 let scroll_handle = self.scroll_handle.clone();
+                let padding_extra = px(variables.padding_24 + (variables.padding_24 - GAP_SIZE));
+                let mut content_size = scroll_handle.content_size();
+                content_size.height += padding_extra;
                 this.child(
                     div()
                         .absolute()
@@ -477,7 +480,11 @@ impl Render for AlbumsView {
                         .right_0()
                         .bottom_0()
                         .left_0()
-                        .child(Scrollbar::new(&scroll_handle).axis(ScrollbarAxis::Vertical)),
+                        .child(
+                            Scrollbar::new(&scroll_handle)
+                                .axis(ScrollbarAxis::Vertical)
+                                .scroll_size(content_size),
+                        ),
                 )
             })
     }
