@@ -181,7 +181,6 @@ impl Render for SongTableItem {
             .group("song-row")
             .items_center()
             .gap(px(variables.padding_8))
-            .px(px(variables.padding_8))
             .pb(px(variables.padding_16))
             .when_some(on_select, move |div, handler| {
                 let row_data = row_data_for_select.clone();
@@ -547,7 +546,6 @@ impl Render for SongTable {
         let mut header = flex_row()
             .w_full()
             .gap(px(variables.padding_8))
-            .px(px(variables.padding_8))
             .pb(px(variables.padding_8))
             .text_color(variables.text_secondary)
             .border_b_1()
@@ -630,13 +628,14 @@ impl Render for SongTable {
             header = header.child(header_col);
         }
 
+        let scroll_handle = self.scroll_handle.clone();
         let list = div()
             .flex_1()
             .size_full()
             .min_h_0()
+            .relative()
             .id("song-table-view")
             .gap(px(variables.padding_16))
-            .pt(px(variables.padding_16))
             .when(row_count > 0, |this| {
                 this.child(
                     div().size_full().child(
@@ -671,16 +670,26 @@ impl Render for SongTable {
                                     .collect()
                             },
                         )
-                        .track_scroll(&self.scroll_handle.clone())
-                        .size_full(),
+                        .track_scroll(&scroll_handle)
+                        .size_full()
+                        .pt(px(variables.padding_16)),
                     ),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .right(px(-variables.padding_24))
+                        .bottom_0()
+                        .left_0()
+                        .child(Scrollbar::new(&self.scroll_handle).axis(ScrollbarAxis::Vertical)),
                 )
             });
 
         div()
             .h_full()
             .w_full()
-            .relative()
+            .min_h_0()
             .child(
                 div()
                     .h_full()
@@ -690,16 +699,5 @@ impl Render for SongTable {
                     .child(header)
                     .child(list),
             )
-            .when(row_count > 0, |this| {
-                this.child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .right_0()
-                        .bottom_0()
-                        .left_0()
-                        .child(Scrollbar::new(&self.scroll_handle).axis(ScrollbarAxis::Vertical)),
-                )
-            })
     }
 }
