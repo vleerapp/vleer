@@ -176,9 +176,9 @@ dependencies = [
 
 [[package]]
 name = "ashpd"
-version = "0.13.8"
+version = "0.13.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51b9019bd7f3beac5fbef5b756f5ef67777ab068035ec15683c1e635ad476f54"
+checksum = "13bdf0fd848239dcd5e64eeeee35dbc00378ebcc6f3aa4ead0a305eec83d0cfb"
 dependencies = [
  "enumflags2",
  "futures-channel",
@@ -979,7 +979,7 @@ dependencies = [
 [[package]]
 name = "collections"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#d307407f1e91e6696fdb64822d53619dfd669086"
+source = "git+https://github.com/vleerapp/zed#03f2f2e722e18bd4b134b894196ad9eb946272bd"
 dependencies = [
  "indexmap",
  "rustc-hash 2.1.1",
@@ -1280,9 +1280,8 @@ dependencies = [
 
 [[package]]
 name = "cpal"
-version = "0.17.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8942da362c0f0d895d7cac616263f2f9424edc5687364dfd1d25ef7eba506d7"
+version = "0.18.0"
+source = "git+https://github.com/RustAudio/cpal#45000c1bbde6008dd57cf2ee14ff6cf2b1e0fd61"
 dependencies = [
  "alsa",
  "coreaudio-rs",
@@ -1490,9 +1489,9 @@ dependencies = [
 
 [[package]]
 name = "deflate64"
-version = "0.1.11"
+version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "807800ff3288b621186fe0a8f3392c4652068257302709c24efd918c3dffcdc2"
+checksum = "ac6b926516df9c60bfa16e107b21086399f8285a44ca9711344b9e553c5146e2"
 
 [[package]]
 name = "der"
@@ -1530,7 +1529,7 @@ dependencies = [
 [[package]]
 name = "derive_refineable"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#d307407f1e91e6696fdb64822d53619dfd669086"
+source = "git+https://github.com/vleerapp/zed#03f2f2e722e18bd4b134b894196ad9eb946272bd"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2507,7 +2506,7 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "git+https://github.com/vleerapp/zed#d307407f1e91e6696fdb64822d53619dfd669086"
+source = "git+https://github.com/vleerapp/zed#03f2f2e722e18bd4b134b894196ad9eb946272bd"
 dependencies = [
  "anyhow",
  "async-channel 2.5.0",
@@ -2586,7 +2585,7 @@ dependencies = [
 [[package]]
 name = "gpui_linux"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#d307407f1e91e6696fdb64822d53619dfd669086"
+source = "git+https://github.com/vleerapp/zed#03f2f2e722e18bd4b134b894196ad9eb946272bd"
 dependencies = [
  "anyhow",
  "as-raw-xcb-connection",
@@ -2634,7 +2633,7 @@ dependencies = [
 [[package]]
 name = "gpui_macos"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#d307407f1e91e6696fdb64822d53619dfd669086"
+source = "git+https://github.com/vleerapp/zed#03f2f2e722e18bd4b134b894196ad9eb946272bd"
 dependencies = [
  "anyhow",
  "async-task",
@@ -2676,7 +2675,7 @@ dependencies = [
 [[package]]
 name = "gpui_macros"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#d307407f1e91e6696fdb64822d53619dfd669086"
+source = "git+https://github.com/vleerapp/zed#03f2f2e722e18bd4b134b894196ad9eb946272bd"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -2687,7 +2686,7 @@ dependencies = [
 [[package]]
 name = "gpui_platform"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#d307407f1e91e6696fdb64822d53619dfd669086"
+source = "git+https://github.com/vleerapp/zed#03f2f2e722e18bd4b134b894196ad9eb946272bd"
 dependencies = [
  "console_error_panic_hook",
  "gpui",
@@ -2700,7 +2699,7 @@ dependencies = [
 [[package]]
 name = "gpui_util"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#d307407f1e91e6696fdb64822d53619dfd669086"
+source = "git+https://github.com/vleerapp/zed#03f2f2e722e18bd4b134b894196ad9eb946272bd"
 dependencies = [
  "anyhow",
  "log",
@@ -2709,7 +2708,7 @@ dependencies = [
 [[package]]
 name = "gpui_web"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#d307407f1e91e6696fdb64822d53619dfd669086"
+source = "git+https://github.com/vleerapp/zed#03f2f2e722e18bd4b134b894196ad9eb946272bd"
 dependencies = [
  "anyhow",
  "console_error_panic_hook",
@@ -2733,7 +2732,7 @@ dependencies = [
 [[package]]
 name = "gpui_wgpu"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#d307407f1e91e6696fdb64822d53619dfd669086"
+source = "git+https://github.com/vleerapp/zed#03f2f2e722e18bd4b134b894196ad9eb946272bd"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2761,7 +2760,7 @@ dependencies = [
 [[package]]
 name = "gpui_windows"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#d307407f1e91e6696fdb64822d53619dfd669086"
+source = "git+https://github.com/vleerapp/zed#03f2f2e722e18bd4b134b894196ad9eb946272bd"
 dependencies = [
  "anyhow",
  "collections",
@@ -2834,6 +2833,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hash32"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47d60b12902ba28e2730cd37e95b8c9223af2808df9e902d4df49588d1470606"
+dependencies = [
+ "byteorder",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2868,6 +2876,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7382cf6263419f2d8df38c55d7da83da5c18aef87fc7a7fc1fb1e344edfe14c1"
 dependencies = [
  "hashbrown 0.15.5",
+]
+
+[[package]]
+name = "heapless"
+version = "0.9.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2af2455f757db2b292a9b1768c4b70186d443bcb3b316252d6b540aec1cd89ed"
+dependencies = [
+ "hash32",
+ "stable_deref_trait",
 ]
 
 [[package]]
@@ -2963,7 +2981,7 @@ dependencies = [
 [[package]]
 name = "http_client"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#d307407f1e91e6696fdb64822d53619dfd669086"
+source = "git+https://github.com/vleerapp/zed#03f2f2e722e18bd4b134b894196ad9eb946272bd"
 dependencies = [
  "anyhow",
  "async-compression",
@@ -3329,9 +3347,9 @@ checksum = "d98f6fed1fde3f8c21bc40a1abb88dd75e67924f9cffc3ef95607bad8017f8e2"
 
 [[package]]
 name = "iri-string"
-version = "0.7.10"
+version = "0.7.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c91338f0783edbd6195decb37bae672fd3b165faffb89bf7b9e6942f8b1a731a"
+checksum = "d8e7418f59cc01c88316161279a7f665217ae316b388e58a0d10e29f54f1e5eb"
 dependencies = [
  "memchr",
  "serde",
@@ -3389,7 +3407,7 @@ dependencies = [
  "cesu8",
  "cfg-if",
  "combine",
- "jni-sys",
+ "jni-sys 0.3.1",
  "log",
  "thiserror 1.0.69",
  "walkdir",
@@ -3398,9 +3416,31 @@ dependencies = [
 
 [[package]]
 name = "jni-sys"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8eaf4bc02d17cbdd7ff4c7438cafcdf7fb9a4613313ad11b4f8fefe7d3fa0130"
+checksum = "41a652e1f9b6e0275df1f15b32661cf0d4b78d4d87ddec5e0c3c20f097433258"
+dependencies = [
+ "jni-sys 0.4.1",
+]
+
+[[package]]
+name = "jni-sys"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6377a88cb3910bee9b0fa88d4f42e1d2da8e79915598f65fb0c7ee14c878af2"
+dependencies = [
+ "jni-sys-macros",
+]
+
+[[package]]
+name = "jni-sys-macros"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38c0b942f458fe50cdac086d2f946512305e5631e720728f2a61aabcd47a6264"
+dependencies = [
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "jobserver"
@@ -3730,9 +3770,9 @@ dependencies = [
 
 [[package]]
 name = "lyon_tessellation"
-version = "1.0.19"
+version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05a35a7dd71b845ff317ce1834c4185506b79790294bde397df8d5c23031e357"
+checksum = "8e43b7e44161571868f5c931d12583592c223c5583eef86b08aa02b7048a3552"
 dependencies = [
  "float_next_after",
  "lyon_path",
@@ -3795,7 +3835,7 @@ dependencies = [
 [[package]]
 name = "media"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#d307407f1e91e6696fdb64822d53619dfd669086"
+source = "git+https://github.com/vleerapp/zed#03f2f2e722e18bd4b134b894196ad9eb946272bd"
 dependencies = [
  "anyhow",
  "bindgen",
@@ -3980,7 +4020,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3f42e7bbe13d351b6bead8286a43aac9534b82bd3cc43e47037f012ebfd62d4"
 dependencies = [
  "bitflags 2.11.0",
- "jni-sys",
+ "jni-sys 0.3.1",
  "log",
  "ndk-sys",
  "num_enum",
@@ -3999,7 +4039,7 @@ version = "0.6.0+11769913"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
 dependencies = [
- "jni-sys",
+ "jni-sys 0.3.1",
 ]
 
 [[package]]
@@ -4630,12 +4670,11 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
 name = "opusic-sys"
-version = "0.5.8"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f43c183739dc81651487e7c9f3e4330fe4a3fd26c0fa961c788ce5fb21fa75b"
+checksum = "dc3280fe5b6f97ac1a35a0ac003e2fb0b92f8e4bdf2b2057e1bf9b87acca5696"
 dependencies = [
  "cmake",
- "libc",
 ]
 
 [[package]]
@@ -4751,7 +4790,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "perf"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#d307407f1e91e6696fdb64822d53619dfd669086"
+source = "git+https://github.com/vleerapp/zed#03f2f2e722e18bd4b134b894196ad9eb946272bd"
 dependencies = [
  "collections",
  "serde",
@@ -5422,7 +5461,7 @@ dependencies = [
 [[package]]
 name = "refineable"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#d307407f1e91e6696fdb64822d53619dfd669086"
+source = "git+https://github.com/vleerapp/zed#03f2f2e722e18bd4b134b894196ad9eb946272bd"
 dependencies = [
  "derive_refineable",
 ]
@@ -5542,7 +5581,7 @@ dependencies = [
 [[package]]
 name = "rodio"
 version = "0.22.2"
-source = "git+https://github.com/vleerapp/rodio?branch=feat%2Fregistry#303eb828acb9ae7284f2b2e97e53ec8b5465e15f"
+source = "git+https://github.com/vleerapp/rodio?branch=feat%2Fregistry#0336f7d4484b6d58eacdd0001471b0511cf832fd"
 dependencies = [
  "cpal",
  "dasp_sample",
@@ -5739,9 +5778,9 @@ checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.9"
+version = "0.103.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7df23109aa6c1567d1c575b9952556388da57401e4ace1d15f79eedad0d8f53"
+checksum = "df33b2b81ac578cabaf06b89b0631153a3f416b0a886e8a7a1707fb51abbd1ef"
 dependencies = [
  "aws-lc-rs",
  "ring",
@@ -5800,7 +5839,7 @@ dependencies = [
 [[package]]
 name = "scheduler"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#d307407f1e91e6696fdb64822d53619dfd669086"
+source = "git+https://github.com/vleerapp/zed#03f2f2e722e18bd4b134b894196ad9eb946272bd"
 dependencies = [
  "async-task",
  "backtrace",
@@ -6581,9 +6620,9 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "sum_tree"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#d307407f1e91e6696fdb64822d53619dfd669086"
+source = "git+https://github.com/vleerapp/zed#03f2f2e722e18bd4b134b894196ad9eb946272bd"
 dependencies = [
- "arrayvec",
+ "heapless",
  "log",
  "rayon",
  "tracing",
@@ -6720,9 +6759,9 @@ dependencies = [
 
 [[package]]
 name = "symphonia-adapter-libopus"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5bb56e67fc0f362731bc7a2920562ebb5668281b202444a0d274ddd3b5af61e6"
+checksum = "b9d17450685dda0e87467eddf3e0f9c0b2a1707fc5c3234c111f70d46c6e4494"
 dependencies = [
  "log",
  "opusic-sys",
@@ -7622,7 +7661,7 @@ checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 [[package]]
 name = "util"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#d307407f1e91e6696fdb64822d53619dfd669086"
+source = "git+https://github.com/vleerapp/zed#03f2f2e722e18bd4b134b894196ad9eb946272bd"
 dependencies = [
  "anyhow",
  "async-fs",
@@ -7661,7 +7700,7 @@ dependencies = [
 [[package]]
 name = "util_macros"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#d307407f1e91e6696fdb64822d53619dfd669086"
+source = "git+https://github.com/vleerapp/zed#03f2f2e722e18bd4b134b894196ad9eb946272bd"
 dependencies = [
  "perf",
  "quote",
@@ -9451,7 +9490,7 @@ dependencies = [
 [[package]]
 name = "zlog"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#d307407f1e91e6696fdb64822d53619dfd669086"
+source = "git+https://github.com/vleerapp/zed#03f2f2e722e18bd4b134b894196ad9eb946272bd"
 dependencies = [
  "anyhow",
  "chrono",
@@ -9468,7 +9507,7 @@ checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 [[package]]
 name = "ztracing"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#d307407f1e91e6696fdb64822d53619dfd669086"
+source = "git+https://github.com/vleerapp/zed#03f2f2e722e18bd4b134b894196ad9eb946272bd"
 dependencies = [
  "tracing",
  "tracing-subscriber",
@@ -9479,7 +9518,7 @@ dependencies = [
 [[package]]
 name = "ztracing_macro"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#d307407f1e91e6696fdb64822d53619dfd669086"
+source = "git+https://github.com/vleerapp/zed#03f2f2e722e18bd4b134b894196ad9eb946272bd"
 
 [[package]]
 name = "zune-core"
@@ -9498,9 +9537,9 @@ dependencies = [
 
 [[package]]
 name = "zune-jpeg"
-version = "0.5.13"
+version = "0.5.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec5f41c76397b7da451efd19915684f727d7e1d516384ca6bd0ec43ec94de23c"
+checksum = "0b7a1c0af6e5d8d1363f4994b7a091ccf963d8b694f7da5b0b9cceb82da2c0a6"
 dependencies = [
  "zune-core",
 ]

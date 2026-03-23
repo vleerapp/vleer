@@ -31,7 +31,7 @@ rodio = { git = "https://github.com/vleerapp/rodio", branch = "feat/registry", f
   "symphonia",
   "symphonia-all",
 ] }
-symphonia-adapter-libopus = "0.2.6"
+symphonia-adapter-libopus = "0.2.7"
 symphonia = "0.5.5"
 cuid2 = "0.1.4"
 url = "2.5.8"
