@@ -10,7 +10,7 @@ use crate::{
     ui::{
         components::{
             button::Button,
-            context_menu::QueueChanged,
+            context_menu::{ContextMenu, QueueChanged, song_context_menu_items},
             div::{flex_col, flex_row},
             icons::{icon::icon, icons::*},
             progress_bar::progress_slider,
@@ -23,6 +23,7 @@ use crate::{
 
 pub struct Player {
     cached_song_data: Option<(Cuid, String, String, Option<String>)>,
+    context_menu: Entity<ContextMenu>,
 }
 
 impl Player {
@@ -64,6 +65,7 @@ impl Player {
 
         Self {
             cached_song_data: None,
+            context_menu: cx.new(|_| ContextMenu::new()),
         }
     }
 }
@@ -195,9 +197,19 @@ impl Render for Player {
             .child(repeat_button);
 
         let track_info = if let Some((title, artist, cover_uri)) = current_song {
+            let ctx_menu = self.context_menu.clone();
+            let song_id = cx.global::<Queue>().get_current_song_id();
             flex_row()
                 .gap(px(variables.padding_8))
                 .items_center()
+                .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
+                    if let Some(id) = &song_id {
+                        let items = song_context_menu_items(id.clone(), cx);
+                        ctx_menu.update(cx, |menu, cx| {
+                            menu.show(event.position, items, cx);
+                        });
+                    }
+                })
                 .child(if let Some(uri) = cover_uri {
                     img(format!("{}?size=50", uri))
                         .size(px(36.0))
@@ -352,5 +364,6 @@ impl Render for Player {
                         }
                     }),
             )
+            .child(div().absolute().size_0().child(self.context_menu.clone()))
     }
 }
