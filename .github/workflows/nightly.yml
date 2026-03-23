@@ -52,7 +52,16 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libxkbcommon-x11-dev
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libxkbcommon-x11-dev minisign
+
+      - name: Install minisign (macOS)
+        if: runner.os == 'macOS'
+        run: brew install minisign
+
+      - name: Install minisign (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install minisign -y
 
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@main
@@ -71,25 +80,26 @@ jobs:
         run: codesign --force --deep --sign - target/release/bundles/*.app
 
       - name: Sign binaries
-        uses: thomasdesr/minisign-action@v1
-        with:
-          args: -Sm target/release/bundles/*
-          minisign_key: ${{ secrets.MINISIGN_SECRET_KEY }}
-          password: ${{ secrets.MINISIGN_PASSWORD }}
+        shell: bash
+        run: |
+          echo "${{ secrets.MINISIGN_SECRET_KEY }}" > minisign.key
+          for f in target/release/bundles/*; do
+            [ -f "$f" ] && echo "${{ secrets.MINISIGN_PASSWORD }}" | minisign -Sm "$f" -s minisign.key
+          done
+          rm -f minisign.key
 
-      - name: Sign SHA256SUMS
+      - name: Generate SHA256SUMS
         shell: bash
         run: |
           cd target/release/bundles
           sha256sum *.{dmg,msi,deb,AppImage,tar.gz} 2>/dev/null > SHA256SUMS.txt || true
-        if: always()
 
       - name: Sign SHA256SUMS
-        uses: thomasdesr/minisign-action@v1
-        with:
-          args: -Sm target/release/bundles/SHA256SUMS.txt
-          minisign_key: ${{ secrets.MINISIGN_SECRET_KEY }}
-          password: ${{ secrets.MINISIGN_PASSWORD }}
+        shell: bash
+        run: |
+          echo "${{ secrets.MINISIGN_SECRET_KEY }}" > minisign.key
+          echo "${{ secrets.MINISIGN_PASSWORD }}" | minisign -Sm target/release/bundles/SHA256SUMS.txt -s minisign.key
+          rm -f minisign.key
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
