@@ -674,6 +674,14 @@ impl Database {
         Ok(())
     }
 
+    pub async fn clear_playlist(&self, playlist_id: &Cuid) -> sqlx::Result<()> {
+        sqlx::query("DELETE FROM playlist_tracks WHERE playlist_id = ?")
+            .bind(playlist_id)
+            .execute(&*self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn get_playlist_songs(&self, playlist_id: &Cuid) -> sqlx::Result<Vec<PlaylistTrack>> {
         Ok(sqlx::query(
             r#"

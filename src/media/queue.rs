@@ -3,7 +3,6 @@ use crate::data::{
     models::{Cuid, Song},
 };
 use gpui::{App, Global};
-use rand::RngExt;
 use rand::seq::SliceRandom;
 use std::cell::RefCell;
 use tracing::debug;
@@ -45,23 +44,38 @@ impl Queue {
     }
 
     pub fn add_song(&mut self, song_id: Cuid) {
-        let new_idx = self.items.len();
         self.items.push(song_id);
 
-        if self.shuffle {
-            if let Some(pos) = self.shuffle_position {
-                let insert_at = rand::rng().random_range(pos + 1..=self.shuffle_order.len());
-                self.shuffle_order.insert(insert_at, new_idx);
-            } else {
-                self.shuffle_order.push(new_idx);
-                self.shuffle_position = Some(0);
-                self.current_index = Some(new_idx);
-            }
-        } else if self.current_index.is_none() {
+        if self.current_index.is_none() {
             self.current_index = Some(0);
         }
 
         debug!("Added song to queue. Queue size: {}", self.items.len());
+    }
+
+    pub fn add_song_at(&mut self, song_id: Cuid, position: usize) {
+        let position = position.min(self.items.len());
+        self.items.insert(position, song_id);
+
+        if let Some(current) = self.current_index {
+            if position <= current {
+                self.current_index = Some(current + 1);
+            }
+        }
+
+        debug!(
+            "Added song to queue at position {}. Queue size: {}",
+            position,
+            self.items.len()
+        );
+    }
+
+    pub fn add_song_next(&mut self, song_id: Cuid) {
+        let insert_pos = match self.current_index {
+            Some(idx) => idx + 1,
+            None => 0,
+        };
+        self.add_song_at(song_id, insert_pos);
     }
 
     pub fn add_songs(&mut self, song_ids: Vec<Cuid>) {
