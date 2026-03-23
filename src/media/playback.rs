@@ -2,7 +2,7 @@ use super::equalizer::{Equalizer, EqualizerSource};
 use super::queue::Queue;
 use crate::data::config::{Config, EqualizerSettings};
 use crate::data::db::repo::Database;
-use crate::data::models::Cuid;
+use crate::data::models::{Cuid, EventType};
 use crate::media::controller::{MediaController, PlaybackState};
 use crate::media::visualizer::{F32Converter, VisualizerSource, VisualizerState};
 use anyhow::{Context, Result};
@@ -237,6 +237,7 @@ impl Playback {
                     playback.play(cx);
                     applied = true;
                     debug!("Song applied to playback");
+                    Self::log_event(cx, EventType::Play, Some(song.id.clone()));
                 });
 
                 if !applied {
@@ -375,9 +376,17 @@ impl Playback {
 
     pub fn play_pause(&mut self, cx: &mut App) {
         if self.paused {
+            let song_id = cx.global::<Queue>().get_current_song_id();
             self.play(cx);
+            if !self.paused {
+                Self::log_event(cx, EventType::Resume, song_id);
+            }
         } else {
+            let song_id = cx.global::<Queue>().get_current_song_id();
             self.pause(cx);
+            if self.paused {
+                Self::log_event(cx, EventType::Pause, song_id);
+            }
         }
     }
 
@@ -505,16 +514,28 @@ impl Playback {
     }
 
     pub fn next(&mut self, cx: &mut App) {
+        let current = cx.global::<Queue>().get_current_song_id();
+        if current.is_some() {
+            Self::log_event(cx, EventType::Stop, current);
+        }
         let song_id = cx.update_global::<Queue, _>(|queue, _| queue.next());
         if let Some(song_id) = song_id {
             self.load_song_by_id(cx, song_id);
+        } else {
+            self.paused = true;
         }
     }
 
     pub fn previous(&mut self, cx: &mut App) {
+        let current = cx.global::<Queue>().get_current_song_id();
+        if current.is_some() {
+            Self::log_event(cx, EventType::Stop, current);
+        }
         let song_id = cx.update_global::<Queue, _>(|queue, _| queue.previous());
         if let Some(song_id) = song_id {
             self.load_song_by_id(cx, song_id);
+        } else {
+            self.paused = true;
         }
     }
 
@@ -547,6 +568,26 @@ impl Playback {
             }
         })
         .detach();
+    }
+
+    fn log_event(cx: &App, event_type: EventType, song_id: Option<Cuid>) {
+        let db = cx.global::<Database>().clone();
+        tokio::spawn(async move {
+            let context_id = if let Some(song_id) = &song_id {
+                match db.insert_event_context(Some(song_id), None).await {
+                    Ok(id) => Some(id),
+                    Err(e) => {
+                        error!("Failed to insert event context: {}", e);
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            if let Err(e) = db.insert_event(event_type, context_id.as_ref()).await {
+                error!("Failed to insert event: {}", e);
+            }
+        });
     }
 
     fn compute_log_volume(volume: f32) -> f32 {
