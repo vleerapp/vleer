@@ -332,7 +332,9 @@ impl Render for SongTableItem {
                                         .bg(black().opacity(0.5))
                                         .invisible()
                                         .group_hover("cover-container", |s| s.visible())
-                                        .child(icon(PLAY).size(px(16.0)).text_color(variables.text)),
+                                        .child(
+                                            icon(PLAY).size(px(16.0)).text_color(variables.text),
+                                        ),
                                 )
                                 .cursor_pointer()
                                 .on_mouse_down(MouseButton::Left, {
@@ -397,6 +399,8 @@ impl Render for SongTableItem {
                             .child(
                                 div()
                                     .id(data.album.clone())
+                                    .overflow_hidden()
+                                    .text_ellipsis()
                                     .child(data.album.clone())
                                     .hover(|s| s.underline()),
                             ),
