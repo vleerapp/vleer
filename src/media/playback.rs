@@ -15,6 +15,7 @@ use std::io::BufReader;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use symphonia_adapter_libopus::OpusDecoder;
+
 use tokio::sync::mpsc;
 use tracing::{debug, error};
 
@@ -84,10 +85,12 @@ impl Playback {
     ) -> Result<PreparedPlayback> {
         let file =
             File::open(&path).with_context(|| format!("Failed to open audio file: {:?}", path))?;
+        let file_len = file.metadata()?.len();
 
         let decoder = DecoderBuilder::new()
             .with_decoder::<OpusDecoder>()
             .with_data(BufReader::new(file))
+            .with_byte_len(file_len)
             .build()
             .context("Failed to decode audio file")?;
 
@@ -395,9 +398,11 @@ impl Playback {
             let was_playing = !self.paused;
 
             let file = File::open(file_path)?;
+            let file_len = file.metadata()?.len();
             let mut source: Decoder<BufReader<File>> = DecoderBuilder::new()
                 .with_decoder::<OpusDecoder>()
                 .with_data(BufReader::new(file))
+                .with_byte_len(file_len)
                 .build()?;
             source.try_seek(Duration::from_secs_f32(position)).ok();
 
