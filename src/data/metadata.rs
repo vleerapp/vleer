@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use image::{DynamicImage, GenericImageView, imageops::FilterType, load_from_memory};
+use image::{imageops::FilterType, load_from_memory, DynamicImage, GenericImageView};
 use lofty::config::ParseOptions;
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::picture::PictureType;
@@ -112,7 +112,11 @@ pub fn extract_image_data(audio_path: &Path) -> Result<Option<ImageData>> {
 
     let mut hasher = Sha256::new();
     hasher.update(original_data);
-    let id = format!("{:x}", hasher.finalize());
+    let id = hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>();
 
     let img = load_from_memory(original_data).context("Failed to load cover image")?;
 
