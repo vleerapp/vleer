@@ -6,8 +6,8 @@ use crate::ui::components::div::{flex_col, flex_row};
 use crate::ui::components::icons::icon::icon;
 use crate::ui::components::icons::icons::{PLUS, X};
 use crate::ui::components::input::{InputEvent, TextInput};
-use crate::ui::components::slider::slider;
 use crate::ui::components::scrollbar::ScrollableElement;
+use crate::ui::components::slider::slider;
 use crate::ui::components::switch::Switch;
 use crate::ui::variables::Variables;
 
@@ -420,120 +420,122 @@ impl Render for SettingsView {
                     .pb(px(variables.padding_24))
                     .gap(px(variables.padding_24))
                     .child(
-                flex_col()
-                    .gap(px(variables.padding_16))
-                    .child(
-                        div()
-                            .text_color(variables.text)
-                            .text_xl()
-                            .font_weight(FontWeight::BOLD)
-                            .child("General"),
-                    )
-                    .child(
-                        flex_row()
-                            .gap(px(variables.padding_8))
-                            .child(Switch::new("telemetry-switch", telemetry).on_change(
-                                move |value, _window, cx| {
-                                    cx.update_global::<Config, _>(|config, _cx| {
-                                        config.set(|s| s.telemetry = value);
-                                    });
-                                },
-                            ))
+                        flex_col()
+                            .gap(px(variables.padding_16))
                             .child(
                                 div()
-                                    .text_color(variables.text_secondary)
-                                    .child("Telemetry"),
-                            ),
-                    )
-                    .child(
-                        flex_row()
-                            .gap(px(variables.padding_8))
-                            .child(Switch::new("discord-rpc-switch", discord_rpc).on_change(
-                                move |value, _window, cx| {
-                                    cx.update_global::<Config, _>(|config, _cx| {
-                                        config.set(|s| s.discord_rpc = value);
-                                    });
-                                },
-                            ))
-                            .child(
-                                div()
-                                    .text_color(variables.text_secondary)
-                                    .child("Discord RPC"),
-                            ),
-                    ),
-            )
-            .child(
-                flex_col()
-                    .items_start()
-                    .gap(px(variables.padding_16))
-                    .child(
-                        div()
-                            .text_color(variables.text)
-                            .text_xl()
-                            .font_weight(FontWeight::BOLD)
-                            .child("Audio"),
-                    )
-                    .child(
-                        flex_row()
-                            .gap(px(variables.padding_8))
-                            .child(
-                                Switch::new("normalization-switch", normalization).on_change(
-                                    move |value, _window, cx| {
-                                        cx.update_global::<Config, _>(|config, _cx| {
-                                            config.set(|s| s.audio.normalization = value);
-                                        });
-                                    },
-                                ),
+                                    .text_color(variables.text)
+                                    .text_xl()
+                                    .font_weight(FontWeight::BOLD)
+                                    .child("General"),
                             )
                             .child(
-                                div()
-                                    .text_color(variables.text_secondary)
-                                    .child("Normalization"),
+                                flex_row()
+                                    .gap(px(variables.padding_8))
+                                    .child(Switch::new("telemetry-switch", telemetry).on_change(
+                                        move |value, _window, cx| {
+                                            cx.update_global::<Config, _>(|config, _cx| {
+                                                config.set(|s| s.telemetry = value);
+                                            });
+                                        },
+                                    ))
+                                    .child(
+                                        div()
+                                            .text_color(variables.text_secondary)
+                                            .child("Telemetry"),
+                                    ),
+                            )
+                            .child(
+                                flex_row()
+                                    .gap(px(variables.padding_8))
+                                    .child(
+                                        Switch::new("discord-rpc-switch", discord_rpc).on_change(
+                                            move |value, _window, cx| {
+                                                cx.update_global::<Config, _>(|config, _cx| {
+                                                    config.set(|s| s.discord_rpc = value);
+                                                });
+                                            },
+                                        ),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_color(variables.text_secondary)
+                                            .child("Discord RPC"),
+                                    ),
                             ),
                     )
                     .child(
-                        flex_row()
-                            .gap(px(variables.padding_8))
-                            .child(Switch::new("eq-enabled-switch", eq_enabled).on_change(
-                                move |value, _window, cx| {
-                                    let (gains, q_values) =
-                                        cx.update_global::<Config, _>(|config, _cx| {
-                                            config.set(|s| s.equalizer.enabled = value);
-                                            let eq = &config.get().equalizer;
-                                            (eq.gains.clone(), eq.q_values.clone())
-                                        });
-                                    cx.update_global::<Playback, _>(|playback, _cx| {
-                                        if value {
-                                            playback.apply_eq_settings(&gains, &q_values);
-                                        } else {
-                                            playback.set_eq_enabled(false);
-                                        }
-                                    });
-                                },
-                            ))
+                        flex_col()
+                            .items_start()
+                            .gap(px(variables.padding_16))
                             .child(
                                 div()
-                                    .text_color(variables.text_secondary)
-                                    .child("Equalizer"),
-                            ),
+                                    .text_color(variables.text)
+                                    .text_xl()
+                                    .font_weight(FontWeight::BOLD)
+                                    .child("Audio"),
+                            )
+                            .child(
+                                flex_row()
+                                    .gap(px(variables.padding_8))
+                                    .child(
+                                        Switch::new("normalization-switch", normalization)
+                                            .on_change(move |value, _window, cx| {
+                                                cx.update_global::<Config, _>(|config, _cx| {
+                                                    config.set(|s| s.audio.normalization = value);
+                                                });
+                                            }),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_color(variables.text_secondary)
+                                            .child("Normalization"),
+                                    ),
+                            )
+                            .child(
+                                flex_row()
+                                    .gap(px(variables.padding_8))
+                                    .child(Switch::new("eq-enabled-switch", eq_enabled).on_change(
+                                        move |value, _window, cx| {
+                                            let (gains, q_values) =
+                                                cx.update_global::<Config, _>(|config, _cx| {
+                                                    config.set(|s| s.equalizer.enabled = value);
+                                                    let eq = &config.get().equalizer;
+                                                    (eq.gains.clone(), eq.q_values.clone())
+                                                });
+                                            cx.update_global::<Playback, _>(|playback, _cx| {
+                                                if value {
+                                                    playback.apply_eq_settings(&gains, &q_values);
+                                                } else {
+                                                    playback.set_eq_enabled(false);
+                                                }
+                                            });
+                                        },
+                                    ))
+                                    .child(
+                                        div()
+                                            .text_color(variables.text_secondary)
+                                            .child("Equalizer"),
+                                    ),
+                            )
+                            .child(EqSection {
+                                gain_inputs: self.gain_inputs.clone(),
+                                freq_inputs: self.freq_inputs.clone(),
+                                q_inputs: self.q_inputs.clone(),
+                            }),
                     )
-                    .child(EqSection {
-                        gain_inputs: self.gain_inputs.clone(),
-                        freq_inputs: self.freq_inputs.clone(),
-                        q_inputs: self.q_inputs.clone(),
-                    }),
-            )
-            .child(
-                flex_col()
-                    .gap(px(variables.padding_16))
                     .child(
-                        div()
-                            .text_color(variables.text)
-                            .text_xl()
-                            .font_weight(FontWeight::BOLD)
-                            .child("Scan Paths"),
-                    )
-                    .child(ScanPathsSection),
-            ))
+                        flex_col()
+                            .gap(px(variables.padding_16))
+                            .child(
+                                div()
+                                    .text_color(variables.text)
+                                    .text_xl()
+                                    .font_weight(FontWeight::BOLD)
+                                    .child("Scan Paths"),
+                            )
+                            .child(ScanPathsSection),
+                    ),
+            )
     }
 }

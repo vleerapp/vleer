@@ -460,12 +460,7 @@ impl Render for AlbumsView {
                     .size_full()
                     .min_h_0()
                     .relative()
-                    .child(
-                        div()
-                            .id("albums-content")
-                            .size_full()
-                            .child(grid_content),
-                    )
+                    .child(div().id("albums-content").size_full().child(grid_content))
                     .child(self.context_menu.clone()),
             )
             .when(row_count > 0, |this| {

@@ -419,18 +419,16 @@ impl Render for Library {
                                                 .gap(px(variables.padding_8))
                                                 .pr(px(variables.padding_16))
                                                 .py(px(variables.padding_16))
-                                                .children(displayed_items.iter().map(
-                                                    |item| {
-                                                        pinned_item(
-                                                            item.id.clone(),
-                                                            item.name.clone(),
-                                                            item.image_id.clone(),
-                                                            item.item_type.clone(),
-                                                            variables,
-                                                            context_menu.clone(),
-                                                        )
-                                                    },
-                                                )),
+                                                .children(displayed_items.iter().map(|item| {
+                                                    pinned_item(
+                                                        item.id.clone(),
+                                                        item.name.clone(),
+                                                        item.image_id.clone(),
+                                                        item.item_type.clone(),
+                                                        variables,
+                                                        context_menu.clone(),
+                                                    )
+                                                })),
                                         )
                                         .into_any_element()
                                 } else if is_search_pending {

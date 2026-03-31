@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use image::{imageops::FilterType, load_from_memory, DynamicImage, GenericImageView};
+use image::{DynamicImage, GenericImageView, imageops::FilterType, load_from_memory};
 use lofty::config::ParseOptions;
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::picture::PictureType;

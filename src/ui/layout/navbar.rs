@@ -78,27 +78,24 @@ impl NavbarScanProgressBar {
 impl Render for Navbar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
-        let scanning_text = cx
-            .try_global::<Scanner>()
-            .and_then(|scanner| {
-                let progress = scanner.get_scan_progress();
-                match progress.phase {
-                    ScanPhase::Idle => None,
-                    ScanPhase::Completed => Some("Scanning: done".to_string()),
-                    ScanPhase::Scanning => {
-                        if progress.total == 0 {
-                            return None;
-                        }
-                        let ratio =
-                            (progress.current as f32 / progress.total as f32).clamp(0.0, 1.0);
-                        let percent = (ratio as f64) * 100.0;
-                        Some(format!(
-                            "Scanning: {}/{} - {:.0}%",
-                            progress.current, progress.total, percent
-                        ))
+        let scanning_text = cx.try_global::<Scanner>().and_then(|scanner| {
+            let progress = scanner.get_scan_progress();
+            match progress.phase {
+                ScanPhase::Idle => None,
+                ScanPhase::Completed => Some("Scanning: done".to_string()),
+                ScanPhase::Scanning => {
+                    if progress.total == 0 {
+                        return None;
                     }
+                    let ratio = (progress.current as f32 / progress.total as f32).clamp(0.0, 1.0);
+                    let percent = (ratio as f64) * 100.0;
+                    Some(format!(
+                        "Scanning: {}/{} - {:.0}%",
+                        progress.current, progress.total, percent
+                    ))
                 }
-            });
+            }
+        });
 
         flex_row()
             .h_full()

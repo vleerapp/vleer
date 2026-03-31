@@ -237,136 +237,136 @@ fn render_row(
         .px(px(variables.padding_16))
         .pb(px(variables.padding_8))
         .child(
-        flex_row()
-            .w_full()
-            .id(ElementId::Name(
-                format!("queue-item-{}", display_idx).into(),
-            ))
-            .group("queue-item")
-            .bg(variables.element)
-            .hover(|s| s.bg(variables.element_hover))
-            .gap(px(variables.padding_8))
-            .pr(px(variables.padding_8))
-            .cursor_move()
-            .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
-                let items = song_context_menu_items(song_id_for_ctx.clone(), cx);
-                context_menu.update(cx, |menu, cx| {
-                    menu.show(event.position, items, cx);
-                });
-            })
-            .on_drag(
-                drag_payload,
-                move |payload: &QueueDragPayload, pos, _window, cx| {
-                    cx.new(|_| payload.clone().with_position(pos))
-                },
-            )
-            .on_drag_move(move |e: &DragMoveEvent<QueueDragPayload>, _window, cx| {
-                if !e.bounds.contains(&e.event.position) {
-                    return;
-                }
-                drag_view.update(cx, |this, cx| {
-                    if this.drag_over != Some(display_idx) {
-                        this.drag_from = Some(e.drag(cx).from_index);
-                        this.drag_over = Some(display_idx);
-                        cx.notify();
+            flex_row()
+                .w_full()
+                .id(ElementId::Name(
+                    format!("queue-item-{}", display_idx).into(),
+                ))
+                .group("queue-item")
+                .bg(variables.element)
+                .hover(|s| s.bg(variables.element_hover))
+                .gap(px(variables.padding_8))
+                .pr(px(variables.padding_8))
+                .cursor_move()
+                .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
+                    let items = song_context_menu_items(song_id_for_ctx.clone(), cx);
+                    context_menu.update(cx, |menu, cx| {
+                        menu.show(event.position, items, cx);
+                    });
+                })
+                .on_drag(
+                    drag_payload,
+                    move |payload: &QueueDragPayload, pos, _window, cx| {
+                        cx.new(|_| payload.clone().with_position(pos))
+                    },
+                )
+                .on_drag_move(move |e: &DragMoveEvent<QueueDragPayload>, _window, cx| {
+                    if !e.bounds.contains(&e.event.position) {
+                        return;
                     }
-                });
-            })
-            .on_drop(move |payload: &QueueDragPayload, _window, cx| {
-                let from = payload.from_index;
-                drop_view.update(cx, |this, cx| {
-                    this.drag_from = None;
-                    this.drag_over = None;
-                    if from != display_idx {
-                        cx.update_global::<Queue, _>(|q, _| {
-                            q.move_song(from, display_idx);
+                    drag_view.update(cx, |this, cx| {
+                        if this.drag_over != Some(display_idx) {
+                            this.drag_from = Some(e.drag(cx).from_index);
+                            this.drag_over = Some(display_idx);
+                            cx.notify();
+                        }
+                    });
+                })
+                .on_drop(move |payload: &QueueDragPayload, _window, cx| {
+                    let from = payload.from_index;
+                    drop_view.update(cx, |this, cx| {
+                        this.drag_from = None;
+                        this.drag_over = None;
+                        if from != display_idx {
+                            cx.update_global::<Queue, _>(|q, _| {
+                                q.move_song(from, display_idx);
+                            });
+                            cx.set_global(QueueChanged::default());
+                        } else {
+                            cx.notify();
+                        }
+                    });
+                })
+                .on_mouse_down(MouseButton::Left, move |event, _window, cx| {
+                    if event.click_count == 2 {
+                        cx.update_global::<Queue, _>(|q, cx| {
+                            q.set_current_index(real_idx, cx);
+                        });
+                        cx.update_global::<Playback, _>(|p, cx| {
+                            p.play_queue(cx);
                         });
                         cx.set_global(QueueChanged::default());
-                    } else {
-                        cx.notify();
                     }
-                });
-            })
-            .on_mouse_down(MouseButton::Left, move |event, _window, cx| {
-                if event.click_count == 2 {
-                    cx.update_global::<Queue, _>(|q, cx| {
-                        q.set_current_index(real_idx, cx);
-                    });
-                    cx.update_global::<Playback, _>(|p, cx| {
-                        p.play_queue(cx);
-                    });
-                    cx.set_global(QueueChanged::default());
-                }
-            })
-            .child(
-                div()
-                    .size(px(ROW_HEIGHT))
-                    .flex_shrink_0()
-                    .overflow_hidden()
-                    .relative()
-                    .group("cover-container")
-                    .child(cover)
-                    .child(
-                        flex_row()
-                            .absolute()
-                            .inset_0()
-                            .gap(px(3.0))
-                            .p(px(5.0))
-                            .bg(black().opacity(0.5))
-                            .when(!is_playing, |s| s.invisible())
-                            .group_hover("cover-container", |s| s.invisible())
-                            .children((0..4).map(move |i| {
-                                let height_pct = (spectrum[i] * 100.0).clamp(10.0, 80.0);
-                                let height_px = ROW_HEIGHT * (height_pct / 100.0);
-                                div().w(px(4.0)).h(px(height_px)).bg(variables.text)
-                            })),
-                    )
-                    .child(
-                        div()
-                            .absolute()
-                            .inset_0()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .bg(black().opacity(0.5))
-                            .invisible()
-                            .group_hover("cover-container", |s| s.visible())
-                            .child(icon(PLAY).size(px(16.0)).text_color(variables.text)),
-                    ),
-            )
-            .child(
-                div()
-                    .overflow_x_hidden()
-                    .text_ellipsis()
-                    .font_weight(FontWeight(500.0))
-                    .text_color(if is_current {
-                        variables.text
-                    } else {
-                        variables.text_secondary
-                    })
-                    .child(song.title.clone()),
-            )
-            .child(div().flex_1())
-            .child(
-                div()
-                    .invisible()
-                    .group_hover("queue-item", |s| s.visible())
-                    .flex_shrink_0()
-                    .child(
-                        div()
-                            .p(px(4.0))
-                            .hover(|s| s.bg(variables.element_hover))
-                            .cursor_pointer()
-                            .on_mouse_down(MouseButton::Left, move |_event, _window, cx| {
-                                cx.update_global::<Queue, _>(|q, _| {
-                                    q.remove_at(real_idx);
-                                });
-                                cx.set_global(QueueChanged::default());
-                            })
-                            .child(icon(X).size(px(14.0)).text_color(variables.text_secondary)),
-                    ),
-            ),
-    )
+                })
+                .child(
+                    div()
+                        .size(px(ROW_HEIGHT))
+                        .flex_shrink_0()
+                        .overflow_hidden()
+                        .relative()
+                        .group("cover-container")
+                        .child(cover)
+                        .child(
+                            flex_row()
+                                .absolute()
+                                .inset_0()
+                                .gap(px(3.0))
+                                .p(px(5.0))
+                                .bg(black().opacity(0.5))
+                                .when(!is_playing, |s| s.invisible())
+                                .group_hover("cover-container", |s| s.invisible())
+                                .children((0..4).map(move |i| {
+                                    let height_pct = (spectrum[i] * 100.0).clamp(10.0, 80.0);
+                                    let height_px = ROW_HEIGHT * (height_pct / 100.0);
+                                    div().w(px(4.0)).h(px(height_px)).bg(variables.text)
+                                })),
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .inset_0()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .bg(black().opacity(0.5))
+                                .invisible()
+                                .group_hover("cover-container", |s| s.visible())
+                                .child(icon(PLAY).size(px(16.0)).text_color(variables.text)),
+                        ),
+                )
+                .child(
+                    div()
+                        .overflow_x_hidden()
+                        .text_ellipsis()
+                        .font_weight(FontWeight(500.0))
+                        .text_color(if is_current {
+                            variables.text
+                        } else {
+                            variables.text_secondary
+                        })
+                        .child(song.title.clone()),
+                )
+                .child(div().flex_1())
+                .child(
+                    div()
+                        .invisible()
+                        .group_hover("queue-item", |s| s.visible())
+                        .flex_shrink_0()
+                        .child(
+                            div()
+                                .p(px(4.0))
+                                .hover(|s| s.bg(variables.element_hover))
+                                .cursor_pointer()
+                                .on_mouse_down(MouseButton::Left, move |_event, _window, cx| {
+                                    cx.update_global::<Queue, _>(|q, _| {
+                                        q.remove_at(real_idx);
+                                    });
+                                    cx.set_global(QueueChanged::default());
+                                })
+                                .child(icon(X).size(px(14.0)).text_color(variables.text_secondary)),
+                        ),
+                ),
+        )
 }
 
 fn render_drop_slot(
@@ -508,56 +508,53 @@ impl Render for QueuePane {
                         .min_h_0()
                         .relative()
                         .child(
-                            div()
+                            div().size_full().child(
+                                uniform_list(
+                                    ElementId::Name("queue-list".into()),
+                                    row_count,
+                                    move |range, _window, _cx| {
+                                        range
+                                            .map(|display_idx| {
+                                                let real_idx = display_order[display_idx];
+                                                let song = &songs[real_idx];
+                                                let is_current = current_song_id
+                                                    .as_ref()
+                                                    .map(|id| id == &song.id)
+                                                    .unwrap_or(false);
+                                                let is_playing = is_current && is_globally_playing;
+
+                                                let is_slot = drag_from == Some(real_idx);
+
+                                                if is_slot {
+                                                    render_drop_slot(
+                                                        &view_handle,
+                                                        display_idx,
+                                                        &variables,
+                                                    )
+                                                    .into_any_element()
+                                                } else {
+                                                    render_row(
+                                                        &view_handle,
+                                                        display_idx,
+                                                        real_idx,
+                                                        song,
+                                                        is_current,
+                                                        is_playing,
+                                                        spectrum,
+                                                        &variables,
+                                                        context_menu.clone(),
+                                                    )
+                                                    .into_any_element()
+                                                }
+                                            })
+                                            .collect()
+                                    },
+                                )
+                                .track_scroll(&scroll_handle)
                                 .size_full()
-                                .child(
-                                    uniform_list(
-                                        ElementId::Name("queue-list".into()),
-                                        row_count,
-                                        move |range, _window, _cx| {
-                                            range
-                                                .map(|display_idx| {
-                                                    let real_idx = display_order[display_idx];
-                                                    let song = &songs[real_idx];
-                                                    let is_current = current_song_id
-                                                        .as_ref()
-                                                        .map(|id| id == &song.id)
-                                                        .unwrap_or(false);
-                                                    let is_playing =
-                                                        is_current && is_globally_playing;
-
-                                                    let is_slot = drag_from == Some(real_idx);
-
-                                                    if is_slot {
-                                                        render_drop_slot(
-                                                            &view_handle,
-                                                            display_idx,
-                                                            &variables,
-                                                        )
-                                                        .into_any_element()
-                                                    } else {
-                                                        render_row(
-                                                            &view_handle,
-                                                            display_idx,
-                                                            real_idx,
-                                                            song,
-                                                            is_current,
-                                                            is_playing,
-                                                            spectrum,
-                                                            &variables,
-                                                            context_menu.clone(),
-                                                        )
-                                                        .into_any_element()
-                                                    }
-                                                })
-                                                .collect()
-                                        },
-                                    )
-                                    .track_scroll(&scroll_handle)
-                                    .size_full()
-                                    .pt(px(variables.padding_16))
-                                    .pb(px(variables.padding_16 - variables.padding_8)),
-                                ),
+                                .pt(px(variables.padding_16))
+                                .pb(px(variables.padding_16 - variables.padding_8)),
+                            ),
                         )
                         .child(
                             div()
@@ -571,7 +568,7 @@ impl Render for QueuePane {
                                         .axis(ScrollbarAxis::Vertical),
                                 ),
                         )
-                        .child(div().absolute().size_0().child(self.context_menu.clone()))
+                        .child(div().absolute().size_0().child(self.context_menu.clone())),
                 )
             })
     }

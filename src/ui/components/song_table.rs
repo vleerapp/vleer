@@ -686,18 +686,14 @@ impl Render for SongTable {
                 )
             });
 
-        div()
-            .h_full()
-            .w_full()
-            .min_h_0()
-            .child(
-                div()
-                    .h_full()
-                    .w_full()
-                    .flex_col()
-                    .p(px(variables.padding_24))
-                    .child(header)
-                    .child(list),
-            )
+        div().h_full().w_full().min_h_0().child(
+            div()
+                .h_full()
+                .w_full()
+                .flex_col()
+                .p(px(variables.padding_24))
+                .child(header)
+                .child(list),
+        )
     }
 }
