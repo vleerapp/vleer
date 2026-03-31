@@ -11,6 +11,7 @@ use crate::ui::components::icons::icons::{
 use crate::ui::variables::Variables;
 use gpui::{prelude::*, *};
 use std::rc::Rc;
+use tokio::sync::mpsc;
 use tracing::error;
 
 #[derive(Default)]
@@ -22,8 +23,35 @@ pub struct LibraryDataChanged;
 impl Global for LibraryDataChanged {}
 
 #[derive(Default)]
+pub struct HomeDataChanged;
+impl Global for HomeDataChanged {}
+
+#[derive(Default)]
 pub struct QueueChanged;
 impl Global for QueueChanged {}
+
+#[derive(Clone, Copy, Debug)]
+pub enum BackgroundUiEvent {
+    HomeDataChanged,
+    LibraryDataChanged,
+}
+
+#[derive(Clone)]
+pub struct BackgroundUiNotifier {
+    tx: mpsc::UnboundedSender<BackgroundUiEvent>,
+}
+
+impl BackgroundUiNotifier {
+    pub fn new(tx: mpsc::UnboundedSender<BackgroundUiEvent>) -> Self {
+        Self { tx }
+    }
+
+    pub fn notify(&self, event: BackgroundUiEvent) {
+        let _ = self.tx.send(event);
+    }
+}
+
+impl Global for BackgroundUiNotifier {}
 
 fn run_sync<F, T>(future: F) -> T
 where

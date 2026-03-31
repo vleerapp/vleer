@@ -11,7 +11,10 @@ use crate::{
     ui::{
         assets::{VleerAssetSource, image_cache::app_image_cache},
         components::{
-            context_menu::{LibraryDataChanged, PinnedItemsChanged, QueueChanged},
+            context_menu::{
+                BackgroundUiEvent, BackgroundUiNotifier, HomeDataChanged, LibraryDataChanged,
+                PinnedItemsChanged, QueueChanged,
+            },
             div::{flex_col, flex_row},
             input::bind_input_keys,
             pane::pane,
@@ -311,11 +314,15 @@ pub async fn run() -> anyhow::Result<()> {
     application()
         .with_assets(VleerAssetSource::new(image_pool))
         .run(move |cx| {
+            let (background_ui_tx, mut background_ui_rx) = tokio::sync::mpsc::unbounded_channel();
+
             cx.set_global(Database { pool: pool.clone() });
             cx.set_global(Search::default());
             cx.set_global(ActiveView::default());
+            cx.set_global(BackgroundUiNotifier::new(background_ui_tx));
             cx.set_global(PinnedItemsChanged::default());
             cx.set_global(LibraryDataChanged::default());
+            cx.set_global(HomeDataChanged::default());
             cx.set_global(QueueVisible::default());
             cx.set_global(QueueChanged::default());
 
@@ -332,6 +339,20 @@ pub async fn run() -> anyhow::Result<()> {
                 .ok();
             register_actions(cx);
             bind_input_keys(cx);
+
+            cx.spawn(async move |cx: &mut AsyncApp| {
+                while let Some(event) = background_ui_rx.recv().await {
+                    cx.update(|cx| match event {
+                        BackgroundUiEvent::HomeDataChanged => {
+                            cx.set_global(HomeDataChanged::default());
+                        }
+                        BackgroundUiEvent::LibraryDataChanged => {
+                            cx.set_global(LibraryDataChanged::default());
+                        }
+                    });
+                }
+            })
+            .detach();
 
             cx.open_window(
                 WindowOptions {

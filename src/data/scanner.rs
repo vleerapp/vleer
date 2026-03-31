@@ -18,6 +18,7 @@ use crate::data::db::repo::Database;
 use crate::data::metadata::{AudioMetadata, ImageData, extract_image_data};
 use crate::data::models::Cuid;
 use crate::data::telemetry::Telemetry;
+use crate::ui::components::context_menu::{BackgroundUiEvent, BackgroundUiNotifier};
 
 const SUPPORTED_EXTENSIONS: &[&str] = &[
     "aac", "aiff", "aif", "flac", "mp3", "mp4", "m4a", "mp4a", "ogg", "oga", "opus", "wav", "wv",
@@ -116,6 +117,7 @@ impl Scanner {
         let config = cx.global::<Config>().clone();
         let db = cx.global::<Database>().clone();
         let telemetry = cx.global::<Telemetry>().clone();
+        let background_ui = cx.try_global::<BackgroundUiNotifier>().cloned();
 
         let scan_paths = expand_scan_paths(&config.get().scan.paths);
         let scanner = Scanner::new(scan_paths);
@@ -132,6 +134,7 @@ impl Scanner {
                 let db_clone = db.clone();
                 let telemetry_clone = telemetry.clone();
                 let config_clone = config.clone();
+                let background_ui_clone = background_ui.clone();
 
                 tokio::spawn(async move {
                     while let Some(stats) = rx.recv().await {
@@ -143,12 +146,19 @@ impl Scanner {
                         if stats.scanned > 0 {
                             telemetry_clone.submit(&db_clone, &config_clone).await;
                         }
+
+                        if (stats.added > 0 || stats.updated > 0 || stats.removed > 0)
+                            && let Some(background_ui) = &background_ui_clone
+                        {
+                            background_ui.notify(BackgroundUiEvent::LibraryDataChanged);
+                        }
                     }
                 });
 
                 let db_clone = db.clone();
                 let telemetry_clone = telemetry.clone();
                 let config_clone = config.clone();
+                let background_ui_clone = background_ui.clone();
 
                 tokio::spawn(async move {
                     let existing_song_count = db_clone.get_songs_count(None).await.unwrap_or(0);
@@ -165,6 +175,12 @@ impl Scanner {
 
                             if stats.scanned > 0 {
                                 telemetry_clone.submit(&db_clone, &config_clone).await;
+                            }
+
+                            if (stats.added > 0 || stats.updated > 0 || stats.removed > 0)
+                                && let Some(background_ui) = &background_ui_clone
+                            {
+                                background_ui.notify(BackgroundUiEvent::LibraryDataChanged);
                             }
                         }
                         Err(e) => {

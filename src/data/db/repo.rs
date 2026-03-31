@@ -36,7 +36,12 @@ impl Database {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        let placeholders = ids.iter().enumerate().map(|(i, _)| format!("?{}", i + 1)).collect::<Vec<_>>().join(",");
+        let placeholders = ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", i + 1))
+            .collect::<Vec<_>>()
+            .join(",");
         let sql = format!(
             "SELECT s.*, ar.name AS artist_name FROM songs s LEFT JOIN artists ar ON s.artist_id = ar.id WHERE s.id IN ({})",
             placeholders
@@ -45,7 +50,12 @@ impl Database {
         for id in ids {
             query = query.bind(id);
         }
-        Ok(query.fetch_all(&*self.pool).await?.into_iter().map(Into::into).collect())
+        Ok(query
+            .fetch_all(&*self.pool)
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect())
     }
 
     pub async fn get_song_by_path(&self, file_path: &str) -> sqlx::Result<Option<Song>> {
@@ -1100,6 +1110,46 @@ impl Database {
             ORDER BY ig.most_recent_date DESC
             "#,
         )
+        .bind(limit)
+        .fetch_all(&*self.pool)
+        .await?
+        .into_iter()
+        .map(|row| row.into_recent_item())
+        .collect())
+    }
+
+    pub async fn get_recently_played_items(&self, limit: i64) -> sqlx::Result<Vec<RecentItem>> {
+        Ok(sqlx::query_as::<_, RecentItemRow>(
+            r#"
+            WITH recent_song_plays AS (
+                SELECT
+                    ec.song_id,
+                    MAX(e.timestamp) AS most_recent_date
+                FROM events e
+                JOIN event_contexts ec ON e.context_id = ec.id
+                WHERE e.event_type = ?1
+                    AND ec.song_id IS NOT NULL
+                GROUP BY ec.song_id
+                ORDER BY most_recent_date DESC
+                LIMIT ?2
+            )
+            SELECT
+                1 AS song_count,
+                s.id AS first_song_id,
+                s.title AS first_song_title,
+                s.image_id,
+                s.date AS first_year,
+                s.album_id,
+                al.title AS album_title,
+                ar.name AS artist_name
+            FROM recent_song_plays rsp
+            JOIN songs s ON rsp.song_id = s.id
+            LEFT JOIN albums al ON s.album_id = al.id
+            LEFT JOIN artists ar ON s.artist_id = ar.id
+            ORDER BY rsp.most_recent_date DESC
+            "#,
+        )
+        .bind("PLAY")
         .bind(limit)
         .fetch_all(&*self.pool)
         .await?

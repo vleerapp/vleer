@@ -5,6 +5,7 @@ use crate::data::db::repo::Database;
 use crate::data::models::{Cuid, EventType};
 use crate::media::controller::{MediaController, PlaybackState};
 use crate::media::visualizer::{F32Converter, VisualizerSource, VisualizerState};
+use crate::ui::components::context_menu::{BackgroundUiEvent, BackgroundUiNotifier};
 use anyhow::{Context, Result};
 use gpui::{App, AsyncWindowContext, BorrowAppContext, Global, Window};
 use rodio::decoder::{Decoder, DecoderBuilder};
@@ -577,6 +578,8 @@ impl Playback {
 
     fn log_event(cx: &App, event_type: EventType, song_id: Option<Cuid>) {
         let db = cx.global::<Database>().clone();
+        let background_ui = cx.try_global::<BackgroundUiNotifier>().cloned();
+        let should_notify_home = matches!(event_type, EventType::Play);
         tokio::spawn(async move {
             let context_id = if let Some(song_id) = &song_id {
                 match db.insert_event_context(Some(song_id), None).await {
@@ -591,6 +594,8 @@ impl Playback {
             };
             if let Err(e) = db.insert_event(event_type, context_id.as_ref()).await {
                 error!("Failed to insert event: {}", e);
+            } else if should_notify_home && let Some(background_ui) = background_ui {
+                background_ui.notify(BackgroundUiEvent::HomeDataChanged);
             }
         });
     }

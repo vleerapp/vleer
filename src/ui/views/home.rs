@@ -2,60 +2,100 @@ use crate::{
     data::{db::repo::Database, models::RecentItem},
     ui::{
         components::{
-            context_menu::{ContextMenu, album_context_menu_items, song_context_menu_items},
+            context_menu::{
+                ContextMenu, HomeDataChanged, LibraryDataChanged, album_context_menu_items,
+                song_context_menu_items,
+            },
             div::{flex_col, flex_row},
             icons::{
                 icon::icon,
                 icons::{ARROW_LEFT, ARROW_RIGHT},
             },
             scrollbar::ScrollableElement,
-        }, layout::queue::QueueVisible, variables::Variables
+        },
+        layout::queue::QueueVisible,
+        variables::Variables,
     },
 };
 use gpui::{prelude::FluentBuilder, *};
 
 pub struct HomeView {
+    recently_played: Vec<RecentItem>,
+    recently_played_offset: usize,
     recently_added: Vec<RecentItem>,
     recently_added_offset: usize,
     container_width: Option<f32>,
     context_menu: Entity<ContextMenu>,
 }
 
+const HOME_RECENT_ITEMS_LIMIT: i64 = 100;
 const MIN_COVER_SIZE: f32 = 180.0;
 const MAX_COVER_SIZE: f32 = 400.0;
 const GAP_SIZE: f32 = 16.0;
 
 impl HomeView {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut view = Self {
+            recently_played: Vec::new(),
+            recently_played_offset: 0,
             recently_added: Vec::new(),
             recently_added_offset: 0,
             container_width: None,
             context_menu: cx.new(|_| ContextMenu::new()),
         };
 
-        view.load_recently_added(window, cx);
+        cx.observe_global::<HomeDataChanged>(|this, cx| {
+            this.load_recently_played(cx);
+        })
+        .detach();
+
+        cx.observe_global::<LibraryDataChanged>(|this, cx| {
+            this.load_recently_added(cx);
+        })
+        .detach();
+
+        view.load_recently_played(cx);
+        view.load_recently_added(cx);
         view
     }
 
-    fn load_recently_added(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn load_recently_played(&mut self, cx: &mut Context<Self>) {
         let db = cx.global::<Database>().clone();
 
-        cx.spawn_in(
-            window,
-            |this: WeakEntity<Self>, cx: &mut AsyncWindowContext| {
-                let mut cx = cx.clone();
-                async move {
-                    let items = db.get_recently_added_items(100).await.unwrap_or_default();
+        cx.spawn(async move |this, cx: &mut AsyncApp| {
+            let items = db
+                .get_recently_played_items(HOME_RECENT_ITEMS_LIMIT)
+                .await
+                .unwrap_or_default();
 
-                    this.update(&mut cx, |this, cx| {
-                        this.recently_added = items;
-                        cx.notify();
-                    })
-                    .ok();
-                }
-            },
-        )
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    this.recently_played = items;
+                    cx.notify();
+                })
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn load_recently_added(&mut self, cx: &mut Context<Self>) {
+        let db = cx.global::<Database>().clone();
+
+        cx.spawn(async move |this, cx: &mut AsyncApp| {
+            let items = db
+                .get_recently_added_items(HOME_RECENT_ITEMS_LIMIT)
+                .await
+                .unwrap_or_default();
+
+            cx.update(|cx| {
+                this.update(cx, |this, cx| {
+                    this.recently_added = items;
+                    cx.notify();
+                })
+            })
+            .ok();
+        })
         .detach();
     }
 
@@ -75,29 +115,58 @@ impl HomeView {
         (cover_size, num_items)
     }
 
+    fn scroll_offset_left(offset: &mut usize, items_per_page: usize) {
+        if *offset >= items_per_page {
+            *offset -= items_per_page;
+        } else {
+            *offset = 0;
+        }
+    }
+
+    fn scroll_offset_right(offset: &mut usize, item_count: usize, items_per_page: usize) {
+        let max_offset = item_count.saturating_sub(items_per_page);
+        if *offset + items_per_page <= max_offset {
+            *offset += items_per_page;
+        } else {
+            *offset = max_offset;
+        }
+    }
+
+    fn scroll_recently_played_left(&mut self, cx: &mut Context<Self>) {
+        let (_, items_per_page) = self.calculate_layout();
+        Self::scroll_offset_left(&mut self.recently_played_offset, items_per_page);
+        cx.notify();
+    }
+
+    fn scroll_recently_played_right(&mut self, cx: &mut Context<Self>) {
+        let (_, items_per_page) = self.calculate_layout();
+        Self::scroll_offset_right(
+            &mut self.recently_played_offset,
+            self.recently_played.len(),
+            items_per_page,
+        );
+        cx.notify();
+    }
+
     fn scroll_recently_added_left(&mut self, cx: &mut Context<Self>) {
         let (_, items_per_page) = self.calculate_layout();
-        if self.recently_added_offset >= items_per_page {
-            self.recently_added_offset -= items_per_page;
-        } else {
-            self.recently_added_offset = 0;
-        }
+        Self::scroll_offset_left(&mut self.recently_added_offset, items_per_page);
         cx.notify();
     }
 
     fn scroll_recently_added_right(&mut self, cx: &mut Context<Self>) {
         let (_, items_per_page) = self.calculate_layout();
-        let max_offset = self.recently_added.len().saturating_sub(items_per_page);
-        if self.recently_added_offset + items_per_page <= max_offset {
-            self.recently_added_offset += items_per_page;
-        } else {
-            self.recently_added_offset = max_offset;
-        }
+        Self::scroll_offset_right(
+            &mut self.recently_added_offset,
+            self.recently_added.len(),
+            items_per_page,
+        );
         cx.notify();
     }
 }
 
 fn recent_item_tile(
+    id_prefix: &'static str,
     idx: usize,
     item: RecentItem,
     cover_size: f32,
@@ -137,14 +206,14 @@ fn recent_item_tile(
 
     let cover_element = if let Some(uri) = cover_uri {
         img(format!("!image://{}", uri))
-            .id(ElementId::Name(format!("recent-cover-{}", idx).into()))
+            .id(ElementId::Name(format!("{id_prefix}-cover-{idx}").into()))
             .size(px(cover_size))
             .object_fit(ObjectFit::Cover)
             .into_any_element()
     } else {
         div()
             .id(ElementId::Name(
-                format!("recent-cover-placeholder-{}", idx).into(),
+                format!("{id_prefix}-cover-placeholder-{idx}").into(),
             ))
             .size(px(cover_size))
             .bg(variables.border)
@@ -152,7 +221,7 @@ fn recent_item_tile(
     };
 
     flex_col()
-        .id(ElementId::Name(format!("recent-item-{}", idx).into()))
+        .id(ElementId::Name(format!("{id_prefix}-item-{idx}").into()))
         .w(px(cover_size))
         .gap(px(8.0))
         .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
@@ -168,11 +237,13 @@ fn recent_item_tile(
         .child(cover_element)
         .child(
             flex_col()
-                .id(ElementId::Name(format!("recent-item-info-{}", idx).into()))
+                .id(ElementId::Name(
+                    format!("{id_prefix}-item-info-{idx}").into(),
+                ))
                 .gap(px(4.0))
                 .child(
                     div()
-                        .id(ElementId::Name(format!("recent-title-{}", idx).into()))
+                        .id(ElementId::Name(format!("{id_prefix}-title-{idx}").into()))
                         .text_ellipsis()
                         .font_weight(FontWeight(500.0))
                         .overflow_x_hidden()
@@ -181,7 +252,9 @@ fn recent_item_tile(
                 )
                 .child(
                     div()
-                        .id(ElementId::Name(format!("recent-subtitle-{}", idx).into()))
+                        .id(ElementId::Name(
+                            format!("{id_prefix}-subtitle-{idx}").into(),
+                        ))
                         .text_ellipsis()
                         .overflow_x_hidden()
                         .max_w(px(cover_size))
@@ -189,6 +262,48 @@ fn recent_item_tile(
                         .child(subtitle),
                 ),
         )
+}
+
+fn recent_items_content(
+    section_id: &'static str,
+    items: &[RecentItem],
+    offset: usize,
+    items_per_page: usize,
+    cover_size: f32,
+    variables: &Variables,
+    context_menu: Entity<ContextMenu>,
+) -> AnyElement {
+    if items.is_empty() {
+        return flex_row()
+            .id(ElementId::Name(format!("{section_id}-empty").into()))
+            .w_full()
+            .child("No Data")
+            .text_color(variables.text_secondary)
+            .into_any_element();
+    }
+
+    let visible_items: Vec<_> = items
+        .iter()
+        .skip(offset)
+        .take(items_per_page)
+        .enumerate()
+        .collect();
+
+    flex_row()
+        .id(ElementId::Name(format!("{section_id}-grid").into()))
+        .w_full()
+        .gap(px(GAP_SIZE))
+        .children(visible_items.into_iter().map(move |(idx, item)| {
+            recent_item_tile(
+                section_id,
+                offset + idx,
+                item.clone(),
+                cover_size,
+                variables,
+                context_menu.clone(),
+            )
+        }))
+        .into_any_element()
 }
 
 impl Render for HomeView {
@@ -209,41 +324,31 @@ impl Render for HomeView {
 
         let (cover_size, items_per_page) = self.calculate_layout();
 
-        let can_scroll_left = self.recently_added_offset > 0;
-        let can_scroll_right =
+        let can_scroll_recently_played_left = self.recently_played_offset > 0;
+        let can_scroll_recently_played_right =
+            self.recently_played_offset + items_per_page < self.recently_played.len();
+        let can_scroll_recently_added_left = self.recently_added_offset > 0;
+        let can_scroll_recently_added_right =
             self.recently_added_offset + items_per_page < self.recently_added.len();
 
-        let recently_added_content = if self.recently_added.is_empty() {
-            flex_row()
-                .id("recently-added-empty")
-                .w_full()
-                .child("No Data")
-                .text_color(variables.text_secondary)
-                .into_any_element()
-        } else {
-            let visible_items: Vec<_> = self
-                .recently_added
-                .iter()
-                .skip(self.recently_added_offset)
-                .take(items_per_page)
-                .enumerate()
-                .collect();
-
-            flex_row()
-                .id("recently-added-grid")
-                .w_full()
-                .gap(px(GAP_SIZE))
-                .children(visible_items.into_iter().map(|(idx, item)| {
-                    recent_item_tile(
-                        idx,
-                        item.clone(),
-                        cover_size,
-                        variables,
-                        context_menu.clone(),
-                    )
-                }))
-                .into_any_element()
-        };
+        let recently_played_content = recent_items_content(
+            "recently-played",
+            &self.recently_played,
+            self.recently_played_offset,
+            items_per_page,
+            cover_size,
+            variables,
+            context_menu.clone(),
+        );
+        let recently_added_content = recent_items_content(
+            "recently-added",
+            &self.recently_added,
+            self.recently_added_offset,
+            items_per_page,
+            cover_size,
+            variables,
+            context_menu.clone(),
+        );
 
         let recently_played = flex_col()
             .id("recently-played-section")
@@ -264,27 +369,68 @@ impl Render for HomeView {
                         flex_row()
                             .id("recently-played-arrows")
                             .gap(px(variables.padding_8))
-                            .child(icon(ARROW_LEFT))
-                            .child(icon(ARROW_RIGHT)),
+                            .child(
+                                icon(ARROW_LEFT)
+                                    .when(can_scroll_recently_played_left, |this| {
+                                        this.cursor_pointer()
+                                    })
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _event, _window, cx| {
+                                            this.scroll_recently_played_left(cx);
+                                        }),
+                                    )
+                                    .text_color(if can_scroll_recently_played_left {
+                                        variables.text_secondary
+                                    } else {
+                                        variables.text_muted
+                                    })
+                                    .hover(|this| {
+                                        if can_scroll_recently_played_left {
+                                            this.text_color(variables.text)
+                                        } else {
+                                            this
+                                        }
+                                    }),
+                            )
+                            .child(
+                                icon(ARROW_RIGHT)
+                                    .when(can_scroll_recently_played_right, |this| {
+                                        this.cursor_pointer()
+                                    })
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _event, _window, cx| {
+                                            this.scroll_recently_played_right(cx);
+                                        }),
+                                    )
+                                    .text_color(if can_scroll_recently_played_right {
+                                        variables.text_secondary
+                                    } else {
+                                        variables.text_muted
+                                    })
+                                    .hover(|this| {
+                                        if can_scroll_recently_played_right {
+                                            this.text_color(variables.text)
+                                        } else {
+                                            this
+                                        }
+                                    }),
+                            ),
                     )
                     .items_center()
                     .justify_between(),
             )
-            .child(
-                flex_row()
-                    .id("recently-played-content")
-                    .child("No Data")
-                    .text_color(variables.text_secondary),
-            )
+            .child(recently_played_content)
             .gap(px(variables.padding_16));
 
-        let left_arrow_color = if can_scroll_left {
+        let left_arrow_color = if can_scroll_recently_added_left {
             variables.text_secondary
         } else {
             variables.text_muted
         };
 
-        let right_arrow_color = if can_scroll_right {
+        let right_arrow_color = if can_scroll_recently_added_right {
             variables.text_secondary
         } else {
             variables.text_muted
@@ -310,7 +456,9 @@ impl Render for HomeView {
                             .gap(px(variables.padding_8))
                             .child(
                                 icon(ARROW_LEFT)
-                                    .when(can_scroll_left, |this| this.cursor_pointer())
+                                    .when(can_scroll_recently_added_left, |this| {
+                                        this.cursor_pointer()
+                                    })
                                     .on_mouse_down(
                                         MouseButton::Left,
                                         cx.listener(|this, _event, _window, cx| {
@@ -319,7 +467,7 @@ impl Render for HomeView {
                                     )
                                     .text_color(left_arrow_color)
                                     .hover(|this| {
-                                        if can_scroll_left {
+                                        if can_scroll_recently_added_left {
                                             this.text_color(variables.text)
                                         } else {
                                             this
@@ -328,7 +476,9 @@ impl Render for HomeView {
                             )
                             .child(
                                 icon(ARROW_RIGHT)
-                                    .when(can_scroll_right, |this| this.cursor_pointer())
+                                    .when(can_scroll_recently_added_right, |this| {
+                                        this.cursor_pointer()
+                                    })
                                     .on_mouse_down(
                                         MouseButton::Left,
                                         cx.listener(|this, _event, _window, cx| {
@@ -337,7 +487,7 @@ impl Render for HomeView {
                                     )
                                     .text_color(right_arrow_color)
                                     .hover(|this| {
-                                        if can_scroll_right {
+                                        if can_scroll_recently_added_right {
                                             this.text_color(variables.text)
                                         } else {
                                             this
