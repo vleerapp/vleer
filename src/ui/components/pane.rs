@@ -1,4 +1,3 @@
-use crate::ui::components::title::Title;
 use crate::ui::variables::Variables;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
@@ -52,7 +51,18 @@ impl RenderOnce for Pane {
                     .child(self.content),
             )
             .when_some(self.title, |this, title| {
-                this.child(Title::new(title, title_id.clone()))
+                this.child(
+                    div()
+                        .id(title_id.clone())
+                        .absolute()
+                        .top(px(-6.0))
+                        .left(px(6.0))
+                        .px(px(2.0))
+                        .bg(variables.background)
+                        .text_color(variables.border)
+                        .group_hover(title_id, |s| s.text_color(variables.accent))
+                        .child(title),
+                )
             })
     }
 }
