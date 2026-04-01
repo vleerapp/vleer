@@ -2,9 +2,10 @@ use crate::{
     data::{db::repo::Database, models::RecentItem},
     ui::{
         components::{
+            card::{CARD_GRID_GAP, Card, calculate_card_layout},
             context_menu::{
                 ContextMenu, HomeDataChanged, LibraryDataChanged, album_context_menu_items,
-                song_context_menu_items,
+                play_album_now, play_song_now, song_context_menu_items,
             },
             div::{flex_col, flex_row},
             icons::{
@@ -29,10 +30,6 @@ pub struct HomeView {
 }
 
 const HOME_RECENT_ITEMS_LIMIT: i64 = 100;
-const MIN_COVER_SIZE: f32 = 180.0;
-const MAX_COVER_SIZE: f32 = 400.0;
-const GAP_SIZE: f32 = 16.0;
-
 impl HomeView {
     pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut view = Self {
@@ -100,19 +97,7 @@ impl HomeView {
     }
 
     fn calculate_layout(&self) -> (f32, usize) {
-        let width = self.container_width.unwrap_or(1000.0);
-
-        let num_items = ((width + GAP_SIZE) / (MIN_COVER_SIZE + GAP_SIZE)).floor() as usize;
-        let num_items = num_items.max(1);
-
-        let cover_size = if num_items > 0 {
-            ((width - (num_items - 1) as f32 * GAP_SIZE) / num_items as f32)
-                .clamp(MIN_COVER_SIZE, MAX_COVER_SIZE)
-        } else {
-            MIN_COVER_SIZE
-        };
-
-        (cover_size, num_items)
+        calculate_card_layout(self.container_width)
     }
 
     fn scroll_offset_left(offset: &mut usize, items_per_page: usize) {
@@ -170,7 +155,6 @@ fn recent_item_tile(
     idx: usize,
     item: RecentItem,
     cover_size: f32,
-    variables: &Variables,
     context_menu: Entity<ContextMenu>,
 ) -> impl IntoElement {
     let (item_id, title, subtitle, cover_uri, is_song) = match item.clone() {
@@ -203,65 +187,29 @@ fn recent_item_tile(
             (id, title.clone(), subtitle, image_id.clone(), false)
         }
     };
+    let play_item_id = item_id.clone();
+    let menu_item_id = item_id.clone();
 
-    let cover_element = if let Some(uri) = cover_uri {
-        img(format!("!image://{}", uri))
-            .id(ElementId::Name(format!("{id_prefix}-cover-{idx}").into()))
-            .size(px(cover_size))
-            .object_fit(ObjectFit::Cover)
-            .into_any_element()
-    } else {
-        div()
-            .id(ElementId::Name(
-                format!("{id_prefix}-cover-placeholder-{idx}").into(),
-            ))
-            .size(px(cover_size))
-            .bg(variables.border)
-            .into_any_element()
-    };
-
-    flex_col()
-        .id(ElementId::Name(format!("{id_prefix}-item-{idx}").into()))
-        .w(px(cover_size))
-        .gap(px(8.0))
+    Card::new(format!("{id_prefix}-item-{idx}"), title, cover_size)
+        .subtitle(subtitle)
+        .image_uri(cover_uri)
+        .on_play(move |_window, cx| {
+            if is_song {
+                play_song_now(play_item_id.clone(), cx);
+            } else {
+                play_album_now(play_item_id.clone(), cx);
+            }
+        })
         .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
             let menu_items = if is_song {
-                song_context_menu_items(item_id.clone(), cx)
+                song_context_menu_items(menu_item_id.clone(), cx)
             } else {
-                album_context_menu_items(item_id.clone(), cx)
+                album_context_menu_items(menu_item_id.clone(), cx)
             };
             context_menu.update(cx, |menu, cx| {
                 menu.show(event.position, menu_items, cx);
             });
         })
-        .child(cover_element)
-        .child(
-            flex_col()
-                .id(ElementId::Name(
-                    format!("{id_prefix}-item-info-{idx}").into(),
-                ))
-                .gap(px(4.0))
-                .child(
-                    div()
-                        .id(ElementId::Name(format!("{id_prefix}-title-{idx}").into()))
-                        .text_ellipsis()
-                        .font_weight(FontWeight(500.0))
-                        .overflow_x_hidden()
-                        .max_w(px(cover_size))
-                        .child(title),
-                )
-                .child(
-                    div()
-                        .id(ElementId::Name(
-                            format!("{id_prefix}-subtitle-{idx}").into(),
-                        ))
-                        .text_ellipsis()
-                        .overflow_x_hidden()
-                        .max_w(px(cover_size))
-                        .text_color(variables.text_secondary)
-                        .child(subtitle),
-                ),
-        )
 }
 
 fn recent_items_content(
@@ -292,14 +240,13 @@ fn recent_items_content(
     flex_row()
         .id(ElementId::Name(format!("{section_id}-grid").into()))
         .w_full()
-        .gap(px(GAP_SIZE))
+        .gap(px(CARD_GRID_GAP))
         .children(visible_items.into_iter().map(move |(idx, item)| {
             recent_item_tile(
                 section_id,
                 offset + idx,
                 item.clone(),
                 cover_size,
-                variables,
                 context_menu.clone(),
             )
         }))

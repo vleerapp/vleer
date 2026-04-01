@@ -254,6 +254,50 @@ fn write_and_notify_pinned(cx: &mut App, write: impl FnOnce(&Database)) {
     cx.set_global(PinnedItemsChanged);
 }
 
+pub fn play_song_ids_now(song_ids: Vec<Cuid>, cx: &mut App) {
+    if song_ids.is_empty() {
+        return;
+    }
+
+    cx.update_global::<Queue, _>(|queue, _| {
+        queue.clear();
+        queue.add_songs(song_ids);
+    });
+
+    cx.update_global::<Playback, _>(|playback, cx| {
+        playback.play_queue(cx);
+    });
+
+    cx.set_global(QueueChanged::default());
+}
+
+pub fn play_song_now(song_id: Cuid, cx: &mut App) {
+    play_song_ids_now(vec![song_id], cx);
+}
+
+pub fn play_album_now(album_id: Cuid, cx: &mut App) {
+    let db = cx.global::<Database>().clone();
+
+    cx.spawn(async move |cx| {
+        let song_ids = db
+            .get_album_songs(&album_id)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|song| song.id)
+            .collect::<Vec<_>>();
+
+        if song_ids.is_empty() {
+            return;
+        }
+
+        cx.update(|cx| {
+            play_song_ids_now(song_ids, cx);
+        });
+    })
+    .detach();
+}
+
 pub fn song_context_menu_items(song_id: Cuid, cx: &App) -> Vec<ContextMenuItem> {
     let db = cx.global::<Database>().clone();
     let song = run_sync(db.get_song(song_id.clone())).ok().flatten();

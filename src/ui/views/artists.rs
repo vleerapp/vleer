@@ -5,6 +5,7 @@ use crate::{
     data::{db::repo::Database, models::ArtistListItem},
     ui::{
         components::{
+            card::{CARD_GRID_GAP, Card, CardImageShape, calculate_card_layout},
             context_menu::{ContextMenu, LibraryDataChanged, artist_context_menu_items},
             div::{flex_col, flex_row},
             scrollbar::{Scrollbar, ScrollbarAxis, ScrollbarHandle},
@@ -14,10 +15,6 @@ use crate::{
         views::{ActiveView, AppView},
     },
 };
-
-const MIN_COVER_SIZE: f32 = 180.0;
-const MAX_COVER_SIZE: f32 = 400.0;
-const GAP_SIZE: f32 = 16.0;
 
 pub struct ArtistsView {
     page_size: usize,
@@ -260,19 +257,7 @@ impl ArtistsView {
     }
 
     fn calculate_layout(&self) -> (f32, usize) {
-        let width = self.container_width.unwrap_or(1000.0);
-
-        let num_items = ((width + GAP_SIZE) / (MIN_COVER_SIZE + GAP_SIZE)).floor() as usize;
-        let num_items = num_items.max(1);
-
-        let cover_size = if num_items > 0 {
-            ((width - (num_items - 1) as f32 * GAP_SIZE) / num_items as f32)
-                .clamp(MIN_COVER_SIZE, MAX_COVER_SIZE)
-        } else {
-            MIN_COVER_SIZE
-        };
-
-        (cover_size, num_items)
+        calculate_card_layout(self.container_width)
     }
 }
 
@@ -280,49 +265,23 @@ fn artist_tile(
     idx: usize,
     artist: &ArtistListItem,
     cover_size: f32,
-    variables: &Variables,
     context_menu: Entity<ContextMenu>,
 ) -> impl IntoElement {
-    let cover_element = if let Some(uri) = &artist.image_id {
-        img(format!("!image://{}", uri))
-            .id(ElementId::Name(format!("artist-cover-{}", idx).into()))
-            .size(px(cover_size))
-            .object_fit(ObjectFit::Cover)
-            .rounded_full()
-            .into_any_element()
-    } else {
-        div()
-            .id(ElementId::Name(
-                format!("artist-cover-placeholder-{}", idx).into(),
-            ))
-            .size(px(cover_size))
-            .bg(variables.border)
-            .rounded_full()
-            .into_any_element()
-    };
-
     let artist_id = artist.id.clone();
 
-    flex_col()
-        .id(ElementId::Name(format!("artist-item-{}", idx).into()))
-        .w(px(cover_size))
-        .gap(px(8.0))
-        .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
-            let items = artist_context_menu_items(artist_id.clone(), cx);
-            context_menu.update(cx, |menu, cx| {
-                menu.show(event.position, items, cx);
-            });
-        })
-        .child(cover_element)
-        .child(
-            div()
-                .id(ElementId::Name(format!("artist-title-{}", idx).into()))
-                .text_ellipsis()
-                .font_weight(FontWeight(500.0))
-                .overflow_x_hidden()
-                .max_w(px(cover_size))
-                .child(artist.name.clone()),
-        )
+    Card::new(
+        format!("artist-item-{}", idx),
+        artist.name.clone(),
+        cover_size,
+    )
+    .image_uri(artist.image_id.clone())
+    .image_shape(CardImageShape::Circle)
+    .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
+        let items = artist_context_menu_items(artist_id.clone(), cx);
+        context_menu.update(cx, |menu, cx| {
+            menu.show(event.position, items, cx);
+        });
+    })
 }
 
 impl Render for ArtistsView {
@@ -383,8 +342,8 @@ impl Render for ArtistsView {
                                         ))
                                         .w_full()
                                         .px(px(variables.padding_24))
-                                        .gap(px(GAP_SIZE))
-                                        .pb(px(GAP_SIZE));
+                                        .gap(px(CARD_GRID_GAP))
+                                        .pb(px(CARD_GRID_GAP));
 
                                     for col_idx in 0..items_per_row {
                                         let item_idx = row_idx * items_per_row + col_idx;
@@ -400,7 +359,6 @@ impl Render for ArtistsView {
                                                 item_idx,
                                                 &artist,
                                                 cover_size,
-                                                variables,
                                                 context_menu.clone(),
                                             ));
                                         } else {
@@ -426,7 +384,7 @@ impl Render for ArtistsView {
                     .track_scroll(&scroll_handle)
                     .size_full()
                     .pt(px(variables.padding_24))
-                    .pb(px(variables.padding_24 - GAP_SIZE)),
+                    .pb(px(variables.padding_24 - CARD_GRID_GAP)),
                 )
                 .into_any_element()
         };
@@ -445,7 +403,8 @@ impl Render for ArtistsView {
             )
             .when(row_count > 0, |this| {
                 let scroll_handle = self.scroll_handle.clone();
-                let padding_extra = px(variables.padding_24 + (variables.padding_24 - GAP_SIZE));
+                let padding_extra =
+                    px(variables.padding_24 + (variables.padding_24 - CARD_GRID_GAP));
                 let mut content_size = scroll_handle.content_size();
                 content_size.height += padding_extra;
                 this.child(

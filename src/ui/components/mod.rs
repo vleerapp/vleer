@@ -1,4 +1,5 @@
 pub mod button;
+pub mod card;
 pub mod context_menu;
 pub mod div;
 pub mod icons;
@@ -10,5 +11,4 @@ pub mod scrollbar;
 pub mod slider;
 pub mod song_table;
 pub mod switch;
-pub mod title;
 pub mod window_controls;
