@@ -22,11 +22,11 @@ anyhow = "1.0.102"
 dirs = "6.0.0"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-tokio = { version = "1.50.0", features = ["full"] }
+tokio = { version = "1.51.0", features = ["full"] }
 futures = "0.3.32"
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "chrono"] }
 serde = { version = "1.0.228", features = ["derive"] }
-toml = "1.1.0+spec-1.1.0"
+toml = "1.1.2+spec-1.1.0"
 rodio = { git = "https://github.com/vleerapp/rodio", branch = "feat/registry", features = [
   "symphonia",
   "symphonia-all",
@@ -43,7 +43,7 @@ notify = "8.2.0"
 notify-debouncer-full = "0.7.0"
 image = "0.25.10"
 sha2 = "0.11.0"
-indexmap = "2.13.0"
+indexmap = "2.13.1"
 rustc-hash = "2.1.2"
 unicode-segmentation = "1.13.2"
 lru = "0.16.3"
