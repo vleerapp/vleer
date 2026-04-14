@@ -15,10 +15,24 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            os_name: Linux
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            os_name: Linux
+            arch: aarch64
           - os: macos-latest
             target: aarch64-apple-darwin
+            os_name: macOS
+            arch: aarch64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            os_name: Windows
+            arch: x86_64
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            os_name: Windows
+            arch: aarch64
 
     runs-on: ${{ matrix.os }}
 
@@ -101,10 +115,25 @@ jobs:
           echo "${{ secrets.MINISIGN_PASSWORD }}" | minisign -Sm target/release/bundles/SHA256SUMS.txt -s minisign.key
           rm -f minisign.key
 
+      - name: Rename artifacts
+        shell: bash
+        run: |
+          ARCH_LOWER=$(echo "${{ matrix.arch }}" | tr '[:upper:]' '[:lower:]')
+          PREFIX="Vleer-${{ steps.version.outputs.full }}-${ARCH_LOWER}"
+          echo "prefix=$PREFIX" >> $GITHUB_OUTPUT
+          cd target/release/bundles
+          for f in *; do
+            [[ "$f" == *.minisig ]] && continue
+            [[ "$f" == "SHA256SUMS.txt" ]] && continue
+            [[ -f "$f" ]] || continue
+            EXT="${f#*.}"
+            mv "$f" "${PREFIX}.${EXT}"
+            [[ -f "${f}.minisig" ]] && mv "${f}.minisig" "${PREFIX}.${EXT}.minisig"
+          done
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: vleer-${{ matrix.target }}
+          name: ${{ steps.version.outputs.full }}_${{ matrix.arch }}
           path: |
             target/release/bundles/*
-            target/release/bundles/*.minisig
