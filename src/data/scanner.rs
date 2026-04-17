@@ -125,51 +125,20 @@ impl Scanner {
         cx.set_global(scanner.clone());
 
         let scanner = Arc::new(scanner);
-        let scanner_clone = scanner.clone();
 
-        match MusicWatcher::new(scanner.clone(), Arc::new(db.clone())) {
-            Ok((watcher, mut rx)) => {
-                std::mem::forget(watcher);
+        tokio::task::spawn_blocking(move || {
+            match MusicWatcher::new(scanner.clone(), Arc::new(db.clone())) {
+                Ok((watcher, mut rx)) => {
+                    let db_clone = db.clone();
+                    let telemetry_clone = telemetry.clone();
+                    let config_clone = config.clone();
+                    let background_ui_clone = background_ui.clone();
 
-                let db_clone = db.clone();
-                let telemetry_clone = telemetry.clone();
-                let config_clone = config.clone();
-                let background_ui_clone = background_ui.clone();
-
-                tokio::spawn(async move {
-                    while let Some(stats) = rx.recv().await {
-                        info!(
-                            "Library scan completed - Scanned: {}, Added: {}, Updated: {}, Removed: {}",
-                            stats.scanned, stats.added, stats.updated, stats.removed
-                        );
-
-                        if stats.scanned > 0 {
-                            telemetry_clone.submit(&db_clone, &config_clone).await;
-                        }
-
-                        if (stats.added > 0 || stats.updated > 0 || stats.removed > 0)
-                            && let Some(background_ui) = &background_ui_clone
-                        {
-                            background_ui.notify(BackgroundUiEvent::LibraryDataChanged);
-                        }
-                    }
-                });
-
-                let db_clone = db.clone();
-                let telemetry_clone = telemetry.clone();
-                let config_clone = config.clone();
-                let background_ui_clone = background_ui.clone();
-
-                tokio::spawn(async move {
-                    let existing_song_count = db_clone.get_songs_count(None).await.unwrap_or(0);
-                    info!(
-                        "Starting initial library scan immediately (existing songs: {})...",
-                        existing_song_count
-                    );
-                    match scanner_clone.scan(&db_clone).await {
-                        Ok(stats) => {
+                    tokio::spawn(async move {
+                        let _watcher = watcher;
+                        while let Some(stats) = rx.recv().await {
                             info!(
-                                "Initial scan complete - Scanned: {}, Added: {}, Updated: {}, Removed: {}",
+                                "Library scan completed - Scanned: {}, Added: {}, Updated: {}, Removed: {}",
                                 stats.scanned, stats.added, stats.updated, stats.removed
                             );
 
@@ -183,16 +152,47 @@ impl Scanner {
                                 background_ui.notify(BackgroundUiEvent::LibraryDataChanged);
                             }
                         }
-                        Err(e) => {
-                            error!("Initial scan failed: {}", e);
+                    });
+
+                    let db_clone = db.clone();
+                    let telemetry_clone = telemetry.clone();
+                    let config_clone = config.clone();
+                    let background_ui_clone = background_ui.clone();
+
+                    tokio::spawn(async move {
+                        let existing_song_count = db_clone.get_songs_count(None).await.unwrap_or(0);
+                        info!(
+                            "Starting initial library scan (existing songs: {})...",
+                            existing_song_count
+                        );
+                        match scanner.scan(&db_clone).await {
+                            Ok(stats) => {
+                                info!(
+                                    "Initial scan complete - Scanned: {}, Added: {}, Updated: {}, Removed: {}",
+                                    stats.scanned, stats.added, stats.updated, stats.removed
+                                );
+
+                                if stats.scanned > 0 {
+                                    telemetry_clone.submit(&db_clone, &config_clone).await;
+                                }
+
+                                if (stats.added > 0 || stats.updated > 0 || stats.removed > 0)
+                                    && let Some(background_ui) = &background_ui_clone
+                                {
+                                    background_ui.notify(BackgroundUiEvent::LibraryDataChanged);
+                                }
+                            }
+                            Err(e) => {
+                                error!("Initial scan failed: {}", e);
+                            }
                         }
-                    }
-                });
+                    });
+                }
+                Err(e) => {
+                    error!("Failed to initialize music watcher: {}", e);
+                }
             }
-            Err(e) => {
-                error!("Failed to initialize music watcher: {}", e);
-            }
-        }
+        });
     }
 
     fn is_audio_file(path: &Path) -> bool {
