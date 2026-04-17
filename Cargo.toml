@@ -22,7 +22,7 @@ anyhow = "1.0.102"
 dirs = "6.0.0"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-tokio = { version = "1.51.0", features = ["full"] }
+tokio = { version = "1.52.1", features = ["full"] }
 futures = "0.3.32"
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "chrono"] }
 serde = { version = "1.0.228", features = ["derive"] }
@@ -37,20 +37,20 @@ symphonia = "0.5.5"
 cuid2 = "0.1.4"
 url = "2.5.8"
 rust-embed = "8.11.0"
-lofty = "0.23.3"
+lofty = "0.24.0"
 walkdir = "2.5.0"
 notify = "8.2.0"
 notify-debouncer-full = "0.7.0"
 image = "0.25.10"
 sha2 = "0.11.0"
-indexmap = "2.13.1"
+indexmap = "2.14.0"
 rustc-hash = "2.1.2"
 unicode-segmentation = "1.13.2"
-lru = "0.16.3"
+lru = "0.17.0"
 lazy_static = "1.5.0"
 dashmap = "6.1.0"
 reqwest = { version = "0.13.2", features = ["json"] }
-uuid = { version = "1.23.0", features = ["serde", "v4"] }
+uuid = { version = "1.23.1", features = ["serde", "v4"] }
 souvlaki = "0.8.3"
 spectrum-analyzer = "1.7.0"
 discord-rich-presence = "1.1.0"
