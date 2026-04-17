@@ -20,9 +20,10 @@ impl DiscordPresence {
     pub fn init(cx: &mut App) {
         let app_id = Arc::new("1194990403963858984".to_string());
         let client = Arc::new(Mutex::new(DiscordIpcClient::new(&*app_id)));
-        let _ = client.lock().unwrap().connect();
+        let connected = Arc::new(Mutex::new(false));
 
         let client = Arc::clone(&client);
+        let connected = Arc::clone(&connected);
         let db = cx.global::<Database>().clone();
 
         cx.spawn(async move |cx| {
@@ -34,6 +35,20 @@ impl DiscordPresence {
                     .timer(std::time::Duration::from_secs(2))
                     .await;
 
+                if !*connected.lock().unwrap() {
+                    let client = Arc::clone(&client);
+                    let connected = Arc::clone(&connected);
+                    let ok = tokio::task::spawn_blocking(move || {
+                        client.lock().unwrap().connect().is_ok()
+                    })
+                    .await
+                    .unwrap_or(false);
+                    *connected.lock().unwrap() = ok;
+                    if !ok {
+                        continue;
+                    }
+                }
+
                 let discord_enabled = cx.update(|app| {
                     app.try_global::<Config>()
                         .map(|c| c.get().discord_rpc)
@@ -42,7 +57,9 @@ impl DiscordPresence {
 
                 if !discord_enabled {
                     let mut client = client.lock().unwrap();
-                    let _ = client.clear_activity();
+                    if client.clear_activity().is_err() {
+                        *connected.lock().unwrap() = false;
+                    }
                     continue;
                 }
 
@@ -92,7 +109,10 @@ impl DiscordPresence {
                 let mut client = client.lock().unwrap();
 
                 if cached_song_info.is_none() || is_paused {
-                    let _ = client.clear_activity();
+                    if client.clear_activity().is_err() {
+                        drop(client);
+                        *connected.lock().unwrap() = false;
+                    }
                     continue;
                 }
 
@@ -113,7 +133,10 @@ impl DiscordPresence {
                     act = act.state(name);
                 }
 
-                let _ = client.set_activity(act);
+                if client.set_activity(act).is_err() {
+                    drop(client);
+                    *connected.lock().unwrap() = false;
+                }
             }
         })
         .detach();
