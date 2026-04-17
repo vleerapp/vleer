@@ -21,21 +21,9 @@ use crate::ui::{
 };
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use std::time::Duration;
 use tracing::{error, info};
 
 const SEARCH_RESULT_LIMIT: i64 = 20;
-
-fn run_sync<F, T>(future: F) -> T
-where
-    F: std::future::Future<Output = T>,
-{
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        tokio::task::block_in_place(|| handle.block_on(future))
-    } else {
-        crate::RUNTIME.block_on(future)
-    }
-}
 
 #[derive(Default)]
 pub struct Search {
@@ -51,59 +39,11 @@ pub struct Library {
     search_counts: (usize, usize, usize, usize),
     search_pending: bool,
     last_query: String,
-    _search_debounce: Option<Task<()>>,
+    _search_task: Option<Task<()>>,
     context_menu: Entity<ContextMenu>,
 }
 
 impl Library {
-    fn run_search_sync(&mut self, query: &str, cx: &mut Context<Self>) {
-        let db = cx.global::<Database>().clone();
-        let results = match run_sync(db.search_library(query, SEARCH_RESULT_LIMIT)) {
-            Ok(results) => results,
-            Err(e) => {
-                error!("library search failed: {}", e);
-                Vec::new()
-            }
-        };
-        let counts = match run_sync(db.get_search_match_counts(query)) {
-            Ok(counts) => counts,
-            Err(e) => {
-                error!("library search counts failed: {}", e);
-                (0, 0, 0, 0)
-            }
-        };
-
-        info!(
-            "Library search resolved, query: '{}', results: {}, counts: ({}, {}, {}, {})",
-            query,
-            results.len(),
-            counts.0,
-            counts.1,
-            counts.2,
-            counts.3
-        );
-
-        let mapped_results: Vec<PinnedItem> = results
-            .into_iter()
-            .map(|(id, name, image_id, item_type)| PinnedItem {
-                id,
-                name,
-                image_id,
-                item_type,
-            })
-            .collect();
-        let data_changed = self.search_results != mapped_results || self.search_counts != counts;
-        let pending_changed = self.search_pending;
-
-        self.search_results = mapped_results;
-        self.search_counts = counts;
-        self.search_pending = false;
-
-        if data_changed || pending_changed {
-            cx.notify();
-        }
-    }
-
     pub fn new(cx: &mut Context<Self>) -> Self {
         let search_input =
             cx.new(|cx| TextInput::new(cx, "Search Library").with_icon(icons::SEARCH));
@@ -123,23 +63,12 @@ impl Library {
         })
         .detach();
 
-        cx.subscribe(&search_input, |this, _, event: &InputEvent, cx| {
-            let text = match event {
-                InputEvent::Change(text) | InputEvent::Submit(text) => text,
+        cx.subscribe(&search_input, |_, _, event: &InputEvent, cx| {
+            let query = match event {
+                InputEvent::Change(text) | InputEvent::Submit(text) => text.trim().to_string(),
             };
-            let query = text.trim().to_string();
             info!("Library search_input subscribe, query: '{}'", query);
-            let task = cx.spawn(async move |_, cx: &mut AsyncApp| {
-                cx.background_executor()
-                    .timer(Duration::from_millis(200))
-                    .await;
-                cx.update(|cx| {
-                    cx.update_global::<Search, _>(|s, _cx| {
-                        s.query = query.into();
-                    });
-                });
-            });
-            this._search_debounce = Some(task);
+            cx.update_global::<Search, _>(|s, _| s.query = query.into());
         })
         .detach();
 
@@ -156,13 +85,60 @@ impl Library {
                 this.search_results.clear();
                 this.search_counts = (0, 0, 0, 0);
                 this.search_pending = false;
+                this._search_task = None;
                 cx.notify();
                 return;
             }
 
             this.search_pending = true;
-            cx.notify();
-            this.run_search_sync(&query, cx);
+            let db = cx.global::<Database>().clone();
+            this._search_task = Some(cx.spawn(async move |this, cx: &mut AsyncApp| {
+                let results = db.search_library(&query, SEARCH_RESULT_LIMIT).await;
+                let counts = db.get_search_match_counts(&query).await;
+
+                let mapped_results = match results {
+                    Ok(r) => r
+                        .into_iter()
+                        .map(|(id, name, image_id, item_type)| PinnedItem {
+                            id,
+                            name,
+                            image_id,
+                            item_type,
+                        })
+                        .collect::<Vec<_>>(),
+                    Err(e) => {
+                        error!("library search failed: {}", e);
+                        return;
+                    }
+                };
+                let counts = match counts {
+                    Ok(c) => c,
+                    Err(e) => {
+                        error!("library search counts failed: {}", e);
+                        return;
+                    }
+                };
+
+                info!(
+                    "Library search resolved, query: '{}', results: {}, counts: ({}, {}, {}, {})",
+                    query,
+                    mapped_results.len(),
+                    counts.0,
+                    counts.1,
+                    counts.2,
+                    counts.3
+                );
+
+                cx.update(|cx| {
+                    this.update(cx, |lib, cx| {
+                        lib.search_results = mapped_results;
+                        lib.search_counts = counts;
+                        lib.search_pending = false;
+                        cx.notify();
+                    })
+                })
+                .ok();
+            }));
         })
         .detach();
 
@@ -189,7 +165,7 @@ impl Library {
             search_counts: (0, 0, 0, 0),
             search_pending: false,
             last_query: String::new(),
-            _search_debounce: None,
+            _search_task: None,
             context_menu: cx.new(|_| ContextMenu::new()),
         }
     }
