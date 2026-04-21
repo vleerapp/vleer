@@ -77,6 +77,20 @@ jobs:
         shell: pwsh
         run: choco install minisign -y
 
+      - name: Install WiX Toolset (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install wixtoolset --version=3.14.1 -y --no-progress
+          $wixPath = "${env:ProgramFiles(x86)}\WiX Toolset v3.14\bin"
+          if (-Not (Test-Path $wixPath)) {
+            throw "WiX bin path not found: $wixPath"
+          }
+          $wixPath | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          where.exe candle.exe
+          candle.exe -v
+          light.exe -v
+
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@main
 
@@ -87,7 +101,31 @@ jobs:
           version: "0.11"
 
       - name: Build and Package
+        id: package
+        continue-on-error: true
         run: cargo packager --release
+
+      - name: Dump WiX diagnostics (Windows)
+        if: runner.os == 'Windows' && steps.package.outcome == 'failure'
+        shell: pwsh
+        run: |
+          where.exe candle.exe
+          where.exe light.exe
+          Get-ChildItem -Path target/release/bundles/.cargo-packager -Recurse -ErrorAction SilentlyContinue
+          $wixRoot = "target/release/bundles/.cargo-packager/wix"
+          if (Test-Path $wixRoot) {
+            Get-ChildItem -Path $wixRoot -Filter *.wxs -Recurse | ForEach-Object {
+              Write-Host "==== $($_.FullName) ===="
+              Get-Content -Path $_.FullName
+            }
+          }
+
+      - name: Fail on packaging errors
+        if: steps.package.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "cargo packager failed. See previous diagnostics step for details."
+          exit 1
 
       - name: CodeSign macOS
         if: runner.os == 'macOS'
