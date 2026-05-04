@@ -353,29 +353,25 @@ impl Element for Scrollbar {
             let (thumb_color, track_color, thumb_width) = self.get_colors(&cx, &state.get(), axis);
             let thumb_length = thumb_end - thumb_start;
             let thumb_bounds = if is_vertical {
-                Bounds::from_corner_and_size(
-                    Corner::TopRight,
+                Bounds::from_corners(
                     bounds.top_right() + point(px(0.), thumb_start),
-                    size(self.width, thumb_length),
+                    size(self.width, thumb_length).into(),
                 )
             } else {
-                Bounds::from_corner_and_size(
-                    Corner::BottomLeft,
+                Bounds::from_corners(
                     bounds.bottom_left() + point(thumb_start, px(0.)),
-                    size(thumb_length, self.width),
+                    size(thumb_length, self.width).into(),
                 )
             };
             let thumb_fill_bounds = if is_vertical {
-                Bounds::from_corner_and_size(
-                    Corner::TopRight,
+                Bounds::from_corners(
                     bounds.top_right() + point(px(0.), thumb_start),
-                    size(thumb_width, thumb_length),
+                    size(thumb_width, thumb_length).into(),
                 )
             } else {
-                Bounds::from_corner_and_size(
-                    Corner::BottomLeft,
+                Bounds::from_corners(
                     bounds.bottom_left() + point(thumb_start, px(0.)),
-                    size(thumb_length, thumb_width),
+                    size(thumb_length, thumb_width).into(),
                 )
             };
             let bar_hitbox = window.with_content_mask(Some(ContentMask { bounds }), |window| {
