@@ -21,7 +21,7 @@ use crate::ui::{
 };
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use tracing::{error, info};
+use tracing::error;
 
 const SEARCH_RESULT_LIMIT: i64 = 20;
 
@@ -67,14 +67,12 @@ impl Library {
             let query = match event {
                 InputEvent::Change(text) | InputEvent::Submit(text) => text.trim().to_string(),
             };
-            info!("Library search_input subscribe, query: '{}'", query);
             cx.update_global::<Search, _>(|s, _| s.query = query.into());
         })
         .detach();
 
         cx.observe_global::<Search>(|this, cx| {
             let query = cx.global::<Search>().query.trim().to_string();
-            info!("Library observe_global::<Search>, query: '{}'", query);
 
             if query == this.last_query {
                 return;
@@ -118,16 +116,6 @@ impl Library {
                         return;
                     }
                 };
-
-                info!(
-                    "Library search resolved, query: '{}', results: {}, counts: ({}, {}, {}, {})",
-                    query,
-                    mapped_results.len(),
-                    counts.0,
-                    counts.1,
-                    counts.2,
-                    counts.3
-                );
 
                 cx.update(|cx| {
                     this.update(cx, |lib, cx| {
