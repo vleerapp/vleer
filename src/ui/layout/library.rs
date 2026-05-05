@@ -406,7 +406,7 @@ impl Render for Library {
                                     div().pr(px(variables.padding_16)).child(
                                         div()
                                             .w_full()
-                                            .h(px(0.5))
+                                            .h(px(1.0))
                                             .bg(variables.border)
                                             .flex_shrink_0(),
                                     ),
