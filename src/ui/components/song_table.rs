@@ -91,14 +91,18 @@ pub type QueueHandler = Rc<dyn Fn(&mut App, Cuid, usize, Option<TableSort>) + 's
 
 type RowMap = FxHashMap<usize, Entity<SongTableItem>>;
 
+const MAX_CACHED_ROWS: usize = 500;
+const KEEP_WINDOW: usize = 200;
+
 fn prune_views(views: &Entity<RowMap>, render_counter: &Entity<usize>, idx: usize, cx: &mut App) {
-    let counter = *render_counter.read(cx);
-    if idx == 0 && counter > 0 {
+    render_counter.update(cx, |c, _| *c = idx);
+    if views.read(cx).len() > MAX_CACHED_ROWS {
         views.update(cx, |views, _| {
-            views.retain(|&k, _| k < counter + 50);
+            let lo = idx.saturating_sub(KEEP_WINDOW);
+            let hi = idx.saturating_add(KEEP_WINDOW);
+            views.retain(|&k, _| k >= lo && k <= hi);
         });
     }
-    render_counter.update(cx, |c, _| *c = idx);
 }
 
 fn create_or_retrieve_view<F>(
@@ -426,6 +430,7 @@ impl Render for SongTableItem {
 
 pub enum SongTableEvent {
     NewRows,
+    InvalidateRange(std::ops::Range<usize>),
 }
 
 #[derive(Clone)]
@@ -507,6 +512,23 @@ impl SongTable {
                     }
 
                     cx.notify();
+                }
+                SongTableEvent::InvalidateRange(range) => {
+                    let items: Vec<Entity<SongTableItem>> = this
+                        .views
+                        .read(cx)
+                        .iter()
+                        .filter_map(|(k, v)| {
+                            if range.contains(k) {
+                                Some(v.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    for item in items {
+                        item.update(cx, |_, cx| cx.notify());
+                    }
                 }
             })
             .detach();

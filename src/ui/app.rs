@@ -9,7 +9,7 @@ use crate::{
     data::{config::Config, db::repo::Database, scanner::Scanner, telemetry::Telemetry},
     media::{controller::MediaController, playback::Playback, queue::Queue},
     ui::{
-        assets::{VleerAssetSource, image_cache::app_image_cache},
+        assets::{ImagePool, VleerAssetSource, image_cache::app_image_cache},
         components::{
             context_menu::{
                 BackgroundUiEvent, BackgroundUiNotifier, HomeDataChanged, LibraryDataChanged,
@@ -264,7 +264,6 @@ pub fn find_fonts(cx: &mut App) -> gpui::Result<()> {
     results
 }
 
-#[tokio::main]
 pub async fn run() -> anyhow::Result<()> {
     let data_dir = dirs::data_dir()
         .expect("couldn't get data directory")
@@ -312,10 +311,11 @@ pub async fn run() -> anyhow::Result<()> {
     };
 
     application()
-        .with_assets(VleerAssetSource::new(image_pool))
+        .with_assets(VleerAssetSource::new())
         .run(move |cx| {
             let (background_ui_tx, mut background_ui_rx) = tokio::sync::mpsc::unbounded_channel();
 
+            cx.set_global(ImagePool(image_pool.clone()));
             cx.set_global(Database { pool: pool.clone() });
             cx.set_global(Search::default());
             cx.set_global(ActiveView::default());

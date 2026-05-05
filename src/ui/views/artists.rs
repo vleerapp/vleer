@@ -41,27 +41,26 @@ impl ArtistsView {
         self.request_inflight = true;
         let request_version = self.request_version;
         let db = cx.global::<Database>().clone();
+        let bg = cx.background_executor().clone();
         let page_size = self.page_size as i64;
 
         let task = cx.spawn(async move |this, cx: &mut AsyncApp| {
             let query_for_spawn = query.clone();
-            let (count, first_page) = match crate::RUNTIME
+            let (count, first_page) = bg
                 .spawn(async move {
-                    let count = db.get_artists_count(&query_for_spawn).await.unwrap_or(0);
-                    let first_page = if count > 0 {
-                        db.get_artists(&query_for_spawn, 0, page_size)
-                            .await
-                            .unwrap_or_default()
-                    } else {
-                        Vec::new()
-                    };
-                    (count, first_page)
+                    crate::RUNTIME.block_on(async {
+                        let count = db.get_artists_count(&query_for_spawn).await.unwrap_or(0);
+                        let first_page = if count > 0 {
+                            db.get_artists(&query_for_spawn, 0, page_size)
+                                .await
+                                .unwrap_or_default()
+                        } else {
+                            Vec::new()
+                        };
+                        (count, first_page)
+                    })
                 })
-                .await
-            {
-                Ok(data) => data,
-                Err(_) => (0, Vec::new()),
-            };
+                .await;
 
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
@@ -185,6 +184,7 @@ impl ArtistsView {
         self.page_pending.insert(pending_key);
 
         let db = cx.global::<Database>().clone();
+        let bg = cx.background_executor().clone();
         let query = self.last_query.clone();
         let query_version = self.query_version;
         let page_size = self.page_size;
@@ -192,16 +192,15 @@ impl ArtistsView {
 
         cx.spawn(async move |this, cx: &mut AsyncApp| {
             let query_for_spawn = query.clone();
-            let artists = match crate::RUNTIME
+            let artists = bg
                 .spawn(async move {
-                    db.get_artists(&query_for_spawn, offset, page_size as i64)
-                        .await
+                    crate::RUNTIME.block_on(async {
+                        db.get_artists(&query_for_spawn, offset, page_size as i64)
+                            .await
+                            .unwrap_or_default()
+                    })
                 })
-                .await
-            {
-                Ok(Ok(artists)) => artists,
-                Ok(Err(_)) | Err(_) => Vec::new(),
-            };
+                .await;
 
             cx.update(|cx| {
                 this.update(cx, |this, cx| {

@@ -1,4 +1,11 @@
-use std::{collections::VecDeque, mem::take};
+use std::{
+    collections::VecDeque,
+    mem::take,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use futures::FutureExt;
 use gpui::{
@@ -7,6 +14,8 @@ use gpui::{
 };
 use rustc_hash::{FxBuildHasher, FxHashMap};
 use tracing::{error, trace};
+
+use crate::ui::assets::{VleerImageLoader, is_vleer_image};
 
 pub fn vleer_cache(id: impl Into<ElementId>, max_items: usize) -> VleerImageCacheProvider {
     VleerImageCacheProvider {
@@ -49,6 +58,7 @@ pub struct VleerImageCache {
     max_items: usize,
     usage_list: VecDeque<u64>,
     cache: FxHashMap<u64, (ImageCacheItem, Resource)>,
+    notify_pending: Arc<AtomicBool>,
 }
 
 impl VleerImageCache {
@@ -71,6 +81,7 @@ impl VleerImageCache {
                 max_items,
                 usage_list: VecDeque::with_capacity(max_items),
                 cache: FxHashMap::with_capacity_and_hasher(max_items, FxBuildHasher),
+                notify_pending: Arc::new(AtomicBool::new(false)),
             }
         })
     }
@@ -109,8 +120,13 @@ impl ImageCache for VleerImageCache {
             return item.0.get();
         }
 
-        let load_future = AssetLogger::<ImageAssetLoader>::load(resource.clone(), cx);
-        let task = cx.background_executor().spawn(load_future).shared();
+        let task = if is_vleer_image(resource) {
+            let future = VleerImageLoader::load(resource.clone(), cx);
+            cx.background_executor().spawn(future).shared()
+        } else {
+            let future = AssetLogger::<ImageAssetLoader>::load(resource.clone(), cx);
+            cx.background_executor().spawn(future).shared()
+        };
 
         if self.usage_list.len() >= self.max_items {
             trace!("Image cache is full, evicting oldest item");
@@ -139,6 +155,7 @@ impl ImageCache for VleerImageCache {
         self.usage_list.push_front(hash);
 
         let entity = window.current_view();
+        let notify_pending = self.notify_pending.clone();
 
         window
             .spawn(cx, async move |cx| {
@@ -148,9 +165,14 @@ impl ImageCache for VleerImageCache {
                     error!("error loading image into cache: {:?}", err);
                 }
 
-                cx.on_next_frame(move |_, cx| {
-                    cx.notify(entity);
-                });
+                if !notify_pending.swap(true, Ordering::AcqRel) {
+                    let notify_pending = notify_pending.clone();
+                    cx.update(move |_, cx| {
+                        notify_pending.store(false, Ordering::Release);
+                        cx.notify(entity);
+                    })
+                    .ok();
+                }
             })
             .detach();
 

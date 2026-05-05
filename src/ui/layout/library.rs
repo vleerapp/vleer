@@ -51,7 +51,16 @@ impl Library {
         let db = cx.global::<Database>().clone();
 
         cx.spawn(async move |this, cx: &mut AsyncApp| {
-            let items = db.get_pinned_items().await;
+            let items = match crate::RUNTIME
+                .spawn(async move { db.get_pinned_items().await })
+                .await
+            {
+                Ok(items) => items,
+                Err(e) => {
+                    error!("pinned_items join failed: {}", e);
+                    return;
+                }
+            };
 
             cx.update(|cx| {
                 this.update(cx, |lib, cx| {
@@ -92,9 +101,17 @@ impl Library {
 
             this.search_pending = true;
             let db = cx.global::<Database>().clone();
+            let bg = cx.background_executor().clone();
             this._search_task = Some(cx.spawn(async move |this, cx: &mut AsyncApp| {
-                let results = db.search_library(&query, SEARCH_RESULT_LIMIT).await;
-                let counts = db.get_search_match_counts(&query).await;
+                let (results, counts) = bg
+                    .spawn(async move {
+                        crate::RUNTIME.block_on(async {
+                            let r = db.search_library(&query, SEARCH_RESULT_LIMIT).await;
+                            let counts = db.get_search_match_counts(&query).await;
+                            (r, counts)
+                        })
+                    })
+                    .await;
 
                 let mapped_results = match results {
                     Ok(r) => r
@@ -119,16 +136,6 @@ impl Library {
                     }
                 };
 
-                info!(
-                    "Library search resolved, query: '{}', results: {}, counts: ({}, {}, {}, {})",
-                    query,
-                    mapped_results.len(),
-                    counts.0,
-                    counts.1,
-                    counts.2,
-                    counts.3
-                );
-
                 cx.update(|cx| {
                     this.update(cx, |lib, cx| {
                         lib.search_results = mapped_results;
@@ -145,7 +152,16 @@ impl Library {
         cx.observe_global::<PinnedItemsChanged>(|_, cx| {
             let db = cx.global::<Database>().clone();
             cx.spawn(async move |this, cx: &mut AsyncApp| {
-                let items = db.get_pinned_items().await;
+                let items = match crate::RUNTIME
+                    .spawn(async move { db.get_pinned_items().await })
+                    .await
+                {
+                    Ok(items) => items,
+                    Err(e) => {
+                        error!("pinned_items join failed: {}", e);
+                        return;
+                    }
+                };
                 cx.update(|cx| {
                     this.update(cx, |lib, cx| {
                         lib.pinned_items = items;
@@ -309,7 +325,19 @@ impl Render for Library {
         };
 
         let displayed_items: Vec<PinnedItem> = if is_searching {
-            self.search_results.clone()
+            let song_names: std::collections::HashSet<String> = self
+                .search_results
+                .iter()
+                .filter(|i| i.item_type == "Song")
+                .map(|i| i.name.to_lowercase())
+                .collect();
+            self.search_results
+                .iter()
+                .filter(|i| {
+                    !(i.item_type == "Album" && song_names.contains(&i.name.to_lowercase()))
+                })
+                .cloned()
+                .collect()
         } else {
             self.pinned_items.clone()
         };
