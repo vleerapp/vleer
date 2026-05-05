@@ -353,26 +353,32 @@ impl Element for Scrollbar {
             let (thumb_color, track_color, thumb_width) = self.get_colors(&cx, &state.get(), axis);
             let thumb_length = thumb_end - thumb_start;
             let thumb_bounds = if is_vertical {
-                Bounds::from_corners(
-                    bounds.top_right() + point(px(0.), thumb_start),
-                    size(self.width, thumb_length).into(),
-                )
+                Bounds {
+                    origin: point(bounds.origin.x, bounds.origin.y + thumb_start),
+                    size: size(self.width, thumb_length),
+                }
             } else {
-                Bounds::from_corners(
-                    bounds.bottom_left() + point(thumb_start, px(0.)),
-                    size(thumb_length, self.width).into(),
-                )
+                Bounds {
+                    origin: point(bounds.origin.x + thumb_start, bounds.origin.y),
+                    size: size(thumb_length, self.width),
+                }
             };
             let thumb_fill_bounds = if is_vertical {
-                Bounds::from_corners(
-                    bounds.top_right() + point(px(0.), thumb_start),
-                    size(thumb_width, thumb_length).into(),
-                )
+                Bounds {
+                    origin: point(
+                        bounds.origin.x + self.width - thumb_width,
+                        bounds.origin.y + thumb_start,
+                    ),
+                    size: size(thumb_width, thumb_length),
+                }
             } else {
-                Bounds::from_corners(
-                    bounds.bottom_left() + point(thumb_start, px(0.)),
-                    size(thumb_length, thumb_width).into(),
-                )
+                Bounds {
+                    origin: point(
+                        bounds.origin.x + thumb_start,
+                        bounds.origin.y + self.width - thumb_width,
+                    ),
+                    size: size(thumb_length, thumb_width),
+                }
             };
             let bar_hitbox = window.with_content_mask(Some(ContentMask { bounds }), |window| {
                 window.insert_hitbox(bounds, HitboxBehavior::Normal)
