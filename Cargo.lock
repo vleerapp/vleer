@@ -7851,7 +7851,6 @@ dependencies = [
  "base64",
  "block2",
  "chrono",
- "core-text",
  "cuid2",
  "dashmap",
  "dirs",
