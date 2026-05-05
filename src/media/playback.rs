@@ -568,8 +568,6 @@ impl Playback {
                         })
                         .ok();
                     }
-
-                    cx.update(|window, _cx| window.refresh()).ok();
                 }
             }
         })

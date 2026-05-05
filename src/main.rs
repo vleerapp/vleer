@@ -60,5 +60,5 @@ fn main() -> anyhow::Result<()> {
 
     tracing::info!("Starting application");
 
-    crate::ui::app::run()
+    crate::RUNTIME.block_on(crate::ui::app::run())
 }
