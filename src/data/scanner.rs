@@ -23,7 +23,7 @@ use crate::ui::components::context_menu::{BackgroundUiEvent, BackgroundUiNotifie
 const SUPPORTED_EXTENSIONS: &[&str] = &[
     "aac", "aiff", "aif", "flac", "mp3", "mp4", "m4a", "mp4a", "ogg", "oga", "opus", "wav", "wv",
 ];
-const MAX_CONCURRENT_SCANS: usize = 2;
+const MAX_CONCURRENT_SCANS: usize = 20;
 const STALE_DELETE_BATCH_SIZE: usize = 400;
 
 #[derive(Debug, Clone)]
