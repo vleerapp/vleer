@@ -22,7 +22,7 @@ anyhow = "1.0.102"
 dirs = "6.0.0"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-tokio = { version = "1.52.2", features = ["full"] }
+tokio = { version = "1.52.3", features = ["full"] }
 futures = "0.3.32"
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "chrono"] }
 serde = { version = "1.0.228", features = ["derive"] }
@@ -32,8 +32,8 @@ rodio = { git = "https://github.com/vleerapp/rodio", branch = "feat/registry", f
   "symphonia-all",
 ] }
 symphonia-adapter-libopus = "0.2.9"
-symphonia-format-isomp4 = "0.5.5"
-symphonia = "0.5.5"
+symphonia-format-isomp4 = "0.6.0"
+symphonia = "0.6.0"
 cuid2 = "0.1.6"
 url = "2.5.8"
 rust-embed = "8.11.0"
