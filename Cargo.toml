@@ -27,7 +27,7 @@ futures = "0.3.32"
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "chrono"] }
 serde = { version = "1.0.228", features = ["derive"] }
 toml = "1.1.2"
-rodio = { git = "https://github.com/vleerapp/rodio", rev = "2830edea3c19d8f1d6308e3f458598efabdc1a05", features = [
+rodio = { git = "https://github.com/vleerapp/rodio", rev = "322c301fca2c84b0a0899bc9f7e1656691252b23", features = [
   "symphonia",
   "symphonia-all",
 ] }
