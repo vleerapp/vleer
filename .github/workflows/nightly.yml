@@ -51,7 +51,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: stable
+          toolchain: 1.95.0
           targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
@@ -107,11 +107,10 @@ jobs:
 
       - name: Build and Package
         id: package
-        continue-on-error: true
         run: cargo packager --release
 
       - name: Dump WiX diagnostics (Windows)
-        if: runner.os == 'Windows' && steps.package.outcome == 'failure'
+        if: failure() && runner.os == 'Windows'
         shell: pwsh
         run: |
           where.exe candle.exe
@@ -124,13 +123,6 @@ jobs:
               Get-Content -Path $_.FullName
             }
           }
-
-      - name: Fail on packaging errors
-        if: steps.package.outcome == 'failure'
-        shell: bash
-        run: |
-          echo "cargo packager failed. See previous diagnostics step for details."
-          exit 1
 
       - name: CodeSign macOS
         if: runner.os == 'macOS'
