@@ -459,7 +459,8 @@ impl TextInput {
     fn previous_word_boundary(&self, offset: usize) -> usize {
         self.content
             .unicode_word_indices()
-            .map(|(idx, _)| idx).rfind(|&idx| idx < offset)
+            .map(|(idx, _)| idx)
+            .rfind(|&idx| idx < offset)
             .unwrap_or(0)
     }
 

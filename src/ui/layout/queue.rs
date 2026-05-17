@@ -374,7 +374,11 @@ fn render_row(
                                     });
                                     cx.set_global(QueueChanged);
                                 })
-                                .child(icon(icons::X).size(px(14.0)).text_color(variables.text_secondary)),
+                                .child(
+                                    icon(icons::X)
+                                        .size(px(14.0))
+                                        .text_color(variables.text_secondary),
+                                ),
                         ),
                 ),
         )

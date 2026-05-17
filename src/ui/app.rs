@@ -377,10 +377,9 @@ pub async fn run() -> anyhow::Result<()> {
                     cx.new(|cx| {
                         Playback::start_monitor(window, cx);
 
-                        let library_entity = cx.new( Library::new);
+                        let library_entity = cx.new(Library::new);
                         let navbar_entity = cx.new(Navbar::new);
-                        let navbar_scan_progress_entity =
-                            cx.new( NavbarScanProgressBar::new);
+                        let navbar_scan_progress_entity = cx.new(NavbarScanProgressBar::new);
                         let player_entity = cx.new(Player::new);
                         let queue_entity = cx.new(QueuePane::new);
 

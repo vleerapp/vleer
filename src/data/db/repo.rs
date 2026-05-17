@@ -615,6 +615,7 @@ impl Database {
         )
     }
 
+    #[allow(dead_code)]
     pub async fn upsert_playlist(
         &self,
         id: &Cuid,
@@ -651,6 +652,7 @@ impl Database {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub async fn upsert_playlist_song(
         &self,
         playlist_id: &Cuid,
@@ -672,6 +674,7 @@ impl Database {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub async fn delete_playlist_song(
         &self,
         playlist_id: &Cuid,
@@ -717,6 +720,7 @@ impl Database {
         .collect::<Result<_, _>>()
     }
 
+    #[allow(dead_code)]
     pub async fn get_event(&self, id: &Cuid) -> sqlx::Result<Option<Event>> {
         Ok(
             sqlx::query_as::<_, EventRow>("SELECT * FROM events WHERE id = ?")
@@ -750,6 +754,7 @@ impl Database {
         Ok(id)
     }
 
+    #[allow(dead_code)]
     pub async fn get_events_by_type(&self, event_type: EventType) -> sqlx::Result<Vec<Event>> {
         let event_type_str = match event_type {
             EventType::Play => "PLAY",
@@ -784,6 +789,7 @@ impl Database {
         Ok(id)
     }
 
+    #[allow(dead_code)]
     pub async fn get_event_context(&self, id: &Cuid) -> sqlx::Result<Option<EventContext>> {
         Ok(
             sqlx::query_as::<_, EventContextRow>("SELECT * FROM event_contexts WHERE id = ?")
@@ -794,6 +800,7 @@ impl Database {
         )
     }
 
+    #[allow(dead_code)]
     pub async fn get_event_context_by_song(
         &self,
         song_id: &Cuid,
@@ -809,6 +816,7 @@ impl Database {
         )
     }
 
+    #[allow(dead_code)]
     pub async fn get_event_context_by_playlist(
         &self,
         playlist_id: &Cuid,
@@ -1057,6 +1065,7 @@ impl Database {
         )
     }
 
+    #[allow(dead_code)]
     pub async fn delete_image(&self, id: &str) -> sqlx::Result<()> {
         sqlx::query("DELETE FROM images WHERE id = ?")
             .bind(id)

@@ -345,7 +345,9 @@ impl Render for SongTableItem {
                                         .invisible()
                                         .group_hover("cover-container", |s| s.visible())
                                         .child(
-                                            icon(icons::PLAY).size(px(16.0)).text_color(variables.text),
+                                            icon(icons::PLAY)
+                                                .size(px(16.0))
+                                                .text_color(variables.text),
                                         ),
                                 )
                                 .cursor_pointer()

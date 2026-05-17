@@ -119,7 +119,10 @@ impl Render for Player {
 
         let prev_button = Button::new("previous")
             .group("previous-button")
-            .child(icon(icons::PREVIOUS).group_hover("previous-button", |s| s.text_color(variables.text)))
+            .child(
+                icon(icons::PREVIOUS)
+                    .group_hover("previous-button", |s| s.text_color(variables.text)),
+            )
             .on_click(cx.listener(|_this, _event, _window, cx| {
                 cx.update_global::<Playback, _>(|playback, cx| {
                     playback.previous(cx);

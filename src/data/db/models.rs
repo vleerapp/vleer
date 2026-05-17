@@ -125,6 +125,7 @@ impl PlaylistTrackRow {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, FromRow)]
 pub struct EventRow {
     pub id: Cuid,
@@ -133,6 +134,7 @@ pub struct EventRow {
     pub timestamp: String,
 }
 
+#[allow(dead_code)]
 impl EventRow {
     pub fn into_event(self) -> Event {
         Event {
@@ -150,6 +152,7 @@ impl EventRow {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, FromRow)]
 pub struct EventContextRow {
     pub id: Cuid,

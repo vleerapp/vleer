@@ -128,6 +128,7 @@ pub struct PlaylistTrack {
     pub position: i32,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
     pub id: Cuid,
@@ -136,6 +137,7 @@ pub struct Event {
     pub timestamp: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventContext {
     pub id: Cuid,

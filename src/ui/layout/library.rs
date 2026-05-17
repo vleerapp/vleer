@@ -45,7 +45,8 @@ pub struct Library {
 
 impl Library {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        let search_input = cx.new(|cx| TextInput::new(cx, "Search Library").with_icon(icons::SEARCH));
+        let search_input =
+            cx.new(|cx| TextInput::new(cx, "Search Library").with_icon(icons::SEARCH));
 
         let db = cx.global::<Database>().clone();
 

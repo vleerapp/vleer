@@ -94,22 +94,19 @@ impl Element for ProgressSlider {
     ) -> Self::PrepaintState {
         self.hitbox = Some(window.insert_hitbox(bounds, HitboxBehavior::Normal));
 
-        window.with_optional_element_state(
-            id,
-            |v: Option<Option<SliderState>>, _| {
-                let (hovered, dragging, drag_value) = v.flatten().unwrap_or_else(|| {
-                    (
-                        Rc::new(RefCell::new(false)),
-                        Rc::new(RefCell::new(false)),
-                        Rc::new(RefCell::new(0.0)),
-                    )
-                });
+        window.with_optional_element_state(id, |v: Option<Option<SliderState>>, _| {
+            let (hovered, dragging, drag_value) = v.flatten().unwrap_or_else(|| {
                 (
-                    (hovered.clone(), dragging.clone(), drag_value.clone()),
-                    Some((hovered, dragging, drag_value)),
+                    Rc::new(RefCell::new(false)),
+                    Rc::new(RefCell::new(false)),
+                    Rc::new(RefCell::new(0.0)),
                 )
-            },
-        )
+            });
+            (
+                (hovered.clone(), dragging.clone(), drag_value.clone()),
+                Some((hovered, dragging, drag_value)),
+            )
+        })
     }
 
     fn paint(
