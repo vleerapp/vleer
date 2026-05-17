@@ -10,9 +10,9 @@ license = "AGPL-3.0"
 categories = ["multimedia::audio"]
 
 [dependencies]
-gpui = { git = "https://github.com/vleerapp/zed" }
-gpui_macros = { git = "https://github.com/vleerapp/zed" }
-gpui_platform = { git = "https://github.com/vleerapp/zed", features = [
+gpui = { git = "https://github.com/vleerapp/zed", rev = "fb07bdb2a5700dbb2abcc064945719f70d673fb2" }
+gpui_macros = { git = "https://github.com/vleerapp/zed", rev = "fb07bdb2a5700dbb2abcc064945719f70d673fb2" }
+gpui_platform = { git = "https://github.com/vleerapp/zed", rev = "fb07bdb2a5700dbb2abcc064945719f70d673fb2", features = [
   "font-kit",
   "x11",
   "wayland",
@@ -26,12 +26,12 @@ tokio = { version = "1.52.3", features = ["full"] }
 futures = "0.3.32"
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "chrono"] }
 serde = { version = "1.0.228", features = ["derive"] }
-toml = "1.1.2+spec-1.1.0"
-rodio = { git = "https://github.com/vleerapp/rodio", branch = "feat/registry", features = [
+toml = "1.1.2"
+rodio = { git = "https://github.com/vleerapp/rodio", rev = "2830edea3c19d8f1d6308e3f458598efabdc1a05", features = [
   "symphonia",
   "symphonia-all",
 ] }
-symphonia-adapter-libopus = "0.2.9"
+symphonia-adapter-libopus = "0.3.0"
 symphonia-format-isomp4 = "0.6.0"
 symphonia = "0.6.0"
 cuid2 = "0.1.6"

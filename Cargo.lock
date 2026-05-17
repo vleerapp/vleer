@@ -1016,7 +1016,7 @@ dependencies = [
 [[package]]
 name = "collections"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
+source = "git+https://github.com/vleerapp/zed?rev=fb07bdb2a5700dbb2abcc064945719f70d673fb2#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
 dependencies = [
  "indexmap",
  "rustc-hash 2.1.2",
@@ -1316,9 +1316,10 @@ dependencies = [
 [[package]]
 name = "cpal"
 version = "0.18.0"
-source = "git+https://github.com/RustAudio/cpal#2c7acf8ed42b6523f319145a8be256c446df5939"
+source = "git+https://github.com/RustAudio/cpal#c031f75e4f0810f87b1c60c446825148351e2a01"
 dependencies = [
  "alsa",
+ "alsa-sys",
  "audio_thread_priority",
  "block2",
  "coreaudio-rs",
@@ -1587,7 +1588,7 @@ dependencies = [
 [[package]]
 name = "derive_refineable"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
+source = "git+https://github.com/vleerapp/zed?rev=fb07bdb2a5700dbb2abcc064945719f70d673fb2#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2522,7 +2523,7 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "git+https://github.com/vleerapp/zed#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
+source = "git+https://github.com/vleerapp/zed?rev=fb07bdb2a5700dbb2abcc064945719f70d673fb2#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
 dependencies = [
  "anyhow",
  "async-channel 2.5.0",
@@ -2602,7 +2603,7 @@ dependencies = [
 [[package]]
 name = "gpui_linux"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
+source = "git+https://github.com/vleerapp/zed?rev=fb07bdb2a5700dbb2abcc064945719f70d673fb2#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
 dependencies = [
  "anyhow",
  "as-raw-xcb-connection",
@@ -2651,7 +2652,7 @@ dependencies = [
 [[package]]
 name = "gpui_macos"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
+source = "git+https://github.com/vleerapp/zed?rev=fb07bdb2a5700dbb2abcc064945719f70d673fb2#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
 dependencies = [
  "anyhow",
  "async-task",
@@ -2694,7 +2695,7 @@ dependencies = [
 [[package]]
 name = "gpui_macros"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
+source = "git+https://github.com/vleerapp/zed?rev=fb07bdb2a5700dbb2abcc064945719f70d673fb2#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -2705,7 +2706,7 @@ dependencies = [
 [[package]]
 name = "gpui_platform"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
+source = "git+https://github.com/vleerapp/zed?rev=fb07bdb2a5700dbb2abcc064945719f70d673fb2#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
 dependencies = [
  "console_error_panic_hook",
  "gpui",
@@ -2718,7 +2719,7 @@ dependencies = [
 [[package]]
 name = "gpui_shared_string"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
+source = "git+https://github.com/vleerapp/zed?rev=fb07bdb2a5700dbb2abcc064945719f70d673fb2#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
 dependencies = [
  "schemars",
  "serde",
@@ -2728,7 +2729,7 @@ dependencies = [
 [[package]]
 name = "gpui_util"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
+source = "git+https://github.com/vleerapp/zed?rev=fb07bdb2a5700dbb2abcc064945719f70d673fb2#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
 dependencies = [
  "anyhow",
  "log",
@@ -2737,7 +2738,7 @@ dependencies = [
 [[package]]
 name = "gpui_web"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
+source = "git+https://github.com/vleerapp/zed?rev=fb07bdb2a5700dbb2abcc064945719f70d673fb2#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
 dependencies = [
  "anyhow",
  "console_error_panic_hook",
@@ -2761,7 +2762,7 @@ dependencies = [
 [[package]]
 name = "gpui_wgpu"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
+source = "git+https://github.com/vleerapp/zed?rev=fb07bdb2a5700dbb2abcc064945719f70d673fb2#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2789,7 +2790,7 @@ dependencies = [
 [[package]]
 name = "gpui_windows"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
+source = "git+https://github.com/vleerapp/zed?rev=fb07bdb2a5700dbb2abcc064945719f70d673fb2#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
 dependencies = [
  "anyhow",
  "collections",
@@ -3021,7 +3022,7 @@ dependencies = [
 [[package]]
 name = "http_client"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
+source = "git+https://github.com/vleerapp/zed?rev=fb07bdb2a5700dbb2abcc064945719f70d673fb2#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
 dependencies = [
  "anyhow",
  "async-compression",
@@ -3637,9 +3638,9 @@ checksum = "7a79a3332a6609480d7d0c9eab957bca6b455b91bb84e66d19f5ff66294b85b8"
 
 [[package]]
 name = "libbz2-rs-sys"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8fc329e1457d97a9d58a4e2ca49e3be572431a7e096008efc2e3a3c19d428f4"
+checksum = "34b357333733e8260735ba5894eb928c02ecc69c78715f01a8019e7fa7f2db4c"
 
 [[package]]
 name = "libc"
@@ -3927,7 +3928,7 @@ dependencies = [
 [[package]]
 name = "media"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
+source = "git+https://github.com/vleerapp/zed?rev=fb07bdb2a5700dbb2abcc064945719f70d673fb2#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
 dependencies = [
  "anyhow",
  "bindgen",
@@ -4867,7 +4868,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "perf"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
+source = "git+https://github.com/vleerapp/zed?rev=fb07bdb2a5700dbb2abcc064945719f70d673fb2#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
 dependencies = [
  "collections",
  "serde",
@@ -5526,7 +5527,7 @@ dependencies = [
 [[package]]
 name = "refineable"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
+source = "git+https://github.com/vleerapp/zed?rev=fb07bdb2a5700dbb2abcc064945719f70d673fb2#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
 dependencies = [
  "derive_refineable",
 ]
@@ -5655,7 +5656,7 @@ dependencies = [
 [[package]]
 name = "rodio"
 version = "0.22.2"
-source = "git+https://github.com/vleerapp/rodio?branch=feat%2Fregistry#2abfef70bf6e993950e61fdf6c9621fad72fada1"
+source = "git+https://github.com/vleerapp/rodio?rev=2830edea3c19d8f1d6308e3f458598efabdc1a05#2830edea3c19d8f1d6308e3f458598efabdc1a05"
 dependencies = [
  "cpal",
  "dasp_sample",
@@ -5663,7 +5664,7 @@ dependencies = [
  "rand 0.10.1",
  "rand_distr",
  "rtrb",
- "symphonia 0.5.5",
+ "symphonia",
  "thiserror 2.0.18",
 ]
 
@@ -5927,7 +5928,7 @@ dependencies = [
 [[package]]
 name = "scheduler"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
+source = "git+https://github.com/vleerapp/zed?rev=fb07bdb2a5700dbb2abcc064945719f70d673fb2#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
 dependencies = [
  "async-task",
  "backtrace",
@@ -6735,7 +6736,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "sum_tree"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
+source = "git+https://github.com/vleerapp/zed?rev=fb07bdb2a5700dbb2abcc064945719f70d673fb2#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
 dependencies = [
  "heapless",
  "log",
@@ -6851,66 +6852,36 @@ dependencies = [
 
 [[package]]
 name = "symphonia"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5773a4c030a19d9bfaa090f49746ff35c75dfddfa700df7a5939d5e076a57039"
-dependencies = [
- "lazy_static",
- "symphonia-bundle-flac 0.5.5",
- "symphonia-bundle-mp3",
- "symphonia-codec-aac",
- "symphonia-codec-adpcm 0.5.5",
- "symphonia-codec-alac",
- "symphonia-codec-pcm 0.5.5",
- "symphonia-codec-vorbis 0.5.5",
- "symphonia-core 0.5.5",
- "symphonia-format-caf",
- "symphonia-format-isomp4 0.5.5",
- "symphonia-format-mkv 0.5.5",
- "symphonia-format-ogg 0.5.5",
- "symphonia-format-riff 0.5.5",
- "symphonia-metadata 0.5.5",
-]
-
-[[package]]
-name = "symphonia"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1758d6c853020a7244de03cc3e0185eaea3f58715122422dd3cc7452e6d4c16a"
 dependencies = [
  "lazy_static",
- "symphonia-bundle-flac 0.6.0",
- "symphonia-codec-adpcm 0.6.0",
- "symphonia-codec-pcm 0.6.0",
- "symphonia-codec-vorbis 0.6.0",
- "symphonia-core 0.6.0",
- "symphonia-format-mkv 0.6.0",
- "symphonia-format-ogg 0.6.0",
- "symphonia-format-riff 0.6.0",
- "symphonia-metadata 0.6.0",
+ "symphonia-bundle-flac",
+ "symphonia-bundle-mp3",
+ "symphonia-codec-aac",
+ "symphonia-codec-adpcm",
+ "symphonia-codec-alac",
+ "symphonia-codec-pcm",
+ "symphonia-codec-vorbis",
+ "symphonia-core",
+ "symphonia-format-caf",
+ "symphonia-format-isomp4",
+ "symphonia-format-mkv",
+ "symphonia-format-ogg",
+ "symphonia-format-riff",
+ "symphonia-metadata",
 ]
 
 [[package]]
 name = "symphonia-adapter-libopus"
-version = "0.2.9"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2bfc8e95f95c23ed1b5328eb66920ad28d9968c797f9c7aa755d4b45a5f47a41"
+checksum = "c6febe6f88f9a9483db7e5b72a2dad916d8f8eb588d18905a39c861319fc7fa1"
 dependencies = [
  "log",
  "opusic-sys",
- "symphonia-core 0.5.5",
-]
-
-[[package]]
-name = "symphonia-bundle-flac"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c91565e180aea25d9b80a910c546802526ffd0072d0b8974e3ebe59b686c9976"
-dependencies = [
- "log",
- "symphonia-core 0.5.5",
- "symphonia-metadata 0.5.5",
- "symphonia-utils-xiph",
+ "symphonia-core",
 ]
 
 [[package]]
@@ -6921,41 +6892,31 @@ checksum = "ee69ad01236a67260b82fd1ff9790dd75ead29f2f46af145e63b7e72273e0e03"
 dependencies = [
  "log",
  "symphonia-common",
- "symphonia-core 0.6.0",
- "symphonia-metadata 0.6.0",
+ "symphonia-core",
+ "symphonia-metadata",
 ]
 
 [[package]]
 name = "symphonia-bundle-mp3"
-version = "0.5.5"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4872dd6bb56bf5eac799e3e957aa1981086c3e613b27e0ac23b176054f7c57ed"
+checksum = "350f1f2f2e19ad4dd315db94304d1eb361b29af070681f94e51b8fdaad769546"
 dependencies = [
  "lazy_static",
  "log",
- "symphonia-core 0.5.5",
- "symphonia-metadata 0.5.5",
+ "symphonia-core",
 ]
 
 [[package]]
 name = "symphonia-codec-aac"
-version = "0.5.5"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c263845aa86881416849c1729a54c7f55164f8b96111dba59de46849e73a790"
+checksum = "f1979c515a76371b186aad2feff5f23e21cbec775bf95de08bf1e3af92a2ad76"
 dependencies = [
  "lazy_static",
  "log",
- "symphonia-core 0.5.5",
-]
-
-[[package]]
-name = "symphonia-codec-adpcm"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2dddc50e2bbea4cfe027441eece77c46b9f319748605ab8f3443350129ddd07f"
-dependencies = [
- "log",
- "symphonia-core 0.5.5",
+ "symphonia-common",
+ "symphonia-core",
 ]
 
 [[package]]
@@ -6965,27 +6926,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ebbdfd76d6cc5a601c6292a44357c5b7c82f2cd7cdc0f171421f5c5cff0ea1f"
 dependencies = [
  "log",
- "symphonia-core 0.6.0",
+ "symphonia-core",
 ]
 
 [[package]]
 name = "symphonia-codec-alac"
-version = "0.5.5"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8413fa754942ac16a73634c9dfd1500ed5c61430956b33728567f667fdd393ab"
+checksum = "3a149cbfc7fb5c405d123a273227d31de17138419552112bf1aa7b73e65827b8"
 dependencies = [
  "log",
- "symphonia-core 0.5.5",
-]
-
-[[package]]
-name = "symphonia-codec-pcm"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e89d716c01541ad3ebe7c91ce4c8d38a7cf266a3f7b2f090b108fb0cb031d95"
-dependencies = [
- "log",
- "symphonia-core 0.5.5",
+ "symphonia-common",
+ "symphonia-core",
 ]
 
 [[package]]
@@ -6995,18 +6947,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "50baee168f0e9dcf6ba7fc06e8b57eb62072a4490cc7cf13af77e72baae5d328"
 dependencies = [
  "log",
- "symphonia-core 0.6.0",
-]
-
-[[package]]
-name = "symphonia-codec-vorbis"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f025837c309cd69ffef572750b4a2257b59552c5399a5e49707cc5b1b85d1c73"
-dependencies = [
- "log",
- "symphonia-core 0.5.5",
- "symphonia-utils-xiph",
+ "symphonia-core",
 ]
 
 [[package]]
@@ -7017,7 +6958,7 @@ checksum = "45b07b4423cd8e0fc472575909a5554b12c2f58e3c190b38c24f042e732fd8de"
 dependencies = [
  "log",
  "symphonia-common",
- "symphonia-core 0.6.0",
+ "symphonia-core",
 ]
 
 [[package]]
@@ -7027,21 +6968,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8257891ffa7f05e02b58f4761e2abf7e5278c8744fd59e981559e050f86eef55"
 dependencies = [
  "log",
- "symphonia-core 0.6.0",
- "symphonia-metadata 0.6.0",
-]
-
-[[package]]
-name = "symphonia-core"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea00cc4f79b7f6bb7ff87eddc065a1066f3a43fe1875979056672c9ef948c2af"
-dependencies = [
- "arrayvec",
- "bitflags 1.3.2",
- "bytemuck",
- "lazy_static",
- "log",
+ "symphonia-core",
+ "symphonia-metadata",
 ]
 
 [[package]]
@@ -7061,26 +6989,13 @@ dependencies = [
 
 [[package]]
 name = "symphonia-format-caf"
-version = "0.5.5"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8faf379316b6b6e6bbc274d00e7a592e0d63ff1a7e182ce8ba25e24edd3d096"
+checksum = "cde3ca76633d3400ab57195456c09f8a58d775ff5452329f3f212b6efc8622f5"
 dependencies = [
  "log",
- "symphonia-core 0.5.5",
- "symphonia-metadata 0.5.5",
-]
-
-[[package]]
-name = "symphonia-format-isomp4"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "243739585d11f81daf8dac8d9f3d18cc7898f6c09a259675fc364b382c30e0a5"
-dependencies = [
- "encoding_rs",
- "log",
- "symphonia-core 0.5.5",
- "symphonia-metadata 0.5.5",
- "symphonia-utils-xiph",
+ "symphonia-common",
+ "symphonia-core",
 ]
 
 [[package]]
@@ -7091,21 +7006,8 @@ checksum = "2d179a01305b3505940135a9f0180d6ef4b487912748fe97554756f120fbd05e"
 dependencies = [
  "log",
  "symphonia-common",
- "symphonia-core 0.6.0",
- "symphonia-metadata 0.6.0",
-]
-
-[[package]]
-name = "symphonia-format-mkv"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "122d786d2c43a49beb6f397551b4a050d8229eaa54c7ddf9ee4b98899b8742d0"
-dependencies = [
- "lazy_static",
- "log",
- "symphonia-core 0.5.5",
- "symphonia-metadata 0.5.5",
- "symphonia-utils-xiph",
+ "symphonia-core",
+ "symphonia-metadata",
 ]
 
 [[package]]
@@ -7117,19 +7019,7 @@ dependencies = [
  "lazy_static",
  "log",
  "symphonia-common",
- "symphonia-core 0.6.0",
-]
-
-[[package]]
-name = "symphonia-format-ogg"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b4955c67c1ed3aa8ae8428d04ca8397fbef6a19b2b051e73b5da8b1435639cb"
-dependencies = [
- "log",
- "symphonia-core 0.5.5",
- "symphonia-metadata 0.5.5",
- "symphonia-utils-xiph",
+ "symphonia-core",
 ]
 
 [[package]]
@@ -7140,20 +7030,8 @@ checksum = "b05a67e02b1e4fca1a261ba4fe06910a9357489ad8c36aafdd2960e9c6559433"
 dependencies = [
  "log",
  "symphonia-common",
- "symphonia-core 0.6.0",
- "symphonia-metadata 0.6.0",
-]
-
-[[package]]
-name = "symphonia-format-riff"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2d7c3df0e7d94efb68401d81906eae73c02b40d5ec1a141962c592d0f11a96f"
-dependencies = [
- "extended",
- "log",
- "symphonia-core 0.5.5",
- "symphonia-metadata 0.5.5",
+ "symphonia-core",
+ "symphonia-metadata",
 ]
 
 [[package]]
@@ -7164,20 +7042,8 @@ checksum = "17424452a777666d3eaf09a5c651029b15b6a333812fcc5b5474f2a3f0cff3f0"
 dependencies = [
  "extended",
  "log",
- "symphonia-core 0.6.0",
- "symphonia-metadata 0.6.0",
-]
-
-[[package]]
-name = "symphonia-metadata"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36306ff42b9ffe6e5afc99d49e121e0bd62fe79b9db7b9681d48e29fa19e6b16"
-dependencies = [
- "encoding_rs",
- "lazy_static",
- "log",
- "symphonia-core 0.5.5",
+ "symphonia-core",
+ "symphonia-metadata",
 ]
 
 [[package]]
@@ -7190,17 +7056,7 @@ dependencies = [
  "log",
  "regex-lite",
  "smallvec",
- "symphonia-core 0.6.0",
-]
-
-[[package]]
-name = "symphonia-utils-xiph"
-version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee27c85ab799a338446b68eec77abf42e1a6f1bb490656e121c6e27bfbab9f16"
-dependencies = [
- "symphonia-core 0.5.5",
- "symphonia-metadata 0.5.5",
+ "symphonia-core",
 ]
 
 [[package]]
@@ -7925,7 +7781,7 @@ checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 [[package]]
 name = "util"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
+source = "git+https://github.com/vleerapp/zed?rev=fb07bdb2a5700dbb2abcc064945719f70d673fb2#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
 dependencies = [
  "anyhow",
  "async-fs",
@@ -7964,7 +7820,7 @@ dependencies = [
 [[package]]
 name = "util_macros"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
+source = "git+https://github.com/vleerapp/zed?rev=fb07bdb2a5700dbb2abcc064945719f70d673fb2#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
 dependencies = [
  "perf",
  "quote",
@@ -8101,9 +7957,9 @@ dependencies = [
  "souvlaki",
  "spectrum-analyzer",
  "sqlx",
- "symphonia 0.6.0",
+ "symphonia",
  "symphonia-adapter-libopus",
- "symphonia-format-isomp4 0.6.0",
+ "symphonia-format-isomp4",
  "tokio",
  "toml 1.1.2+spec-1.1.0",
  "tracing",
@@ -9756,7 +9612,7 @@ dependencies = [
 [[package]]
 name = "zlog"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
+source = "git+https://github.com/vleerapp/zed?rev=fb07bdb2a5700dbb2abcc064945719f70d673fb2#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -9773,7 +9629,7 @@ checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 [[package]]
 name = "ztracing"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
+source = "git+https://github.com/vleerapp/zed?rev=fb07bdb2a5700dbb2abcc064945719f70d673fb2#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
 dependencies = [
  "tracing",
  "tracing-subscriber",
@@ -9784,7 +9640,7 @@ dependencies = [
 [[package]]
 name = "ztracing_macro"
 version = "0.1.0"
-source = "git+https://github.com/vleerapp/zed#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
+source = "git+https://github.com/vleerapp/zed?rev=fb07bdb2a5700dbb2abcc064945719f70d673fb2#fb07bdb2a5700dbb2abcc064945719f70d673fb2"
 
 [[package]]
 name = "zune-core"
