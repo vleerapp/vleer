@@ -2,35 +2,27 @@ use super::{PlaybackState, ResolvedMetadata};
 use crate::media::playback::PlaybackCommand;
 use anyhow::{Result, anyhow};
 use block2::RcBlock;
+use objc2::AnyThread;
 use objc2::rc::{Retained, autoreleasepool};
-use objc2::runtime::AnyObject;
-use objc2::{AnyThread, class, msg_send};
+use objc2::runtime::{AnyObject, ProtocolObject};
 use objc2_app_kit::NSImage;
 use objc2_core_foundation::CGSize;
-use objc2_foundation::{NSData, NSNumber, NSString};
+use objc2_foundation::{NSData, NSDictionary, NSMutableDictionary, NSNumber, NSString};
+use objc2_media_player::{
+    MPChangePlaybackPositionCommand, MPChangePlaybackPositionCommandEvent, MPMediaItemArtwork,
+    MPMediaItemPropertyAlbumTitle, MPMediaItemPropertyArtist, MPMediaItemPropertyArtwork,
+    MPMediaItemPropertyPlaybackDuration, MPMediaItemPropertyTitle, MPNowPlayingInfoCenter,
+    MPNowPlayingInfoPropertyElapsedPlaybackTime, MPNowPlayingPlaybackState, MPRemoteCommand,
+    MPRemoteCommandCenter, MPRemoteCommandEvent, MPRemoteCommandHandlerStatus,
+};
+use std::ptr::NonNull;
 use std::sync::Mutex;
 use std::thread;
 use tokio::sync::mpsc;
 use tracing::error;
 
-const MP_NOW_PLAYING_STATE_PLAYING: isize = 1;
-const MP_NOW_PLAYING_STATE_PAUSED: isize = 2;
-const MP_NOW_PLAYING_STATE_STOPPED: isize = 3;
-
-const MP_REMOTE_COMMAND_SUCCESS: isize = 0;
-
-#[link(name = "MediaPlayer", kind = "framework")]
-unsafe extern "C" {}
-
-#[allow(non_upper_case_globals)]
-unsafe extern "C" {
-    static MPMediaItemPropertyTitle: *mut AnyObject;
-    static MPMediaItemPropertyArtist: *mut AnyObject;
-    static MPMediaItemPropertyAlbumTitle: *mut AnyObject;
-    static MPMediaItemPropertyArtwork: *mut AnyObject;
-    static MPMediaItemPropertyPlaybackDuration: *mut AnyObject;
-    static MPNowPlayingInfoPropertyElapsedPlaybackTime: *mut AnyObject;
-}
+type CommandHandler =
+    RcBlock<dyn Fn(NonNull<MPRemoteCommandEvent>) -> MPRemoteCommandHandlerStatus>;
 
 pub struct MacosController {
     tx: mpsc::UnboundedSender<Command>,
@@ -45,18 +37,18 @@ enum Command {
 }
 
 struct MacosState {
-    command_center: *mut AnyObject,
-    now_playing_center: *mut AnyObject,
-    #[cfg_attr(target_os = "macos", allow(dead_code))]
-    handlers: Vec<RcBlock<dyn Fn(*mut AnyObject) -> isize>>,
-    #[cfg_attr(target_os = "macos", allow(dead_code))]
-    position_handler: RcBlock<dyn Fn(*mut AnyObject) -> isize>,
+    command_center: Retained<MPRemoteCommandCenter>,
+    now_playing_center: Retained<MPNowPlayingInfoCenter>,
+    #[allow(dead_code)]
+    handlers: Vec<CommandHandler>,
+    #[allow(dead_code)]
+    position_handler: CommandHandler,
     artwork: Mutex<ArtworkState>,
 }
 
 struct ArtworkState {
     image: Option<Retained<NSImage>>,
-    handler: Option<RcBlock<dyn Fn(CGSize) -> *mut AnyObject>>,
+    handler: Option<RcBlock<dyn Fn(CGSize) -> NonNull<NSImage>>>,
 }
 
 impl MacosController {
@@ -116,20 +108,12 @@ fn run_macos(
 
         while let Some(cmd) = rx.recv().await {
             match cmd {
-                Command::UpdateMetadata(metadata) => {
-                    state.update_metadata(metadata)?;
-                }
-                Command::SetState(state_value) => {
-                    state.set_state(state_value)?;
-                }
-                Command::SetPosition(position_ms) => {
-                    state.set_position(position_ms)?;
-                }
-                Command::SetCanGoNext(can_go_next) => {
-                    state.set_can_go_next(can_go_next)?;
-                }
+                Command::UpdateMetadata(metadata) => state.update_metadata(metadata)?,
+                Command::SetState(state_value) => state.set_state(state_value)?,
+                Command::SetPosition(position_ms) => state.set_position(position_ms)?,
+                Command::SetCanGoNext(can_go_next) => state.set_can_go_next(can_go_next)?,
                 Command::SetCanGoPrevious(can_go_previous) => {
-                    state.set_can_go_previous(can_go_previous)?;
+                    state.set_can_go_previous(can_go_previous)?
                 }
             }
         }
@@ -142,59 +126,41 @@ fn run_macos(
 
 impl MacosState {
     fn new(playback_tx: mpsc::UnboundedSender<PlaybackCommand>) -> Self {
-        let command_center: *mut AnyObject =
-            unsafe { msg_send![class!(MPRemoteCommandCenter), sharedCommandCenter] };
-        let now_playing_center: *mut AnyObject =
-            unsafe { msg_send![class!(MPNowPlayingInfoCenter), defaultCenter] };
+        let command_center = shared_command_center();
+        let now_playing_center = default_now_playing_center();
 
-        let mut handlers: Vec<RcBlock<dyn Fn(*mut AnyObject) -> isize>> = Vec::new();
+        let mut handlers = Vec::new();
 
-        unsafe {
-            let cmd: *mut AnyObject = msg_send![command_center, togglePlayPauseCommand];
-            let handler = make_command_handler(playback_tx.clone(), PlaybackCommand::PlayPause);
-            let _: () = msg_send![cmd, setEnabled: true];
-            let _: () = msg_send![cmd, addTargetWithHandler: &*handler];
-            handlers.push(handler);
+        let handler = make_command_handler(playback_tx.clone(), PlaybackCommand::PlayPause);
+        command_center.toggle_play_pause_cmd().register(&handler);
+        handlers.push(handler);
 
-            let cmd: *mut AnyObject = msg_send![command_center, playCommand];
-            let handler = make_command_handler(playback_tx.clone(), PlaybackCommand::PlayPause);
-            let _: () = msg_send![cmd, setEnabled: true];
-            let _: () = msg_send![cmd, addTargetWithHandler: &*handler];
-            handlers.push(handler);
+        let handler = make_command_handler(playback_tx.clone(), PlaybackCommand::PlayPause);
+        command_center.play_cmd().register(&handler);
+        handlers.push(handler);
 
-            let cmd: *mut AnyObject = msg_send![command_center, pauseCommand];
-            let handler = make_command_handler(playback_tx.clone(), PlaybackCommand::PlayPause);
-            let _: () = msg_send![cmd, setEnabled: true];
-            let _: () = msg_send![cmd, addTargetWithHandler: &*handler];
-            handlers.push(handler);
+        let handler = make_command_handler(playback_tx.clone(), PlaybackCommand::PlayPause);
+        command_center.pause_cmd().register(&handler);
+        handlers.push(handler);
 
-            let cmd: *mut AnyObject = msg_send![command_center, nextTrackCommand];
-            let handler = make_command_handler(playback_tx.clone(), PlaybackCommand::Next);
-            let _: () = msg_send![cmd, setEnabled: true];
-            let _: () = msg_send![cmd, addTargetWithHandler: &*handler];
-            handlers.push(handler);
+        let handler = make_command_handler(playback_tx.clone(), PlaybackCommand::Next);
+        command_center.next_track_cmd().register(&handler);
+        handlers.push(handler);
 
-            let cmd: *mut AnyObject = msg_send![command_center, previousTrackCommand];
-            let handler = make_command_handler(playback_tx.clone(), PlaybackCommand::Previous);
-            let _: () = msg_send![cmd, setEnabled: true];
-            let _: () = msg_send![cmd, addTargetWithHandler: &*handler];
-            handlers.push(handler);
-        }
+        let handler = make_command_handler(playback_tx.clone(), PlaybackCommand::Previous);
+        command_center.previous_track_cmd().register(&handler);
+        handlers.push(handler);
 
-        let position_handler = {
-            let tx = playback_tx.clone();
-            RcBlock::new(move |event: *mut AnyObject| -> isize {
-                let position: f64 = unsafe { msg_send![event, positionTime] };
-                let _ = tx.send(PlaybackCommand::Seek(position as f32));
-                MP_REMOTE_COMMAND_SUCCESS
-            })
-        };
-
-        unsafe {
-            let cmd: *mut AnyObject = msg_send![command_center, changePlaybackPositionCommand];
-            let _: () = msg_send![cmd, setEnabled: true];
-            let _: () = msg_send![cmd, addTargetWithHandler: &*position_handler];
-        }
+        let tx = playback_tx;
+        let position_handler = RcBlock::new(
+            move |event: NonNull<MPRemoteCommandEvent>| -> MPRemoteCommandHandlerStatus {
+                let _ = tx.send(PlaybackCommand::Seek(position_time(event) as f32));
+                MPRemoteCommandHandlerStatus::Success
+            },
+        );
+        command_center
+            .change_position_cmd()
+            .register(&position_handler);
 
         Self {
             command_center,
@@ -210,80 +176,36 @@ impl MacosState {
 
     fn update_metadata(&mut self, metadata: ResolvedMetadata) -> Result<()> {
         autoreleasepool(|_| {
-            let now_playing: *mut AnyObject =
-                unsafe { msg_send![class!(NSMutableDictionary), dictionary] };
+            let dict = NSMutableDictionary::<NSString, AnyObject>::new();
 
             if let Some(title) = metadata.title {
-                let ns_title = NSString::from_str(&title);
-                unsafe {
-                    let _: () = msg_send![
-                        now_playing,
-                        setObject: Retained::as_ptr(&ns_title).cast_mut(),
-                        forKey: MPMediaItemPropertyTitle
-                    ];
-                }
+                dict_insert(&dict, key_title(), &*NSString::from_str(&title));
             }
-
             if let Some(artist) = metadata.artist {
-                let ns_artist = NSString::from_str(&artist);
-                unsafe {
-                    let _: () = msg_send![
-                        now_playing,
-                        setObject: Retained::as_ptr(&ns_artist).cast_mut(),
-                        forKey: MPMediaItemPropertyArtist
-                    ];
-                }
+                dict_insert(&dict, key_artist(), &*NSString::from_str(&artist));
             }
-
             if let Some(album) = metadata.album {
-                let ns_album = NSString::from_str(&album);
-                unsafe {
-                    let _: () = msg_send![
-                        now_playing,
-                        setObject: Retained::as_ptr(&ns_album).cast_mut(),
-                        forKey: MPMediaItemPropertyAlbumTitle
-                    ];
-                }
+                dict_insert(&dict, key_album(), &*NSString::from_str(&album));
             }
-
             if let Some(duration_ms) = metadata.duration_ms {
-                let duration_secs = duration_ms as f64 / 1000.0;
-                let num = NSNumber::new_f64(duration_secs);
-                unsafe {
-                    let _: () = msg_send![
-                        now_playing,
-                        setObject: Retained::as_ptr(&num).cast_mut(),
-                        forKey: MPMediaItemPropertyPlaybackDuration
-                    ];
-                }
+                dict_insert(
+                    &dict,
+                    key_duration(),
+                    &*NSNumber::new_f64(duration_ms as f64 / 1000.0),
+                );
             }
-
             if let Some(position_ms) = metadata.position_ms {
-                let position_secs = position_ms as f64 / 1000.0;
-                let num = NSNumber::new_f64(position_secs);
-                unsafe {
-                    let _: () = msg_send![
-                        now_playing,
-                        setObject: Retained::as_ptr(&num).cast_mut(),
-                        forKey: MPNowPlayingInfoPropertyElapsedPlaybackTime
-                    ];
-                }
+                dict_insert(
+                    &dict,
+                    key_elapsed_time(),
+                    &*NSNumber::new_f64(position_ms as f64 / 1000.0),
+                );
             }
-
             if let Some(artwork) = self.build_artwork(metadata.artwork_data.as_deref())? {
-                unsafe {
-                    let _: () = msg_send![
-                        now_playing,
-                        setObject: artwork,
-                        forKey: MPMediaItemPropertyArtwork
-                    ];
-                }
+                dict_insert(&dict, key_artwork(), &*artwork);
             }
 
-            unsafe {
-                let _: () = msg_send![self.now_playing_center, setNowPlayingInfo: now_playing];
-            }
-
+            self.now_playing_center.apply_dict(&dict);
             Ok(())
         })
     }
@@ -291,88 +213,63 @@ impl MacosState {
     fn set_state(&mut self, state: PlaybackState) -> Result<()> {
         autoreleasepool(|_| {
             let playback_state = match state {
-                PlaybackState::Playing => MP_NOW_PLAYING_STATE_PLAYING,
-                PlaybackState::Paused => MP_NOW_PLAYING_STATE_PAUSED,
-                PlaybackState::Stopped => MP_NOW_PLAYING_STATE_STOPPED,
+                PlaybackState::Playing => MPNowPlayingPlaybackState::Playing,
+                PlaybackState::Paused => MPNowPlayingPlaybackState::Paused,
+                PlaybackState::Stopped => MPNowPlayingPlaybackState::Stopped,
             };
-            unsafe {
-                let _: () = msg_send![self.now_playing_center, setPlaybackState: playback_state];
-            }
+            self.now_playing_center.apply_state(playback_state);
             Ok(())
         })
     }
 
     fn set_position(&mut self, position_ms: u64) -> Result<()> {
         autoreleasepool(|_| {
-            let now_playing: *mut AnyObject =
-                unsafe { msg_send![class!(NSMutableDictionary), dictionary] };
-            let previous: *mut AnyObject =
-                unsafe { msg_send![self.now_playing_center, nowPlayingInfo] };
-            if !previous.is_null() {
-                unsafe {
-                    let _: () = msg_send![now_playing, addEntriesFromDictionary: previous];
-                }
+            let dict = NSMutableDictionary::<NSString, AnyObject>::new();
+            if let Some(previous) = self.now_playing_center.current_dict() {
+                dict.addEntriesFromDictionary(&*previous);
             }
-
-            let position_secs = position_ms as f64 / 1000.0;
-            let num = NSNumber::new_f64(position_secs);
-            unsafe {
-                let _: () = msg_send![
-                    now_playing,
-                    setObject: Retained::as_ptr(&num).cast_mut(),
-                    forKey: MPNowPlayingInfoPropertyElapsedPlaybackTime
-                ];
-                let _: () = msg_send![self.now_playing_center, setNowPlayingInfo: now_playing];
-            }
-
+            dict_insert(
+                &dict,
+                key_elapsed_time(),
+                &*NSNumber::new_f64(position_ms as f64 / 1000.0),
+            );
+            self.now_playing_center.apply_dict(&dict);
             Ok(())
         })
     }
 
     fn set_can_go_next(&mut self, can_go_next: bool) -> Result<()> {
         autoreleasepool(|_| {
-            unsafe {
-                let cmd: *mut AnyObject = msg_send![self.command_center, nextTrackCommand];
-                let _: () = msg_send![cmd, setEnabled: can_go_next];
-            }
+            self.command_center
+                .next_track_cmd()
+                .set_enabled(can_go_next);
             Ok(())
         })
     }
 
     fn set_can_go_previous(&mut self, can_go_previous: bool) -> Result<()> {
         autoreleasepool(|_| {
-            unsafe {
-                let cmd: *mut AnyObject = msg_send![self.command_center, previousTrackCommand];
-                let _: () = msg_send![cmd, setEnabled: can_go_previous];
-            }
+            self.command_center
+                .previous_track_cmd()
+                .set_enabled(can_go_previous);
             Ok(())
         })
     }
 
-    fn build_artwork(&self, data: Option<&[u8]>) -> Result<Option<*mut AnyObject>> {
+    fn build_artwork(&self, data: Option<&[u8]>) -> Result<Option<Retained<MPMediaItemArtwork>>> {
         let data = match data {
             Some(data) if !data.is_empty() => data,
             _ => return Ok(None),
         };
 
-        let ns_data = unsafe { NSData::dataWithBytes_length(data.as_ptr().cast(), data.len()) };
+        let ns_data = nsdata_from_bytes(data);
         let image = match NSImage::initWithData(NSImage::alloc(), &ns_data) {
             Some(image) => image,
             None => return Ok(None),
         };
         let size = image.size();
         let image_ptr = Retained::as_ptr(&image).cast_mut();
-
-        let handler = RcBlock::new(move |_size: CGSize| -> *mut AnyObject { image_ptr.cast() });
-
-        let artwork: *mut AnyObject = unsafe { msg_send![class!(MPMediaItemArtwork), alloc] };
-        let artwork: *mut AnyObject =
-            unsafe { msg_send![artwork, initWithBoundsSize: size, requestHandler: &*handler] };
-
-        if artwork.is_null() {
-            error!("failed to create MPMediaItemArtwork");
-            return Ok(None);
-        }
+        let (artwork, handler) = create_artwork(image_ptr, size);
 
         if let Ok(mut state) = self.artwork.lock() {
             state.image = Some(image);
@@ -386,9 +283,140 @@ impl MacosState {
 fn make_command_handler(
     tx: mpsc::UnboundedSender<PlaybackCommand>,
     command: PlaybackCommand,
-) -> RcBlock<dyn Fn(*mut AnyObject) -> isize> {
-    RcBlock::new(move |_event: *mut AnyObject| -> isize {
-        let _ = tx.send(command.clone());
-        MP_REMOTE_COMMAND_SUCCESS
-    })
+) -> CommandHandler {
+    RcBlock::new(
+        move |_event: NonNull<MPRemoteCommandEvent>| -> MPRemoteCommandHandlerStatus {
+            let _ = tx.send(command.clone());
+            MPRemoteCommandHandlerStatus::Success
+        },
+    )
+}
+
+fn shared_command_center() -> Retained<MPRemoteCommandCenter> {
+    unsafe { MPRemoteCommandCenter::sharedCommandCenter() }
+}
+
+fn default_now_playing_center() -> Retained<MPNowPlayingInfoCenter> {
+    unsafe { MPNowPlayingInfoCenter::defaultCenter() }
+}
+
+fn position_time(event: NonNull<MPRemoteCommandEvent>) -> f64 {
+    unsafe {
+        event
+            .cast::<MPChangePlaybackPositionCommandEvent>()
+            .as_ref()
+            .positionTime()
+    }
+}
+
+fn nsdata_from_bytes(data: &[u8]) -> Retained<NSData> {
+    unsafe { NSData::dataWithBytes_length(data.as_ptr().cast(), data.len()) }
+}
+
+fn create_artwork(
+    image_ptr: *mut NSImage,
+    size: CGSize,
+) -> (
+    Retained<MPMediaItemArtwork>,
+    RcBlock<dyn Fn(CGSize) -> NonNull<NSImage>>,
+) {
+    let handler: RcBlock<dyn Fn(CGSize) -> NonNull<NSImage>> = RcBlock::new(move |_: CGSize| {
+        NonNull::new(image_ptr).expect("image_ptr from Retained is always non-null")
+    });
+    let artwork = unsafe {
+        MPMediaItemArtwork::initWithBoundsSize_requestHandler(
+            MPMediaItemArtwork::alloc(),
+            size,
+            &*handler,
+        )
+    };
+    (artwork, handler)
+}
+
+fn dict_insert(dict: &NSMutableDictionary<NSString, AnyObject>, key: &NSString, value: &AnyObject) {
+    unsafe { dict.setObject_forKey(value, ProtocolObject::from_ref(key)) }
+}
+
+fn key_title() -> &'static NSString {
+    unsafe { MPMediaItemPropertyTitle }
+}
+fn key_artist() -> &'static NSString {
+    unsafe { MPMediaItemPropertyArtist }
+}
+fn key_album() -> &'static NSString {
+    unsafe { MPMediaItemPropertyAlbumTitle }
+}
+fn key_duration() -> &'static NSString {
+    unsafe { MPMediaItemPropertyPlaybackDuration }
+}
+fn key_artwork() -> &'static NSString {
+    unsafe { MPMediaItemPropertyArtwork }
+}
+fn key_elapsed_time() -> &'static NSString {
+    unsafe { MPNowPlayingInfoPropertyElapsedPlaybackTime }
+}
+
+trait CommandCenterExt {
+    fn toggle_play_pause_cmd(&self) -> Retained<MPRemoteCommand>;
+    fn play_cmd(&self) -> Retained<MPRemoteCommand>;
+    fn pause_cmd(&self) -> Retained<MPRemoteCommand>;
+    fn next_track_cmd(&self) -> Retained<MPRemoteCommand>;
+    fn previous_track_cmd(&self) -> Retained<MPRemoteCommand>;
+    fn change_position_cmd(&self) -> Retained<MPChangePlaybackPositionCommand>;
+}
+
+impl CommandCenterExt for MPRemoteCommandCenter {
+    fn toggle_play_pause_cmd(&self) -> Retained<MPRemoteCommand> {
+        unsafe { self.togglePlayPauseCommand() }
+    }
+    fn play_cmd(&self) -> Retained<MPRemoteCommand> {
+        unsafe { self.playCommand() }
+    }
+    fn pause_cmd(&self) -> Retained<MPRemoteCommand> {
+        unsafe { self.pauseCommand() }
+    }
+    fn next_track_cmd(&self) -> Retained<MPRemoteCommand> {
+        unsafe { self.nextTrackCommand() }
+    }
+    fn previous_track_cmd(&self) -> Retained<MPRemoteCommand> {
+        unsafe { self.previousTrackCommand() }
+    }
+    fn change_position_cmd(&self) -> Retained<MPChangePlaybackPositionCommand> {
+        unsafe { self.changePlaybackPositionCommand() }
+    }
+}
+
+trait RemoteCommandExt {
+    fn register(&self, handler: &CommandHandler);
+    fn set_enabled(&self, enabled: bool);
+}
+
+impl RemoteCommandExt for MPRemoteCommand {
+    fn register(&self, handler: &CommandHandler) {
+        unsafe {
+            self.setEnabled(true);
+            let _ = self.addTargetWithHandler(&*handler);
+        }
+    }
+    fn set_enabled(&self, enabled: bool) {
+        unsafe { self.setEnabled(enabled) }
+    }
+}
+
+trait NowPlayingCenterExt {
+    fn apply_dict(&self, dict: &NSMutableDictionary<NSString, AnyObject>);
+    fn current_dict(&self) -> Option<Retained<NSDictionary<NSString, AnyObject>>>;
+    fn apply_state(&self, state: MPNowPlayingPlaybackState);
+}
+
+impl NowPlayingCenterExt for MPNowPlayingInfoCenter {
+    fn apply_dict(&self, dict: &NSMutableDictionary<NSString, AnyObject>) {
+        unsafe { self.setNowPlayingInfo(Some(&**dict)) }
+    }
+    fn current_dict(&self) -> Option<Retained<NSDictionary<NSString, AnyObject>>> {
+        unsafe { self.nowPlayingInfo() }
+    }
+    fn apply_state(&self, state: MPNowPlayingPlaybackState) {
+        unsafe { self.setPlaybackState(state) }
+    }
 }

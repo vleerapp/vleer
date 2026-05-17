@@ -74,10 +74,18 @@ objc2-core-foundation = { version = "0.3.2", features = ["CFCGTypes"] }
 objc2-foundation = { version = "0.3.2", features = [
   "NSData",
   "NSDictionary",
+  "NSObject",
   "NSValue",
 ] }
 objc2-media-player = { version = "0.3.2", features = [
+  "MPMediaItem",
   "MPNowPlayingInfoCenter",
+  "MPRemoteCommand",
+  "MPRemoteCommandCenter",
+  "MPRemoteCommandEvent",
+  "block2",
+  "objc2-app-kit",
+  "objc2-core-foundation",
 ] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
