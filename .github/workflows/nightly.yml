@@ -33,7 +33,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Extract version from Cargo.toml
         id: version
@@ -104,6 +104,7 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-packager@0.11.8
+          fallback: cargo-install
 
       - name: Build and Package
         id: package
@@ -167,7 +168,7 @@ jobs:
           done
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ steps.version.outputs.full }}_${{ matrix.os_name }}_${{ matrix.arch }}
           path: |
