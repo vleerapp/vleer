@@ -12,7 +12,7 @@ use crate::{
             button::Button,
             context_menu::{ContextMenu, QueueChanged, song_context_menu_items},
             div::{flex_col, flex_row},
-            icons::{icon::icon, icons::*},
+            icons::{self, icon},
             progress_bar::progress_slider,
             slider::slider,
         },
@@ -106,9 +106,9 @@ impl Render for Player {
         let play_button = Button::new("play_pause")
             .group("playpause-button")
             .child(if is_playing {
-                icon(PAUSE).group_hover("playpause-button", |s| s.text_color(variables.text))
+                icon(icons::PAUSE).group_hover("playpause-button", |s| s.text_color(variables.text))
             } else {
-                icon(PLAY).group_hover("playpause-button", |s| s.text_color(variables.text))
+                icon(icons::PLAY).group_hover("playpause-button", |s| s.text_color(variables.text))
             })
             .on_click(cx.listener(|_this, _event, _window, cx| {
                 cx.update_global::<Playback, _>(|playback, cx| {
@@ -119,7 +119,7 @@ impl Render for Player {
 
         let prev_button = Button::new("previous")
             .group("previous-button")
-            .child(icon(PREVIOUS).group_hover("previous-button", |s| s.text_color(variables.text)))
+            .child(icon(icons::PREVIOUS).group_hover("previous-button", |s| s.text_color(variables.text)))
             .on_click(cx.listener(|_this, _event, _window, cx| {
                 cx.update_global::<Playback, _>(|playback, cx| {
                     playback.previous(cx);
@@ -129,7 +129,7 @@ impl Render for Player {
 
         let next_button = Button::new("next")
             .group("next-button")
-            .child(icon(NEXT).group_hover("next-button", |s| s.text_color(variables.text)))
+            .child(icon(icons::NEXT).group_hover("next-button", |s| s.text_color(variables.text)))
             .on_click(cx.listener(|_this, _event, _window, cx| {
                 cx.update_global::<Playback, _>(|playback, cx| {
                     playback.next(cx);
@@ -140,7 +140,7 @@ impl Render for Player {
         let shuffle_button = Button::new("shuffle")
             .group("shuffle-button")
             .child(
-                icon(SHUFFLE)
+                icon(icons::SHUFFLE)
                     .when(is_shuffle, |s| s.text_color(variables.accent))
                     .group_hover("shuffle-button", |s| {
                         if !is_shuffle {
@@ -154,13 +154,13 @@ impl Render for Player {
                 cx.update_global::<Queue, _>(|queue, _cx| {
                     queue.set_shuffle(queue.get_shuffle() ^ true);
                 });
-                cx.set_global(QueueChanged::default());
+                cx.set_global(QueueChanged);
             }));
 
         let repeat_icon = match repeat_mode {
-            RepeatMode::Off => REPLAY,
-            RepeatMode::All => REPLAY,
-            RepeatMode::One => REPLAY_1,
+            RepeatMode::Off => icons::REPLAY,
+            RepeatMode::All => icons::REPLAY,
+            RepeatMode::One => icons::REPLAY_1,
         };
 
         let repeat_button = Button::new("repeat")
@@ -267,18 +267,18 @@ impl Render for Player {
         };
 
         let volume_icon = match volume {
-            v if v == 0.0 => VOLUME_MUTE,
-            v if v <= 0.25 => VOLUME_1,
-            v if v <= 0.50 => VOLUME_2,
-            v if v <= 0.75 => VOLUME_3,
-            v if v <= 1.0 => VOLUME_4,
-            _ => VOLUME_1,
+            0.0 => icons::VOLUME_MUTE,
+            v if v <= 0.25 => icons::VOLUME_1,
+            v if v <= 0.50 => icons::VOLUME_2,
+            v if v <= 0.75 => icons::VOLUME_3,
+            v if v <= 1.0 => icons::VOLUME_4,
+            _ => icons::VOLUME_1,
         };
 
         let queue_button = Button::new("queue-toggle")
             .group("queue-toggle-button")
             .child(
-                icon(QUEUE)
+                icon(icons::QUEUE)
                     .when(queue_visible, |s| s.text_color(variables.accent))
                     .group_hover("queue-toggle-button", |s| {
                         if !queue_visible {

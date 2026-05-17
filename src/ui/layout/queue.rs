@@ -7,8 +7,7 @@ use crate::media::playback::Playback;
 use crate::media::queue::Queue;
 use crate::ui::components::context_menu::{ContextMenu, QueueChanged, song_context_menu_items};
 use crate::ui::components::div::{flex_col, flex_row};
-use crate::ui::components::icons::icon::icon;
-use crate::ui::components::icons::icons::{PLAY, X};
+use crate::ui::components::icons::{self, icon};
 use crate::ui::components::scrollbar::{Scrollbar, ScrollbarAxis};
 use crate::ui::variables::Variables;
 
@@ -200,17 +199,29 @@ fn build_display_order(len: usize, from: usize, to: usize) -> Vec<usize> {
     order
 }
 
-fn render_row(
-    view: &Entity<QueuePane>,
+struct RowState<'a> {
     display_idx: usize,
     real_idx: usize,
-    song: &Song,
+    song: &'a Song,
     is_current: bool,
     is_playing: bool,
     spectrum: [f32; 4],
+}
+
+fn render_row(
+    view: &Entity<QueuePane>,
+    state: RowState<'_>,
     variables: &Variables,
     context_menu: Entity<ContextMenu>,
 ) -> impl IntoElement {
+    let RowState {
+        display_idx,
+        real_idx,
+        song,
+        is_current,
+        is_playing,
+        spectrum,
+    } = state;
     let song = song.clone();
     let variables = *variables;
 
@@ -281,7 +292,7 @@ fn render_row(
                             cx.update_global::<Queue, _>(|q, _| {
                                 q.move_song(from, display_idx);
                             });
-                            cx.set_global(QueueChanged::default());
+                            cx.set_global(QueueChanged);
                         } else {
                             cx.notify();
                         }
@@ -295,7 +306,7 @@ fn render_row(
                         cx.update_global::<Playback, _>(|p, cx| {
                             p.play_queue(cx);
                         });
-                        cx.set_global(QueueChanged::default());
+                        cx.set_global(QueueChanged);
                     }
                 })
                 .child(
@@ -331,7 +342,7 @@ fn render_row(
                                 .bg(black().opacity(0.5))
                                 .invisible()
                                 .group_hover("cover-container", |s| s.visible())
-                                .child(icon(PLAY).size(px(16.0)).text_color(variables.text)),
+                                .child(icon(icons::PLAY).size(px(16.0)).text_color(variables.text)),
                         ),
                 )
                 .child(
@@ -361,9 +372,9 @@ fn render_row(
                                     cx.update_global::<Queue, _>(|q, _| {
                                         q.remove_at(real_idx);
                                     });
-                                    cx.set_global(QueueChanged::default());
+                                    cx.set_global(QueueChanged);
                                 })
-                                .child(icon(X).size(px(14.0)).text_color(variables.text_secondary)),
+                                .child(icon(icons::X).size(px(14.0)).text_color(variables.text_secondary)),
                         ),
                 ),
         )
@@ -406,7 +417,7 @@ fn render_drop_slot(
                     cx.update_global::<Queue, _>(|q, _| {
                         q.move_song(from, display_idx);
                     });
-                    cx.set_global(QueueChanged::default());
+                    cx.set_global(QueueChanged);
                 } else {
                     cx.notify();
                 }
@@ -423,11 +434,11 @@ impl Render for QueuePane {
 
         if current_song_id != self.last_current_song_id {
             self.last_current_song_id = current_song_id.clone();
-            if let Some(ref song_id) = current_song_id {
-                if let Some(display_idx) = self.songs.iter().position(|s| &s.id == song_id) {
-                    self.scroll_handle
-                        .scroll_to_item_strict(display_idx, ScrollStrategy::Top);
-                }
+            if let Some(ref song_id) = current_song_id
+                && let Some(display_idx) = self.songs.iter().position(|s| &s.id == song_id)
+            {
+                self.scroll_handle
+                    .scroll_to_item_strict(display_idx, ScrollStrategy::Top);
             }
         }
 
@@ -535,12 +546,14 @@ impl Render for QueuePane {
                                                 } else {
                                                     render_row(
                                                         &view_handle,
-                                                        display_idx,
-                                                        real_idx,
-                                                        song,
-                                                        is_current,
-                                                        is_playing,
-                                                        spectrum,
+                                                        RowState {
+                                                            display_idx,
+                                                            real_idx,
+                                                            song,
+                                                            is_current,
+                                                            is_playing,
+                                                            spectrum,
+                                                        },
                                                         &variables,
                                                         context_menu.clone(),
                                                     )

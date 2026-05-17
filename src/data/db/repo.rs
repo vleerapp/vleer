@@ -73,6 +73,7 @@ impl Database {
         .map(Into::into))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn upsert_song(
         &self,
         title: &str,
@@ -693,7 +694,7 @@ impl Database {
     }
 
     pub async fn get_playlist_songs(&self, playlist_id: &Cuid) -> sqlx::Result<Vec<PlaylistTrack>> {
-        Ok(sqlx::query(
+        sqlx::query(
             r#"
             SELECT
                 pt.id,
@@ -713,7 +714,7 @@ impl Database {
         .await?
         .into_iter()
         .map(|row| PlaylistTrackRow::from_row(&row).map(Into::into))
-        .collect::<Result<_, _>>()?)
+        .collect::<Result<_, _>>()
     }
 
     pub async fn get_event(&self, id: &Cuid) -> sqlx::Result<Option<Event>> {

@@ -1,6 +1,6 @@
 use crate::ui::{
     app::MainWindow,
-    components::{div::flex_row, icons::icon::icon},
+    components::{div::flex_row, icons::icon},
     variables::Variables,
     views::AppView,
 };
@@ -25,7 +25,7 @@ impl NavButton {
         Self {
             icon: icon.into(),
             label: label.map(|s| SharedString::from(s.to_string())),
-            count: count,
+            count,
             target_view,
         }
     }

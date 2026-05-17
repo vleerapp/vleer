@@ -320,7 +320,7 @@ impl Render for AlbumsView {
         let row_count = if self.total_count == 0 {
             0
         } else {
-            (self.total_count + items_per_row - 1) / items_per_row
+            self.total_count.div_ceil(items_per_row)
         };
 
         let view_handle = cx.entity();

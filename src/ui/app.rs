@@ -320,11 +320,11 @@ pub async fn run() -> anyhow::Result<()> {
             cx.set_global(Search::default());
             cx.set_global(ActiveView::default());
             cx.set_global(BackgroundUiNotifier::new(background_ui_tx));
-            cx.set_global(PinnedItemsChanged::default());
-            cx.set_global(LibraryDataChanged::default());
-            cx.set_global(HomeDataChanged::default());
+            cx.set_global(PinnedItemsChanged);
+            cx.set_global(LibraryDataChanged);
+            cx.set_global(HomeDataChanged);
             cx.set_global(QueueVisible::default());
-            cx.set_global(QueueChanged::default());
+            cx.set_global(QueueChanged);
 
             Config::init(cx, &config_dir).expect("unable to initizalize settings");
             Playback::init(cx).expect("unable to initizalize playback context");
@@ -344,10 +344,10 @@ pub async fn run() -> anyhow::Result<()> {
                 while let Some(event) = background_ui_rx.recv().await {
                     cx.update(|cx| match event {
                         BackgroundUiEvent::HomeDataChanged => {
-                            cx.set_global(HomeDataChanged::default());
+                            cx.set_global(HomeDataChanged);
                         }
                         BackgroundUiEvent::LibraryDataChanged => {
-                            cx.set_global(LibraryDataChanged::default());
+                            cx.set_global(LibraryDataChanged);
                         }
                     });
                 }
@@ -377,12 +377,12 @@ pub async fn run() -> anyhow::Result<()> {
                     cx.new(|cx| {
                         Playback::start_monitor(window, cx);
 
-                        let library_entity = cx.new(|cx| Library::new(cx));
-                        let navbar_entity = cx.new(|cx| Navbar::new(cx));
+                        let library_entity = cx.new( Library::new);
+                        let navbar_entity = cx.new(Navbar::new);
                         let navbar_scan_progress_entity =
-                            cx.new(|cx| NavbarScanProgressBar::new(cx));
-                        let player_entity = cx.new(|cx| Player::new(cx));
-                        let queue_entity = cx.new(|cx| QueuePane::new(cx));
+                            cx.new( NavbarScanProgressBar::new);
+                        let player_entity = cx.new(Player::new);
+                        let queue_entity = cx.new(QueuePane::new);
 
                         let views = ViewRegistry::register_all(window, cx);
 

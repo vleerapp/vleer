@@ -50,10 +50,9 @@ impl Asset for VleerImageLoader {
 
             crate::RUNTIME
                 .spawn(async move {
-                    let _permit = semaphore
-                        .acquire()
-                        .await
-                        .map_err(|e| ImageCacheError::Asset(format!("semaphore closed: {}", e).into()))?;
+                    let _permit = semaphore.acquire().await.map_err(|e| {
+                        ImageCacheError::Asset(format!("semaphore closed: {}", e).into())
+                    })?;
 
                     let row = tokio::time::timeout(
                         IMAGE_QUERY_TIMEOUT,
@@ -62,7 +61,11 @@ impl Asset for VleerImageLoader {
                             .fetch_optional(&*pool),
                     )
                     .await
-                    .map_err(|_| ImageCacheError::Asset(format!("image query timed out: {}", image_id).into()))?
+                    .map_err(|_| {
+                        ImageCacheError::Asset(
+                            format!("image query timed out: {}", image_id).into(),
+                        )
+                    })?
                     .map_err(|e| ImageCacheError::Asset(format!("sqlx: {}", e).into()))?;
 
                     let bytes = row

@@ -198,9 +198,11 @@ pub struct RecentItemRow {
 
 impl RecentItemRow {
     pub fn into_recent_item(self) -> RecentItem {
-        if self.song_count > 1 && self.album_id.is_some() {
+        if let Some(album_id) = self.album_id
+            && self.song_count > 1
+        {
             RecentItem::Album {
-                id: self.album_id.unwrap(),
+                id: album_id,
                 title: self
                     .album_title
                     .unwrap_or_else(|| "Unknown Album".to_string()),

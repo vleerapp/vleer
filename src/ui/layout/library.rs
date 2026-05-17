@@ -7,12 +7,12 @@ use crate::ui::components::context_menu::{
     artist_context_menu_items, playlist_context_menu_items, song_context_menu_items,
 };
 use crate::ui::components::div::flex_row;
-use crate::ui::components::icons::icon::icon;
+use crate::ui::components::icons::icon;
 use crate::ui::components::scrollbar::ScrollableElement;
 use crate::ui::{
     components::{
         div::flex_col,
-        icons::icons::{self, PLAY},
+        icons,
         input::{InputEvent, TextInput},
         nav_button::NavButton,
     },
@@ -45,8 +45,7 @@ pub struct Library {
 
 impl Library {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        let search_input =
-            cx.new(|cx| TextInput::new(cx, "Search Library").with_icon(icons::SEARCH));
+        let search_input = cx.new(|cx| TextInput::new(cx, "Search Library").with_icon(icons::SEARCH));
 
         let db = cx.global::<Database>().clone();
 
@@ -253,7 +252,7 @@ fn pinned_item(
                             .bg(black().opacity(0.5))
                             .invisible()
                             .group_hover("pinned-item", |s| s.visible())
-                            .child(icon(PLAY).size(px(16.0)).text_color(variables.text))
+                            .child(icon(icons::PLAY).size(px(16.0)).text_color(variables.text))
                             .cursor_pointer()
                             .on_mouse_down(MouseButton::Left, move |_event, _window, cx| {
                                 let item_type = item_type_clone.clone();
@@ -291,7 +290,7 @@ fn pinned_item(
                                                 playback.play_queue(cx);
                                             });
 
-                                            cx.set_global(QueueChanged::default());
+                                            cx.set_global(QueueChanged);
                                         })
                                     }
                                 })
@@ -396,7 +395,7 @@ impl Render for Library {
                                 AppView::Playlists,
                             )),
                     )
-                    .when(has_display || (is_searching && !has_display), |this| {
+                    .when(has_display || is_searching, |this| {
                         this.child(
                             flex_col()
                                 .flex_1()

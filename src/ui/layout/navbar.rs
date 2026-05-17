@@ -7,7 +7,7 @@ use crate::{
     ui::{
         components::{
             div::flex_row,
-            icons::icons::{HOME, SETTINGS},
+            icons::{HOME, SETTINGS},
             nav_button::NavButton,
         },
         variables::Variables,

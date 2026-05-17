@@ -168,17 +168,17 @@ impl MediaController {
                     (position_ms, can_next, can_prev)
                 });
 
-                if last_position_ms.map_or(true, |prev| prev != position_ms) {
+                if last_position_ms != Some(position_ms) {
                     controller.set_position_ms(position_ms).await.ok();
                     last_position_ms = Some(position_ms);
                 }
 
-                if last_can_next.map_or(true, |prev| prev != can_next) {
+                if last_can_next != Some(can_next) {
                     controller.set_can_go_next(can_next).await.ok();
                     last_can_next = Some(can_next);
                 }
 
-                if last_can_prev.map_or(true, |prev| prev != can_prev) {
+                if last_can_prev != Some(can_prev) {
                     controller.set_can_go_previous(can_prev).await.ok();
                     last_can_prev = Some(can_prev);
                 }

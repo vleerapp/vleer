@@ -14,10 +14,12 @@ use std::time::Instant;
 use unicode_segmentation::*;
 
 use crate::ui::{
-    components::{div::flex_row, icons::icon::icon},
+    components::{div::flex_row, icons::icon},
     global_actions::PlayPause,
     variables::Variables,
 };
+
+pub type Validator = Rc<RefCell<dyn Fn(&str) -> bool>>;
 
 actions!(
     input,
@@ -97,7 +99,7 @@ pub struct TextInput {
     text_color: Option<Rgba>,
     centered: bool,
     custom_height: Option<Pixels>,
-    validator: Option<Rc<RefCell<dyn Fn(&str) -> bool>>>,
+    validator: Option<Validator>,
     last_click_time: Option<Instant>,
     last_click_position: Point<Pixels>,
     click_count: u8,
@@ -209,11 +211,7 @@ impl TextInput {
     }
 
     fn word_right(&mut self, _: &WordRight, _: &mut Window, cx: &mut Context<Self>) {
-        if self.selected_range.is_empty() {
-            self.move_to(self.next_word_boundary(self.selected_range.end), cx);
-        } else {
-            self.move_to(self.next_word_boundary(self.selected_range.end), cx);
-        }
+        self.move_to(self.next_word_boundary(self.selected_range.end), cx);
     }
 
     fn select_word_left(&mut self, _: &SelectWordLeft, _: &mut Window, cx: &mut Context<Self>) {
@@ -461,9 +459,7 @@ impl TextInput {
     fn previous_word_boundary(&self, offset: usize) -> usize {
         self.content
             .unicode_word_indices()
-            .map(|(idx, _)| idx)
-            .filter(|&idx| idx < offset)
-            .last()
+            .map(|(idx, _)| idx).rfind(|&idx| idx < offset)
             .unwrap_or(0)
     }
 
@@ -845,7 +841,7 @@ impl Element for TextElement {
                         point(bounds.left() + start_x, bounds.top() + y_offset),
                         point(bounds.left() + end_x, bounds.bottom() - y_offset),
                     ),
-                    rgba(0xA058FF4f),
+                    rgba(0xA058FF4F),
                 )),
                 None,
             )
@@ -882,10 +878,10 @@ impl Element for TextElement {
         );
 
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            if self.is_focused {
-                if let Some(selection) = prepaint.selection.take() {
-                    window.paint_quad(selection);
-                }
+            if self.is_focused
+                && let Some(selection) = prepaint.selection.take()
+            {
+                window.paint_quad(selection);
             }
 
             if let Some(line) = prepaint.line.as_ref() {
@@ -906,12 +902,10 @@ impl Element for TextElement {
 
             if focus_handle.is_focused(window) {
                 let elapsed = blink_start.elapsed().as_millis();
-                let blink_on = (elapsed / 500) % 2 == 0;
+                let blink_on = (elapsed / 500).is_multiple_of(2);
 
-                if blink_on {
-                    if let Some(cursor) = prepaint.cursor.take() {
-                        window.paint_quad(cursor);
-                    }
+                if blink_on && let Some(cursor) = prepaint.cursor.take() {
+                    window.paint_quad(cursor);
                 }
             }
         });

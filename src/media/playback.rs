@@ -20,9 +20,6 @@ use symphonia_adapter_libopus::OpusDecoder;
 use tokio::sync::mpsc;
 use tracing::{debug, error};
 
-const LOG_VOLUME_GROWTH_RATE: f32 = 6.908;
-const LOG_VOLUME_SCALE_FACTOR: f32 = 1000.0;
-const UNITY_GAIN: f32 = 1.0;
 const DEFAULT_TARGET_LUFS: f32 = -14.0;
 
 #[derive(Debug, Clone)]
@@ -64,13 +61,11 @@ impl Playback {
         normalization_enabled: bool,
         current_lufs: Option<f32>,
     ) -> f32 {
-        if normalization_enabled {
-            if let Some(lufs) = current_lufs {
-                let gain_db = (DEFAULT_TARGET_LUFS - lufs).clamp(-12.0, 12.0);
-                let linear_gain = 10.0f32.powf(gain_db / 20.0);
-                debug!("Normalization: LUFS {:.2}, gain {:.2} dB", lufs, gain_db);
-                return linear_gain;
-            }
+        if normalization_enabled && let Some(lufs) = current_lufs {
+            let gain_db = (DEFAULT_TARGET_LUFS - lufs).clamp(-12.0, 12.0);
+            let linear_gain = 10.0f32.powf(gain_db / 20.0);
+            debug!("Normalization: LUFS {:.2}, gain {:.2} dB", lufs, gain_db);
+            return linear_gain;
         }
         1.0
     }
@@ -345,35 +340,35 @@ impl Playback {
     }
 
     pub fn play(&mut self, cx: &mut App) {
-        if self.paused {
-            if let Some(sink) = &self.sink {
-                sink.play();
-                self.paused = false;
-                debug!("Started playback");
+        if self.paused
+            && let Some(sink) = &self.sink
+        {
+            sink.play();
+            self.paused = false;
+            debug!("Started playback");
 
-                if let Some(mc) = cx.try_global::<MediaController>() {
-                    let mc = mc.clone();
-                    tokio::spawn(async move {
-                        mc.set_state(PlaybackState::Playing).await.ok();
-                    });
-                }
+            if let Some(mc) = cx.try_global::<MediaController>() {
+                let mc = mc.clone();
+                tokio::spawn(async move {
+                    mc.set_state(PlaybackState::Playing).await.ok();
+                });
             }
         }
     }
 
     pub fn pause(&mut self, cx: &mut App) {
-        if !self.paused {
-            if let Some(sink) = &self.sink {
-                sink.pause();
-                self.paused = true;
-                debug!("Paused playback");
+        if !self.paused
+            && let Some(sink) = &self.sink
+        {
+            sink.pause();
+            self.paused = true;
+            debug!("Paused playback");
 
-                if let Some(mc) = cx.try_global::<MediaController>() {
-                    let mc = mc.clone();
-                    tokio::spawn(async move {
-                        mc.set_state(PlaybackState::Paused).await.ok();
-                    });
-                }
+            if let Some(mc) = cx.try_global::<MediaController>() {
+                let mc = mc.clone();
+                tokio::spawn(async move {
+                    mc.set_state(PlaybackState::Paused).await.ok();
+                });
             }
         }
     }
@@ -466,7 +461,7 @@ impl Playback {
     }
 
     pub fn empty(&self) -> bool {
-        self.sink.as_ref().map_or(true, |s| s.empty())
+        self.sink.as_ref().is_none_or(|s| s.empty())
     }
 
     pub fn get_spectrum(&self) -> [f32; 4] {
@@ -600,8 +595,8 @@ impl Playback {
 
     fn compute_log_volume(volume: f32) -> f32 {
         let mut amplitude = volume;
-        if amplitude > 0.0 && amplitude < UNITY_GAIN {
-            amplitude = f32::exp(LOG_VOLUME_GROWTH_RATE * volume) / LOG_VOLUME_SCALE_FACTOR;
+        if amplitude > 0.0 && amplitude < 1.0 {
+            amplitude = f32::exp(6.908 * volume) / 1000.0;
             if volume < 0.1 {
                 amplitude *= volume * 10.0;
             }
@@ -610,13 +605,13 @@ impl Playback {
     }
 
     fn compute_normalization_gain(&self) -> f32 {
-        if self.normalization_enabled {
-            if let Some(lufs) = self.current_lufs {
-                let gain_db = (DEFAULT_TARGET_LUFS - lufs).clamp(-12.0, 12.0);
-                let linear_gain = 10.0f32.powf(gain_db / 20.0);
-                debug!("Normalization: LUFS {:.2}, gain {:.2} dB", lufs, gain_db);
-                return linear_gain;
-            }
+        if self.normalization_enabled
+            && let Some(lufs) = self.current_lufs
+        {
+            let gain_db = (DEFAULT_TARGET_LUFS - lufs).clamp(-12.0, 12.0);
+            let linear_gain = 10.0f32.powf(gain_db / 20.0);
+            debug!("Normalization: LUFS {:.2}, gain {:.2} dB", lufs, gain_db);
+            return linear_gain;
         }
         1.0
     }

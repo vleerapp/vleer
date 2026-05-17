@@ -58,14 +58,9 @@ pub struct ScannedTrack {
     pub image_data: Option<ImageData>,
 }
 
+#[derive(Default)]
 struct ScanOptions {
     force: bool,
-}
-
-impl Default for ScanOptions {
-    fn default() -> Self {
-        Self { force: false }
-    }
 }
 
 #[derive(Clone)]
@@ -413,16 +408,16 @@ impl Scanner {
                         let existing = existing_track_state.get(&file_path).copied();
                         let is_new = existing.is_none();
 
-                        if let Some((existing_size, existing_modified)) = existing {
-                            if !Self::should_process_file(
+                        if let Some((existing_size, existing_modified)) = existing
+                            && !Self::should_process_file(
                                 existing_size,
                                 existing_modified,
                                 file_size,
                                 file_modified,
                                 force,
-                            ) {
-                                return Some((None, false, false));
-                            }
+                            )
+                        {
+                            return Some((None, false, false));
                         }
 
                         let metadata = match tokio::task::spawn_blocking({
@@ -605,10 +600,11 @@ impl Scanner {
 
             let is_new = existing.is_none();
 
-            if let Some(existing) = existing {
-                if existing.file_size == file_size && existing.file_modified == file_modified {
-                    continue;
-                }
+            if let Some(existing) = existing
+                && existing.file_size == file_size
+                && existing.file_modified == file_modified
+            {
+                continue;
             }
 
             let metadata = match tokio::task::spawn_blocking({
@@ -827,10 +823,10 @@ impl Scanner {
 }
 
 pub fn expand_tilde(path: &str) -> PathBuf {
-    if path.starts_with("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(&path[2..]);
-        }
+    if let Some(stripped) = path.strip_prefix("~/")
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(stripped);
     }
     PathBuf::from(path)
 }

@@ -13,8 +13,9 @@ use crate::ui::views::{
     settings::SettingsView, songs::SongsView,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum AppView {
+    #[default]
     Home,
     Songs,
     Settings,
@@ -33,12 +34,6 @@ impl AppView {
             AppView::Artists => "Artists",
             AppView::Playlists => "Playlists",
         }
-    }
-}
-
-impl Default for AppView {
-    fn default() -> Self {
-        Self::Home
     }
 }
 

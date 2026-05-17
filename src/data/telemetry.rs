@@ -10,16 +10,10 @@ use crate::data::{config::Config, db::repo::Database};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Os {
-    #[serde(rename = "Windows")]
     Windows,
-
     #[serde(rename = "macOS")]
-    MacOs,
-
-    #[serde(rename = "Linux")]
+    MacOS,
     Linux,
-
-    #[serde(rename = "Unknown")]
     Unknown,
 }
 
@@ -89,7 +83,7 @@ impl Telemetry {
     fn current_os(&self) -> Os {
         match std::env::consts::OS {
             "windows" => Os::Windows,
-            "macos" => Os::MacOs,
+            "macos" => Os::MacOS,
             "linux" => Os::Linux,
             _ => Os::Unknown,
         }
@@ -97,10 +91,10 @@ impl Telemetry {
 
     fn get_or_create_user_id(&self) -> Result<Uuid> {
         let path = self.data_dir.join("user_id.txt");
-        if let Ok(s) = fs::read_to_string(&path) {
-            if let Ok(id) = Uuid::parse_str(s.trim()) {
-                return Ok(id);
-            }
+        if let Ok(s) = fs::read_to_string(&path)
+            && let Ok(id) = Uuid::parse_str(s.trim())
+        {
+            return Ok(id);
         }
 
         let id = Uuid::new_v4();

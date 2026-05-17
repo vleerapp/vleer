@@ -5,6 +5,7 @@ use gpui::*;
 use crate::ui::variables::Variables;
 
 type ChangeHandler = dyn FnMut(f32, &mut Window, &mut App);
+type SliderState = (Rc<RefCell<bool>>, Rc<RefCell<bool>>, Rc<RefCell<f32>>);
 
 pub struct ProgressSlider {
     pub(self) id: Option<ElementId>,
@@ -60,7 +61,7 @@ impl IntoElement for ProgressSlider {
 impl Element for ProgressSlider {
     type RequestLayoutState = ();
 
-    type PrepaintState = (Rc<RefCell<bool>>, Rc<RefCell<bool>>, Rc<RefCell<f32>>);
+    type PrepaintState = SliderState;
 
     fn id(&self) -> Option<ElementId> {
         self.id.clone()
@@ -95,7 +96,7 @@ impl Element for ProgressSlider {
 
         window.with_optional_element_state(
             id,
-            |v: Option<Option<(Rc<RefCell<bool>>, Rc<RefCell<bool>>, Rc<RefCell<f32>>)>>, _| {
+            |v: Option<Option<SliderState>>, _| {
                 let (hovered, dragging, drag_value) = v.flatten().unwrap_or_else(|| {
                     (
                         Rc::new(RefCell::new(false)),
@@ -170,11 +171,7 @@ impl Element for ProgressSlider {
 
         let is_dragging = *dragging.borrow();
         if is_hovered || is_dragging {
-            if is_dragging {
-                window.set_cursor_style(CursorStyle::PointingHand, self.hitbox.as_ref().unwrap());
-            } else if is_hovered {
-                window.set_cursor_style(CursorStyle::PointingHand, self.hitbox.as_ref().unwrap());
-            }
+            window.set_cursor_style(CursorStyle::PointingHand, self.hitbox.as_ref().unwrap());
 
             let thumb_width = px(10.0);
             let thumb_height = px(16.0);

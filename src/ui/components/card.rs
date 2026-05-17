@@ -4,10 +4,12 @@ use std::rc::Rc;
 use crate::ui::{
     components::{
         div::flex_col,
-        icons::{icon::icon, icons::PLAY},
+        icons::{self, icon},
     },
     variables::Variables,
 };
+
+pub type PlayHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 
 pub const CARD_MIN_IMAGE_SIZE: f32 = 180.0;
 pub const CARD_MAX_IMAGE_SIZE: f32 = 400.0;
@@ -42,7 +44,7 @@ pub struct Card {
     image_uri: Option<String>,
     image_size: f32,
     image_shape: CardImageShape,
-    on_play: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
+    on_play: Option<PlayHandler>,
 }
 
 impl Card {
@@ -182,7 +184,7 @@ impl RenderOnce for Card {
                                 (on_play)(window, cx);
                             })
                             .child(
-                                icon(PLAY)
+                                icon(icons::PLAY)
                                     .size(px(variables.padding_16))
                                     .text_color(variables.background),
                             ),

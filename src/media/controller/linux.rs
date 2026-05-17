@@ -237,10 +237,10 @@ impl ArtworkCache {
     fn resolve(&mut self, id: Option<&str>, data: Option<&[u8]>) -> Result<Option<String>> {
         match (id, data) {
             (Some(id), Some(data)) => {
-                if self.id.as_deref() == Some(id) {
-                    if let Some(uri) = self.uri.clone() {
-                        return Ok(Some(uri));
-                    }
+                if self.id.as_deref() == Some(id)
+                    && let Some(uri) = self.uri.clone()
+                {
+                    return Ok(Some(uri));
                 }
 
                 let uri = write_artwork_to_cache(id, data)?;

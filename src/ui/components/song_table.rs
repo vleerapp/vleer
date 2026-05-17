@@ -3,8 +3,7 @@ use crate::media::playback::Playback;
 use crate::media::queue::Queue;
 use crate::ui::components::context_menu::{ContextMenu, QueueChanged, song_context_menu_items};
 use crate::ui::components::div::{flex_col, flex_row};
-use crate::ui::components::icons::icon::icon;
-use crate::ui::components::icons::icons::{ARROW_DOWN, ARROW_UP, DURATION, PLAY};
+use crate::ui::components::icons::{self, icon};
 use crate::ui::components::scrollbar::{Scrollbar, ScrollbarAxis, ScrollbarHandle};
 use crate::ui::variables::Variables;
 use gpui::{prelude::*, *};
@@ -91,6 +90,21 @@ pub type QueueHandler = Rc<dyn Fn(&mut App, Cuid, usize, Option<TableSort>) + 's
 
 type RowMap = FxHashMap<usize, Entity<SongTableItem>>;
 
+#[derive(Clone, Copy)]
+pub struct SongTableLayout {
+    pub number_width: f32,
+    pub duration_width: f32,
+    pub show_numbers: bool,
+    pub sort_method: Option<TableSort>,
+}
+
+#[derive(Clone)]
+pub struct SongTableHandlers {
+    pub get_row: GetRowHandler,
+    pub on_select: Option<OnSelectHandler>,
+    pub get_queue: Option<QueueHandler>,
+}
+
 const MAX_CACHED_ROWS: usize = 500;
 const KEEP_WINDOW: usize = 200;
 
@@ -142,22 +156,17 @@ impl SongTableItem {
     pub fn new(
         cx: &mut App,
         row_index: usize,
-        get_row: GetRowHandler,
-        on_select: Option<OnSelectHandler>,
-        get_queue: Option<QueueHandler>,
-        sort_method: Option<TableSort>,
-        number_width: f32,
-        duration_width: f32,
-        show_numbers: bool,
+        layout: SongTableLayout,
+        handlers: SongTableHandlers,
     ) -> Entity<Self> {
         cx.new(|cx| Self {
-            on_select,
-            get_row,
-            get_queue,
-            sort_method,
-            number_width,
-            duration_width,
-            show_numbers,
+            on_select: handlers.on_select,
+            get_row: handlers.get_row,
+            get_queue: handlers.get_queue,
+            sort_method: layout.sort_method,
+            number_width: layout.number_width,
+            duration_width: layout.duration_width,
+            show_numbers: layout.show_numbers,
             row_index,
             is_animating: false,
             context_menu: cx.new(|_| ContextMenu::new()),
@@ -172,7 +181,7 @@ impl Render for SongTableItem {
         let row_data_for_select = row_data.clone();
         let on_select = self.on_select.clone();
         let get_queue = self.get_queue.clone();
-        let sort_method = self.sort_method.clone();
+        let sort_method = self.sort_method;
         let row_index = self.row_index;
 
         let element_id = ElementId::Name(format!("song-{}", self.row_index).into());
@@ -235,7 +244,7 @@ impl Render for SongTableItem {
                                         {
                                             cx.global::<Queue>()
                                                 .get_current_song(cx)
-                                                .map_or(false, |s| s.id == data.id)
+                                                .is_some_and(|s| s.id == data.id)
                                                 && cx.global::<Playback>().get_playing()
                                         } else {
                                             false
@@ -336,7 +345,7 @@ impl Render for SongTableItem {
                                         .invisible()
                                         .group_hover("cover-container", |s| s.visible())
                                         .child(
-                                            icon(PLAY).size(px(16.0)).text_color(variables.text),
+                                            icon(icons::PLAY).size(px(16.0)).text_color(variables.text),
                                         ),
                                 )
                                 .cursor_pointer()
@@ -356,7 +365,7 @@ impl Render for SongTableItem {
                                             playback.play_queue(cx);
                                         });
 
-                                        cx.set_global(QueueChanged::default());
+                                        cx.set_global(QueueChanged);
 
                                         if let Some(get_queue) = &get_queue {
                                             (get_queue)(
@@ -554,7 +563,7 @@ impl SongTable {
 impl Render for SongTable {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
-        let sort_method = self.sort_method.read(cx).clone();
+        let sort_method = *self.sort_method.read(cx);
         let views_model = self.views.clone();
         let render_counter = self.render_counter.clone();
         let handler = self.on_select.clone();
@@ -596,16 +605,14 @@ impl Render for SongTable {
                 }
             }
 
-            let is_sorted = is_sortable
-                && sort_method
-                    .as_ref()
-                    .map_or(false, |m| m.column == column_id);
+            let is_sorted =
+                is_sortable && sort_method.as_ref().is_some_and(|m| m.column == column_id);
 
             header_col = header_col.when(is_sorted, |div| div.text_color(variables.text));
 
             if matches!(column_id, SongColumn::Duration) {
                 header_col = header_col
-                    .child(icon(DURATION).when(is_sorted, |i| i.text_color(variables.text)));
+                    .child(icon(icons::DURATION).when(is_sorted, |i| i.text_color(variables.text)));
             } else {
                 header_col = header_col.child(SharedString::new_static(column_id.name()));
             }
@@ -614,9 +621,9 @@ impl Render for SongTable {
                 this.when_some(sort_method.as_ref(), |this, method| {
                     this.when(method.column == column_id, |this| {
                         let arrow_icon = if method.ascending {
-                            icon(ARROW_UP)
+                            icon(icons::ARROW_UP)
                         } else {
-                            icon(ARROW_DOWN)
+                            icon(icons::ARROW_DOWN)
                         };
                         this.child(arrow_icon.text_color(variables.text))
                     })
@@ -676,13 +683,17 @@ impl Render for SongTable {
                                                 SongTableItem::new(
                                                     cx,
                                                     idx,
-                                                    get_row.clone(),
-                                                    handler.clone(),
-                                                    get_queue_clone,
-                                                    sort_method,
-                                                    number_width,
-                                                    duration_width,
-                                                    show_numbers,
+                                                    SongTableLayout {
+                                                        number_width,
+                                                        duration_width,
+                                                        show_numbers,
+                                                        sort_method,
+                                                    },
+                                                    SongTableHandlers {
+                                                        get_row: get_row.clone(),
+                                                        on_select: handler.clone(),
+                                                        get_queue: get_queue_clone,
+                                                    },
                                                 )
                                             },
                                             cx,

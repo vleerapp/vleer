@@ -9,11 +9,13 @@ const THUMB_WIDTH: f32 = 22.0;
 const THUMB_HEIGHT: f32 = 14.0;
 const THUMB_PADDING: f32 = 2.0;
 
+type OnChangeHandler = Rc<dyn Fn(bool, &mut Window, &mut App)>;
+
 #[derive(IntoElement)]
 pub struct Switch {
     id: ElementId,
     checked: bool,
-    on_change: Option<Rc<dyn Fn(bool, &mut Window, &mut App)>>,
+    on_change: Option<OnChangeHandler>,
 }
 
 impl Switch {

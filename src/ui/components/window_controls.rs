@@ -10,10 +10,7 @@ use windows::Win32::UI::WindowsAndMessaging::{SW_RESTORE, ShowWindowAsync};
 use crate::ui::{
     components::{
         div::flex_row,
-        icons::{
-            icon::icon,
-            icons::{MAXIMIZE, MINIMIZE, UNMAXIMIZE, X},
-        },
+        icons::{self, icon},
     },
     variables::Variables,
 };
@@ -53,7 +50,7 @@ impl RenderOnce for WindowControls {
         if supported.minimize {
             controls = controls.child(window_control_button(
                 "window-minimize",
-                MINIMIZE,
+                icons::MINIMIZE,
                 variables,
                 hover_bg,
                 hover_bg,
@@ -65,9 +62,9 @@ impl RenderOnce for WindowControls {
 
         if supported.maximize {
             let icon_path = if window.is_maximized() {
-                UNMAXIMIZE
+                icons::UNMAXIMIZE
             } else {
-                MAXIMIZE
+                icons::MAXIMIZE
             };
             controls = controls.child(window_control_button(
                 "window-maximize",
@@ -83,7 +80,7 @@ impl RenderOnce for WindowControls {
 
         controls.child(window_control_button(
             "window-close",
-            X,
+            icons::X,
             variables,
             close_hover,
             close_active,

@@ -3,8 +3,7 @@ use gpui::{Context, Entity, IntoElement, Render, *};
 use crate::data::config::Config;
 use crate::media::playback::Playback;
 use crate::ui::components::div::{flex_col, flex_row};
-use crate::ui::components::icons::icon::icon;
-use crate::ui::components::icons::icons::{PLUS, X};
+use crate::ui::components::icons::{self, icon};
 use crate::ui::components::input::{InputEvent, TextInput};
 use crate::ui::components::scrollbar::ScrollableElement;
 use crate::ui::components::slider::slider;
@@ -46,7 +45,7 @@ impl RenderOnce for ScanPathsSection {
                                     .id(SharedString::from(format!("remove-path-{i}")))
                                     .cursor_pointer()
                                     .child(
-                                        icon(X)
+                                        icon(icons::X)
                                             .text_color(variables.text_secondary)
                                             .hover(|s| s.text_color(variables.text)),
                                     )
@@ -78,7 +77,7 @@ impl RenderOnce for ScanPathsSection {
                                     })
                                     .child("Add new path"),
                             )
-                            .child(icon(PLUS).group_hover("add-scan-path-btn", |s| {
+                            .child(icon(icons::PLUS).group_hover("add-scan-path-btn", |s| {
                                 s.text_color(variables.text)
                             })),
                     )
@@ -91,21 +90,18 @@ impl RenderOnce for ScanPathsSection {
                         };
                         let receiver = cx.prompt_for_paths(options);
                         cx.spawn(async move |cx| {
-                            if let Ok(Ok(Some(paths))) = receiver.await {
-                                if let Some(path) = paths.into_iter().next() {
-                                    if let Some(path_str) = path.to_str() {
-                                        let path_str = path_str.to_string();
-                                        let _ = cx.update_global::<Config, _>(
-                                            |config: &mut Config, _cx| {
-                                                config.set(|s| {
-                                                    if !s.scan.paths.contains(&path_str) {
-                                                        s.scan.paths.push(path_str);
-                                                    }
-                                                });
-                                            },
-                                        );
-                                    }
-                                }
+                            if let Ok(Ok(Some(paths))) = receiver.await
+                                && let Some(path) = paths.into_iter().next()
+                                && let Some(path_str) = path.to_str()
+                            {
+                                let path_str = path_str.to_string();
+                                cx.update_global::<Config, _>(|config: &mut Config, _cx| {
+                                    config.set(|s| {
+                                        if !s.scan.paths.contains(&path_str) {
+                                            s.scan.paths.push(path_str);
+                                        }
+                                    });
+                                });
                             }
                         })
                         .detach();
@@ -289,7 +285,7 @@ impl SettingsView {
                                 return true;
                             }
                             s.parse::<f32>()
-                                .map(|v| v >= -12.0 && v <= 12.0)
+                                .map(|v| (-12.0..=12.0).contains(&v))
                                 .unwrap_or(false)
                         })
                 })
@@ -311,7 +307,7 @@ impl SettingsView {
                                 return true;
                             }
                             s.parse::<u32>()
-                                .map(|v| v >= 20 && v <= 20000)
+                                .map(|v| (20..=20000).contains(&v))
                                 .unwrap_or(false)
                         })
                 })
@@ -333,7 +329,7 @@ impl SettingsView {
                                 return true;
                             }
                             s.parse::<f32>()
-                                .map(|v| v >= 0.1 && v <= 10.0)
+                                .map(|v| (0.1..=10.0).contains(&v))
                                 .unwrap_or(false)
                         })
                 })
@@ -342,24 +338,24 @@ impl SettingsView {
 
         for (i, input) in gain_inputs.iter().enumerate() {
             cx.subscribe(input, move |_this, _entity, event, cx| {
-                if let InputEvent::Submit(text) = event {
-                    if let Ok(new_gain) = text.parse::<f32>() {
-                        let new_gain = new_gain.clamp(-12.0, 12.0);
-                        let (enabled, gains, q_values) =
-                            cx.update_global::<Config, _>(|config, _cx| {
-                                config.set(|s| {
-                                    if let Some(g) = s.equalizer.gains.get_mut(i) {
-                                        *g = new_gain;
-                                    }
-                                });
-                                let eq = &config.get().equalizer;
-                                (eq.enabled, eq.gains.clone(), eq.q_values.clone())
+                if let InputEvent::Submit(text) = event
+                    && let Ok(new_gain) = text.parse::<f32>()
+                {
+                    let new_gain = new_gain.clamp(-12.0, 12.0);
+                    let (enabled, gains, q_values) =
+                        cx.update_global::<Config, _>(|config, _cx| {
+                            config.set(|s| {
+                                if let Some(g) = s.equalizer.gains.get_mut(i) {
+                                    *g = new_gain;
+                                }
                             });
-                        if enabled {
-                            cx.update_global::<Playback, _>(|playback, _cx| {
-                                playback.apply_eq_settings(&gains, &q_values);
-                            });
-                        }
+                            let eq = &config.get().equalizer;
+                            (eq.enabled, eq.gains.clone(), eq.q_values.clone())
+                        });
+                    if enabled {
+                        cx.update_global::<Playback, _>(|playback, _cx| {
+                            playback.apply_eq_settings(&gains, &q_values);
+                        });
                     }
                 }
             })
@@ -368,24 +364,24 @@ impl SettingsView {
 
         for (i, input) in q_inputs.iter().enumerate() {
             cx.subscribe(input, move |_this, _entity, event, cx| {
-                if let InputEvent::Submit(text) = event {
-                    if let Ok(new_q) = text.parse::<f32>() {
-                        let new_q = new_q.max(0.1);
-                        let (enabled, gains, q_values) =
-                            cx.update_global::<Config, _>(|config, _cx| {
-                                config.set(|s| {
-                                    if let Some(q) = s.equalizer.q_values.get_mut(i) {
-                                        *q = new_q;
-                                    }
-                                });
-                                let eq = &config.get().equalizer;
-                                (eq.enabled, eq.gains.clone(), eq.q_values.clone())
+                if let InputEvent::Submit(text) = event
+                    && let Ok(new_q) = text.parse::<f32>()
+                {
+                    let new_q = new_q.max(0.1);
+                    let (enabled, gains, q_values) =
+                        cx.update_global::<Config, _>(|config, _cx| {
+                            config.set(|s| {
+                                if let Some(q) = s.equalizer.q_values.get_mut(i) {
+                                    *q = new_q;
+                                }
                             });
-                        if enabled {
-                            cx.update_global::<Playback, _>(|playback, _cx| {
-                                playback.apply_eq_settings(&gains, &q_values);
-                            });
-                        }
+                            let eq = &config.get().equalizer;
+                            (eq.enabled, eq.gains.clone(), eq.q_values.clone())
+                        });
+                    if enabled {
+                        cx.update_global::<Playback, _>(|playback, _cx| {
+                            playback.apply_eq_settings(&gains, &q_values);
+                        });
                     }
                 }
             })

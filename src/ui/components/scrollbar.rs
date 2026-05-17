@@ -274,12 +274,16 @@ impl Element for Scrollbar {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let mut style = Style::default();
-        style.position = Position::Absolute;
-        style.flex_grow = 1.0;
-        style.flex_shrink = 1.0;
-        style.size.width = relative(1.).into();
-        style.size.height = relative(1.).into();
+        let style = Style {
+            position: Position::Absolute,
+            flex_grow: 1.0,
+            flex_shrink: 1.0,
+            size: Size {
+                width: relative(1.).into(),
+                height: relative(1.).into(),
+            },
+            ..Default::default()
+        };
         (window.request_layout(style, None, cx), ())
     }
     fn prepaint(
@@ -350,7 +354,7 @@ impl Element for Scrollbar {
                     size(hitbox.size.width, self.width)
                 },
             };
-            let (thumb_color, track_color, thumb_width) = self.get_colors(&cx, &state.get(), axis);
+            let (thumb_color, track_color, thumb_width) = self.get_colors(cx, &state.get(), axis);
             let thumb_length = thumb_end - thumb_start;
             let thumb_bounds = if is_vertical {
                 Bounds {
@@ -449,14 +453,15 @@ impl Element for Scrollbar {
                         let state = state.clone();
                         let scroll_handle = self.scroll_handle.clone();
                         move |event: &ScrollWheelEvent, phase, _, cx| {
-                            if phase.bubble() && hitbox_bounds.contains(&event.position) {
-                                if scroll_handle.offset() != state.get().last_scroll_offset {
-                                    state.set(state.get().with_last_scroll(
-                                        scroll_handle.offset(),
-                                        Some(Instant::now()),
-                                    ));
-                                    cx.notify(view_id);
-                                }
+                            if phase.bubble()
+                                && hitbox_bounds.contains(&event.position)
+                                && scroll_handle.offset() != state.get().last_scroll_offset
+                            {
+                                state.set(state.get().with_last_scroll(
+                                    scroll_handle.offset(),
+                                    Some(Instant::now()),
+                                ));
+                                cx.notify(view_id);
                             }
                         }
                     });

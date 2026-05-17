@@ -147,10 +147,10 @@ impl SongPageCache {
         if self.in_flight_page == Some(page) {
             self.in_flight_page = None;
         }
-        if let Some(p) = self.next_wanted_page {
-            if self.pages.contains_key(&p) {
-                self.next_wanted_page = None;
-            }
+        if let Some(p) = self.next_wanted_page
+            && self.pages.contains_key(&p)
+        {
+            self.next_wanted_page = None;
         }
         let next = if self.in_flight_page.is_none() {
             self.next_wanted_page.take().inspect(|&p| {
@@ -179,18 +179,21 @@ fn spawn_count_fetch(
     let bg = cx.background_executor().clone();
     cx.spawn(async move |cx: &mut AsyncApp| {
         let q = query.clone();
-        let count = match bg
-            .spawn(async move { crate::RUNTIME.block_on(async { db.get_songs_count(Some(&q)).await }) })
-            .await
-        {
-            Ok(c) => c as usize,
-            Err(e) => {
-                error!("songs count query failed: {}", e);
-                0
-            }
-        };
+        let count =
+            match bg
+                .spawn(async move {
+                    crate::RUNTIME.block_on(async { db.get_songs_count(Some(&q)).await })
+                })
+                .await
+            {
+                Ok(c) => c as usize,
+                Err(e) => {
+                    error!("songs count query failed: {}", e);
+                    0
+                }
+            };
 
-        let _ = cx.update(|cx| {
+        cx.update(|cx| {
             let table_entity = {
                 let mut c = cache.borrow_mut();
                 c.count_pending = false;
@@ -247,17 +250,15 @@ fn spawn_page_fetch(
         let entries: Vec<Arc<SongEntry>> =
             items.into_iter().map(song_entry_from_list_item).collect();
 
-        let _ = cx.update(|cx| {
+        cx.update(|cx| {
             let (applied, next_page) = cache.borrow_mut().complete_page(page, entries, version);
 
-            if applied {
-                if let Some(table) = table_weak.borrow().as_ref().and_then(|w| w.upgrade()) {
-                    let start = page * SONG_PAGE_SIZE;
-                    let end = start + SONG_PAGE_SIZE;
-                    table.update(cx, |_, cx| {
-                        cx.emit(SongTableEvent::InvalidateRange(start..end))
-                    });
-                }
+            if applied && let Some(table) = table_weak.borrow().as_ref().and_then(|w| w.upgrade()) {
+                let start = page * SONG_PAGE_SIZE;
+                let end = start + SONG_PAGE_SIZE;
+                table.update(cx, |_, cx| {
+                    cx.emit(SongTableEvent::InvalidateRange(start..end))
+                });
             }
 
             if let Some(next_page) = next_page {
@@ -382,7 +383,7 @@ impl SongsView {
                     return;
                 }
 
-                let _ = cx.update(|cx| {
+                cx.update(|cx| {
                     let matches = cx
                         .global::<Queue>()
                         .get_current_song_id()
@@ -395,7 +396,7 @@ impl SongsView {
                     cx.update_global::<Queue, _>(|queue, _cx| {
                         queue.add_songs(song_ids);
                     });
-                    cx.set_global(QueueChanged::default());
+                    cx.set_global(QueueChanged);
                 });
             })
             .detach();

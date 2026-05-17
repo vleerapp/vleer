@@ -57,10 +57,10 @@ impl Queue {
         let position = position.min(self.items.len());
         self.items.insert(position, song_id);
 
-        if let Some(current) = self.current_index {
-            if position <= current {
-                self.current_index = Some(current + 1);
-            }
+        if let Some(current) = self.current_index
+            && position <= current
+        {
+            self.current_index = Some(current + 1);
         }
 
         debug!(
@@ -117,10 +117,10 @@ impl Queue {
 
         {
             let cache: std::cell::Ref<'_, Option<(Cuid, Song)>> = self.current_song.borrow();
-            if let Some((cached_id, cached_song)) = cache.as_ref() {
-                if cached_id == &song_id {
-                    return Some(cached_song.clone());
-                }
+            if let Some((cached_id, cached_song)) = cache.as_ref()
+                && cached_id == &song_id
+            {
+                return Some(cached_song.clone());
             }
         }
 
@@ -286,10 +286,10 @@ impl Queue {
     pub fn set_current_index(&mut self, index: usize, cx: &App) -> Option<Song> {
         if index < self.items.len() {
             self.current_index = Some(index);
-            if self.shuffle {
-                if let Some(pos) = self.shuffle_order.iter().position(|&x| x == index) {
-                    self.shuffle_position = Some(pos);
-                }
+            if self.shuffle
+                && let Some(pos) = self.shuffle_order.iter().position(|&x| x == index)
+            {
+                self.shuffle_position = Some(pos);
             }
             debug!("Set current index to {}", index);
             *self.current_song.borrow_mut() = None;
@@ -448,10 +448,10 @@ impl Queue {
         let mut order: Vec<usize> = (0..self.items.len()).collect();
         order.shuffle(&mut rand::rng());
 
-        if let Some(current) = self.current_index {
-            if let Some(pos) = order.iter().position(|&x| x == current) {
-                order.swap(0, pos);
-            }
+        if let Some(current) = self.current_index
+            && let Some(pos) = order.iter().position(|&x| x == current)
+        {
+            order.swap(0, pos);
         }
 
         self.shuffle_order = order;

@@ -8,10 +8,7 @@ use crate::{
                 play_album_now, play_song_now, song_context_menu_items,
             },
             div::{flex_col, flex_row},
-            icons::{
-                icon::icon,
-                icons::{ARROW_LEFT, ARROW_RIGHT},
-            },
+            icons::{self, icon},
             scrollbar::ScrollableElement,
         },
         layout::queue::QueueVisible,
@@ -317,7 +314,7 @@ impl Render for HomeView {
                             .id("recently-played-arrows")
                             .gap(px(variables.padding_8))
                             .child(
-                                icon(ARROW_LEFT)
+                                icon(icons::ARROW_LEFT)
                                     .when(can_scroll_recently_played_left, |this| {
                                         this.cursor_pointer()
                                     })
@@ -341,7 +338,7 @@ impl Render for HomeView {
                                     }),
                             )
                             .child(
-                                icon(ARROW_RIGHT)
+                                icon(icons::ARROW_RIGHT)
                                     .when(can_scroll_recently_played_right, |this| {
                                         this.cursor_pointer()
                                     })
@@ -402,7 +399,7 @@ impl Render for HomeView {
                             .id("recently-added-arrows")
                             .gap(px(variables.padding_8))
                             .child(
-                                icon(ARROW_LEFT)
+                                icon(icons::ARROW_LEFT)
                                     .when(can_scroll_recently_added_left, |this| {
                                         this.cursor_pointer()
                                     })
@@ -422,7 +419,7 @@ impl Render for HomeView {
                                     }),
                             )
                             .child(
-                                icon(ARROW_RIGHT)
+                                icon(icons::ARROW_RIGHT)
                                     .when(can_scroll_recently_added_right, |this| {
                                         this.cursor_pointer()
                                     })

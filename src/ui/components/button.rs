@@ -3,12 +3,14 @@ use std::rc::Rc;
 
 use crate::ui::components::div::flex_row;
 
+pub type ClickHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+
 #[derive(IntoElement)]
 pub struct Button {
     id: ElementId,
     base: Stateful<Div>,
     children: Vec<AnyElement>,
-    on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
+    on_click: Option<ClickHandler>,
 }
 
 impl Button {
