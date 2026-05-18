@@ -350,8 +350,13 @@ impl From<PinnedItemRow> for PinnedItem {
     }
 }
 
-impl From<SearchResultRow> for (Cuid, String, Option<String>, String) {
+impl From<SearchResultRow> for PinnedItem {
     fn from(r: SearchResultRow) -> Self {
-        (r.id, r.name, r.image, r.item_type)
+        Self {
+            id: r.id,
+            name: r.name,
+            image_id: r.image,
+            item_type: r.item_type,
+        }
     }
 }

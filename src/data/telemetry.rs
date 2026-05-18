@@ -1,9 +1,9 @@
 use anyhow::Result;
 use gpui::{App, Global};
 use serde::{Deserialize, Serialize};
-use ureq::Agent;
 use std::{fs, path::PathBuf, time::Duration};
 use tracing::{debug, error, info};
+use ureq::Agent;
 use uuid::Uuid;
 
 use crate::data::{config::Config, db::repo::Database};

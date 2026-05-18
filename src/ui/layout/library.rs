@@ -101,15 +101,7 @@ impl Library {
                     .await;
 
                 let mapped_results = match results {
-                    Ok(r) => r
-                        .into_iter()
-                        .map(|(id, name, image_id, item_type)| PinnedItem {
-                            id,
-                            name,
-                            image_id,
-                            item_type,
-                        })
-                        .collect::<Vec<_>>(),
+                    Ok(r) => r.into_iter().map(PinnedItem::from).collect::<Vec<_>>(),
                     Err(e) => {
                         error!("library search failed: {}", e);
                         return;

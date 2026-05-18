@@ -757,11 +757,7 @@ impl Database {
         Ok(())
     }
 
-    pub fn search_library(
-        &self,
-        query: &str,
-        limit: i64,
-    ) -> Result<Vec<(Cuid, String, Option<String>, String)>> {
+    pub fn search_library(&self, query: &str, limit: i64) -> Result<Vec<SearchResultRow>> {
         let query = query.trim();
         if query.is_empty() {
             return Ok(Vec::new());
@@ -774,7 +770,7 @@ impl Database {
         let per_type_limit = (limit.saturating_mul(2)).max(20);
         let conn = self.pool.get()?;
 
-        collect_mapped::<SearchResultRow, (Cuid, String, Option<String>, String), _>(
+        collect_mapped::<SearchResultRow, SearchResultRow, _>(
             &conn,
             r#"
             WITH

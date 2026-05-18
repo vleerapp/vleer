@@ -387,9 +387,9 @@ impl Scanner {
                     let executor = executor.clone();
                     async move {
                         executor
-                            .spawn(async move {
-                                process_one_file(path, &existing_track_state, force)
-                            })
+                            .spawn(
+                                async move { process_one_file(path, &existing_track_state, force) },
+                            )
                             .await
                     }
                 }
@@ -900,7 +900,9 @@ impl MusicWatcher {
                         let tx = tx.clone();
                         exec_clone
                             .spawn(async move {
-                                scanner.queue_changed_files(db, tx, changed_audio_files).await;
+                                scanner
+                                    .queue_changed_files(db, tx, changed_audio_files)
+                                    .await;
                             })
                             .detach();
                     }
