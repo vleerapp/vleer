@@ -95,7 +95,7 @@ impl WindowsController {
         Ok(())
     }
 
-    pub async fn update_metadata(&self, metadata: ResolvedMetadata) -> Result<()> {
+    pub fn update_metadata(&self, metadata: ResolvedMetadata) -> Result<()> {
         let mut state = self
             .state
             .lock()
@@ -108,7 +108,7 @@ impl WindowsController {
         }
     }
 
-    pub async fn set_state(&self, state_value: PlaybackState) -> Result<()> {
+    pub fn set_state(&self, state_value: PlaybackState) -> Result<()> {
         let mut state = self
             .state
             .lock()
@@ -121,7 +121,7 @@ impl WindowsController {
         }
     }
 
-    pub async fn set_position(&self, position_ms: u64) -> Result<()> {
+    pub fn set_position(&self, position_ms: u64) -> Result<()> {
         let mut state = self
             .state
             .lock()
@@ -134,7 +134,7 @@ impl WindowsController {
         }
     }
 
-    pub async fn set_can_go_next(&self, can_go_next: bool) -> Result<()> {
+    pub fn set_can_go_next(&self, can_go_next: bool) -> Result<()> {
         let mut state = self
             .state
             .lock()
@@ -148,7 +148,7 @@ impl WindowsController {
         }
     }
 
-    pub async fn set_can_go_previous(&self, can_go_previous: bool) -> Result<()> {
+    pub fn set_can_go_previous(&self, can_go_previous: bool) -> Result<()> {
         let mut state = self
             .state
             .lock()

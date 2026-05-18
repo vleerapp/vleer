@@ -125,12 +125,7 @@ impl Queue {
         }
 
         let db = cx.global::<Database>();
-        let song = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current()
-                .block_on(db.get_song(song_id.clone()))
-                .ok()
-                .flatten()
-        })?;
+        let song = db.get_song(&song_id).ok().flatten()?;
 
         *self.current_song.borrow_mut() = Some((song_id, song.clone()));
 

@@ -24,7 +24,9 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tokio = { version = "1.52.3", features = ["full"] }
 futures = "0.3.32"
-sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "chrono"] }
+rusqlite = { version = "0.39.0", features = ["bundled", "chrono"] }
+r2d2 = "0.8.10"
+r2d2_sqlite = "0.34.0"
 serde = { version = "1.0.228", features = ["derive"] }
 toml = "1.1.2"
 rodio = { git = "https://github.com/vleerapp/rodio", rev = "322c301fca2c84b0a0899bc9f7e1656691252b23", features = [
@@ -48,8 +50,8 @@ rustc-hash = "2.1.2"
 unicode-segmentation = "1.13.2"
 lru = "0.18.0"
 lazy_static = "1.5.0"
-dashmap = "6.1.0"
-reqwest = { version = "0.13.3", features = ["json"] }
+dashmap = "6.2.1"
+ureq = { version = "3.3.0", features = ["json"] }
 uuid = { version = "1.23.1", features = ["serde", "v4"] }
 souvlaki = "0.8.3"
 spectrum-analyzer = "1.7.0"
@@ -60,6 +62,7 @@ itertools = "0.14.0"
 rand = "0.10.1"
 async-trait = "0.1.89"
 raw-window-handle = "0.6.2"
+interprocess = "2.4.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 mpris-server = "0.10.0"

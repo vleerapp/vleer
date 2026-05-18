@@ -1,15 +1,15 @@
 use anyhow::Ok;
+use futures::StreamExt;
 use gpui::*;
 use gpui_platform::application;
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 use tracing::{debug, error};
 
 use crate::{
     data::{config::Config, db::repo::Database, scanner::Scanner, telemetry::Telemetry},
     media::{controller::MediaController, playback::Playback, queue::Queue},
     ui::{
-        assets::{ImagePool, VleerAssetSource, image_cache::app_image_cache},
+        assets::{VleerAssetSource, image_cache::app_image_cache},
         components::{
             context_menu::{
                 BackgroundUiEvent, BackgroundUiNotifier, HomeDataChanged, LibraryDataChanged,
@@ -274,49 +274,14 @@ pub async fn run() -> anyhow::Result<()> {
         .join("vleer");
 
     let db_path = data_dir.join("library.db");
-
-    let pool = {
-        let connect_options = SqliteConnectOptions::new()
-            .filename(&db_path)
-            .optimize_on_close(true, None)
-            .synchronous(SqliteSynchronous::Normal)
-            .journal_mode(SqliteJournalMode::Wal)
-            .busy_timeout(std::time::Duration::from_secs(3))
-            .pragma("auto_vacuum", "FULL")
-            .create_if_missing(true);
-
-        let pool = SqlitePoolOptions::new()
-            .max_connections(8)
-            .min_connections(1)
-            .connect_with(connect_options)
-            .await?;
-        sqlx::migrate!("./migrations").run(&pool).await?;
-        Arc::new(pool)
-    };
-
-    let image_pool = {
-        let connect_options = SqliteConnectOptions::new()
-            .filename(&db_path)
-            .synchronous(SqliteSynchronous::Normal)
-            .journal_mode(SqliteJournalMode::Wal)
-            .busy_timeout(std::time::Duration::from_secs(5))
-            .create_if_missing(false);
-
-        let pool = SqlitePoolOptions::new()
-            .max_connections(4)
-            .min_connections(1)
-            .connect_with(connect_options)
-            .await?;
-        Arc::new(pool)
-    };
+    let database = Database::new(&db_path)?;
 
     application()
         .with_assets(VleerAssetSource::new())
         .run(move |cx| {
-            let (background_ui_tx, mut background_ui_rx) = tokio::sync::mpsc::unbounded_channel();
+            let (background_ui_tx, mut background_ui_rx) = futures::channel::mpsc::unbounded();
 
-            cx.set_global(ImagePool(image_pool.clone()));
-            cx.set_global(Database { pool: pool.clone() });
+            cx.set_global(database);
             cx.set_global(Search::default());
             cx.set_global(ActiveView::default());
             cx.set_global(BackgroundUiNotifier::new(background_ui_tx));
@@ -341,7 +306,7 @@ pub async fn run() -> anyhow::Result<()> {
             bind_input_keys(cx);
 
             cx.spawn(async move |cx: &mut AsyncApp| {
-                while let Some(event) = background_ui_rx.recv().await {
+                while let Some(event) = background_ui_rx.next().await {
                     cx.update(|cx| match event {
                         BackgroundUiEvent::HomeDataChanged => {
                             cx.set_global(HomeDataChanged);

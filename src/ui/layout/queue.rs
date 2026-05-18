@@ -173,7 +173,7 @@ impl QueuePane {
         let db = cx.global::<Database>().clone();
 
         cx.spawn(async move |this, cx: &mut AsyncApp| {
-            let fetched = db.get_songs_by_ids(&items).await.unwrap_or_default();
+            let fetched = db.get_songs_by_ids(&items).unwrap_or_default();
             let id_to_song: std::collections::HashMap<_, _> =
                 fetched.into_iter().map(|s| (s.id.clone(), s)).collect();
             let songs: Vec<Song> = items

@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
+use futures::channel::mpsc;
+use futures::lock::Mutex as AsyncMutex;
 use futures::stream::{self, StreamExt};
-use gpui::{App, Global};
+use gpui::{App, BackgroundExecutor, Global};
 use notify::{EventKind, RecursiveMode};
 use notify_debouncer_full::{DebounceEventResult, Debouncer, RecommendedCache, new_debouncer};
 use std::collections::{HashMap, HashSet};
@@ -9,7 +11,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use std::time::UNIX_EPOCH;
-use tokio::sync::{Mutex, mpsc, watch};
 use tracing::{debug, error, info, warn};
 use walkdir::WalkDir;
 
@@ -66,27 +67,24 @@ struct ScanOptions {
 #[derive(Clone)]
 pub struct Scanner {
     scan_paths: Vec<PathBuf>,
-    scan_lock: Arc<Mutex<()>>,
-    pending_changed_paths: Arc<Mutex<HashSet<PathBuf>>>,
+    scan_lock: Arc<AsyncMutex<()>>,
+    pending_changed_paths: Arc<AsyncMutex<HashSet<PathBuf>>>,
     incremental_worker_running: Arc<AtomicBool>,
     scan_progress: Arc<std::sync::Mutex<ScanProgress>>,
-    scan_progress_tx: watch::Sender<ScanProgress>,
+    executor: BackgroundExecutor,
 }
 
 impl Global for Scanner {}
 
 impl Scanner {
-    pub fn new(scan_paths: Vec<PathBuf>) -> Self {
-        let initial_progress = ScanProgress::default();
-        let (scan_progress_tx, _scan_progress_rx) = watch::channel(initial_progress);
-
+    pub fn new(scan_paths: Vec<PathBuf>, executor: BackgroundExecutor) -> Self {
         Self {
             scan_paths,
-            scan_lock: Arc::new(Mutex::new(())),
-            pending_changed_paths: Arc::new(Mutex::new(HashSet::new())),
+            scan_lock: Arc::new(AsyncMutex::new(())),
+            pending_changed_paths: Arc::new(AsyncMutex::new(HashSet::new())),
             incremental_worker_running: Arc::new(AtomicBool::new(false)),
-            scan_progress: Arc::new(std::sync::Mutex::new(initial_progress)),
-            scan_progress_tx,
+            scan_progress: Arc::new(std::sync::Mutex::new(ScanProgress::default())),
+            executor,
         }
     }
 
@@ -94,7 +92,6 @@ impl Scanner {
         if let Ok(mut state) = self.scan_progress.lock() {
             *state = progress;
         }
-        let _ = self.scan_progress_tx.send(progress);
     }
 
     fn clear_scan_progress(&self) {
@@ -113,81 +110,92 @@ impl Scanner {
         let db = cx.global::<Database>().clone();
         let telemetry = cx.global::<Telemetry>().clone();
         let background_ui = cx.try_global::<BackgroundUiNotifier>().cloned();
+        let executor = cx.background_executor().clone();
 
         let scan_paths = expand_scan_paths(&config.get().scan.paths);
-        let scanner = Scanner::new(scan_paths);
+        let scanner = Scanner::new(scan_paths, executor.clone());
 
         cx.set_global(scanner.clone());
 
         let scanner = Arc::new(scanner);
+        let db_arc = Arc::new(db.clone());
 
-        tokio::task::spawn_blocking(move || {
-            match MusicWatcher::new(scanner.clone(), Arc::new(db.clone())) {
-                Ok((watcher, mut rx)) => {
-                    let db_clone = db.clone();
-                    let telemetry_clone = telemetry.clone();
-                    let config_clone = config.clone();
-                    let background_ui_clone = background_ui.clone();
+        let exec = executor.clone();
+        executor
+            .spawn(async move {
+                match MusicWatcher::new(scanner.clone(), db_arc, exec.clone()) {
+                    Ok((watcher, mut rx)) => {
+                        let db_clone = db.clone();
+                        let telemetry_clone = telemetry.clone();
+                        let config_clone = config.clone();
+                        let background_ui_clone = background_ui.clone();
 
-                    tokio::spawn(async move {
-                        let _watcher = watcher;
-                        while let Some(stats) = rx.recv().await {
+                        exec.clone()
+                            .spawn(async move {
+                                let _watcher = watcher;
+                                while let Some(stats) = rx.next().await {
+                                    info!(
+                                        "Library scan completed - Scanned: {}, Added: {}, Updated: {}, Removed: {}",
+                                        stats.scanned, stats.added, stats.updated, stats.removed
+                                    );
+
+                                    if stats.scanned > 0 {
+                                        telemetry_clone.submit(&db_clone, &config_clone);
+                                    }
+
+                                    if (stats.added > 0 || stats.updated > 0 || stats.removed > 0)
+                                        && let Some(background_ui) = &background_ui_clone
+                                    {
+                                        background_ui
+                                            .notify(BackgroundUiEvent::LibraryDataChanged);
+                                    }
+                                }
+                            })
+                            .detach();
+
+                        let db_clone = db.clone();
+                        let telemetry_clone = telemetry.clone();
+                        let config_clone = config.clone();
+                        let background_ui_clone = background_ui.clone();
+
+                        exec.spawn(async move {
+                            let existing_song_count =
+                                db_clone.get_songs_count(None).unwrap_or(0);
                             info!(
-                                "Library scan completed - Scanned: {}, Added: {}, Updated: {}, Removed: {}",
-                                stats.scanned, stats.added, stats.updated, stats.removed
+                                "Starting initial library scan (existing songs: {})...",
+                                existing_song_count
                             );
+                            match scanner.scan(&db_clone).await {
+                                Ok(stats) => {
+                                    info!(
+                                        "Initial scan complete - Scanned: {}, Added: {}, Updated: {}, Removed: {}",
+                                        stats.scanned, stats.added, stats.updated, stats.removed
+                                    );
 
-                            if stats.scanned > 0 {
-                                telemetry_clone.submit(&db_clone, &config_clone).await;
-                            }
+                                    if stats.scanned > 0 {
+                                        telemetry_clone.submit(&db_clone, &config_clone);
+                                    }
 
-                            if (stats.added > 0 || stats.updated > 0 || stats.removed > 0)
-                                && let Some(background_ui) = &background_ui_clone
-                            {
-                                background_ui.notify(BackgroundUiEvent::LibraryDataChanged);
-                            }
-                        }
-                    });
-
-                    let db_clone = db.clone();
-                    let telemetry_clone = telemetry.clone();
-                    let config_clone = config.clone();
-                    let background_ui_clone = background_ui.clone();
-
-                    tokio::spawn(async move {
-                        let existing_song_count = db_clone.get_songs_count(None).await.unwrap_or(0);
-                        info!(
-                            "Starting initial library scan (existing songs: {})...",
-                            existing_song_count
-                        );
-                        match scanner.scan(&db_clone).await {
-                            Ok(stats) => {
-                                info!(
-                                    "Initial scan complete - Scanned: {}, Added: {}, Updated: {}, Removed: {}",
-                                    stats.scanned, stats.added, stats.updated, stats.removed
-                                );
-
-                                if stats.scanned > 0 {
-                                    telemetry_clone.submit(&db_clone, &config_clone).await;
+                                    if (stats.added > 0 || stats.updated > 0 || stats.removed > 0)
+                                        && let Some(background_ui) = &background_ui_clone
+                                    {
+                                        background_ui
+                                            .notify(BackgroundUiEvent::LibraryDataChanged);
+                                    }
                                 }
-
-                                if (stats.added > 0 || stats.updated > 0 || stats.removed > 0)
-                                    && let Some(background_ui) = &background_ui_clone
-                                {
-                                    background_ui.notify(BackgroundUiEvent::LibraryDataChanged);
+                                Err(e) => {
+                                    error!("Initial scan failed: {}", e);
                                 }
                             }
-                            Err(e) => {
-                                error!("Initial scan failed: {}", e);
-                            }
-                        }
-                    });
+                        })
+                        .detach();
+                    }
+                    Err(e) => {
+                        error!("Failed to initialize music watcher: {}", e);
+                    }
                 }
-                Err(e) => {
-                    error!("Failed to initialize music watcher: {}", e);
-                }
-            }
-        });
+            })
+            .detach();
     }
 
     fn is_audio_file(path: &Path) -> bool {
@@ -262,9 +270,10 @@ impl Scanner {
                 continue;
             }
 
-            let files = tokio::task::spawn_blocking({
-                let root = root.clone();
-                move || {
+            let root = root.clone();
+            let files = self
+                .executor
+                .spawn(async move {
                     WalkDir::new(&root)
                         .follow_links(true)
                         .into_iter()
@@ -272,10 +281,8 @@ impl Scanner {
                         .filter(|e| e.file_type().is_file() && Scanner::is_audio_file(e.path()))
                         .map(|e| e.path().to_path_buf())
                         .collect::<Vec<_>>()
-                }
-            })
-            .await
-            .context("walkdir failed")?;
+                })
+                .await;
 
             all_files.extend(files);
         }
@@ -283,23 +290,20 @@ impl Scanner {
         Ok(all_files)
     }
 
-    async fn collect_song_paths(&self, db: &Database) -> Result<Vec<String>> {
-        Ok(db.get_song_paths().await?)
+    fn collect_song_paths(&self, db: &Database) -> Result<Vec<String>> {
+        db.get_song_paths()
     }
 
-    async fn collect_existing_track_state(
-        &self,
-        db: &Database,
-    ) -> Result<HashMap<String, (i64, i64)>> {
-        let states = db.get_song_file_states().await?;
+    fn collect_existing_track_state(&self, db: &Database) -> Result<HashMap<String, (i64, i64)>> {
+        let states = db.get_song_file_states()?;
         Ok(states
             .into_iter()
             .map(|(path, size, modified)| (path, (size, modified)))
             .collect())
     }
 
-    async fn remove_missing_tracks(&self, db: &Database) -> Result<usize> {
-        let paths = self.collect_song_paths(db).await?;
+    fn remove_missing_tracks(&self, db: &Database) -> Result<usize> {
+        let paths = self.collect_song_paths(db)?;
         let scan_roots = self.scan_roots_for_matching();
         let mut stale_paths = Vec::new();
         let mut missing_candidates = 0usize;
@@ -326,7 +330,7 @@ impl Scanner {
 
         let mut removed = 0usize;
         for chunk in stale_paths.chunks(STALE_DELETE_BATCH_SIZE) {
-            match db.delete_songs_by_paths(chunk).await {
+            match db.delete_songs_by_paths(chunk) {
                 Ok(deleted) => {
                     removed += deleted;
                 }
@@ -356,7 +360,7 @@ impl Scanner {
         let mut failed = 0;
 
         let audio_files = self.collect_audio_files().await?;
-        let existing_track_state = Arc::new(self.collect_existing_track_state(db).await?);
+        let existing_track_state = Arc::new(self.collect_existing_track_state(db)?);
         let total_files = audio_files.len();
 
         self.update_scan_progress(ScanProgress {
@@ -371,91 +375,22 @@ impl Scanner {
             existing_track_state.len()
         );
 
+        let force = options.force;
+        let executor = self.executor.clone();
+
         let tracks_stream = stream::iter(audio_files)
             .map({
-                let force = options.force;
                 let existing_track_state = existing_track_state.clone();
+                let executor = executor.clone();
                 move |path: PathBuf| {
                     let existing_track_state = existing_track_state.clone();
+                    let executor = executor.clone();
                     async move {
-                        let file_path = path.to_string_lossy().to_string();
-
-                        let file_meta = match tokio::task::spawn_blocking({
-                            let path = path.clone();
-                            move || std::fs::metadata(&path)
-                        })
-                        .await
-                        {
-                            Ok(Ok(meta)) => meta,
-                            Ok(Err(e)) => {
-                                warn!("Failed to read metadata for {}: {}", file_path, e);
-                                return Some((None, false, true));
-                            }
-                            Err(e) => {
-                                warn!("Task failed for {}: {}", file_path, e);
-                                return Some((None, false, true));
-                            }
-                        };
-
-                        let file_size = file_meta.len() as i64;
-                        let file_modified = file_meta
-                            .modified()
-                            .ok()
-                            .and_then(|m| m.duration_since(UNIX_EPOCH).ok())
-                            .map(|d| d.as_secs() as i64)
-                            .unwrap_or(0);
-
-                        let existing = existing_track_state.get(&file_path).copied();
-                        let is_new = existing.is_none();
-
-                        if let Some((existing_size, existing_modified)) = existing
-                            && !Self::should_process_file(
-                                existing_size,
-                                existing_modified,
-                                file_size,
-                                file_modified,
-                                force,
+                        executor
+                            .spawn(
+                                async move { process_one_file(path, &existing_track_state, force) },
                             )
-                        {
-                            return Some((None, false, false));
-                        }
-
-                        let metadata = match tokio::task::spawn_blocking({
-                            let path = path.clone();
-                            move || Self::read_metadata(&path)
-                        })
-                        .await
-                        {
-                            Ok(Ok(meta)) => meta,
-                            Ok(Err(e)) => {
-                                warn!("Failed to read metadata for {}: {}", file_path, e);
-                                return Some((None, true, false));
-                            }
-                            Err(e) => {
-                                warn!("Metadata task failed for {}: {}", file_path, e);
-                                return Some((None, true, false));
-                            }
-                        };
-
-                        let image_data = tokio::task::spawn_blocking({
-                            let path = path.clone();
-                            move || Self::extract_image(&path)
-                        })
-                        .await
-                        .ok()
-                        .flatten();
-
-                        Some((
-                            Some(ScannedTrack {
-                                path,
-                                file_size,
-                                file_modified,
-                                metadata,
-                                image_data,
-                            }),
-                            is_new,
-                            false,
-                        ))
+                            .await
                     }
                 }
             })
@@ -479,7 +414,7 @@ impl Scanner {
             }
 
             let track = track_opt.unwrap();
-            if let Ok(()) = self
+            if self
                 .save_track(
                     db,
                     &track,
@@ -487,7 +422,7 @@ impl Scanner {
                     &mut artist_cache,
                     &mut album_cache,
                 )
-                .await
+                .is_ok()
             {
                 scanned += 1;
                 if is_new {
@@ -514,7 +449,7 @@ impl Scanner {
             });
         }
 
-        let removed = self.remove_missing_tracks(db).await?;
+        let removed = self.remove_missing_tracks(db)?;
 
         info!(
             "Scan complete: {} scanned, {} added, {} updated, {} skipped, {} failed, {} removed",
@@ -526,7 +461,6 @@ impl Scanner {
             total: total_files.max(1),
             phase: ScanPhase::Completed,
         });
-        tokio::time::sleep(Duration::from_millis(800)).await;
         self.clear_scan_progress();
 
         Ok(ScanStats {
@@ -557,7 +491,7 @@ impl Scanner {
         result
     }
 
-    async fn process_changed_files_inner(
+    fn process_changed_files_inner(
         &self,
         db: &Database,
         changed_paths: Vec<PathBuf>,
@@ -594,7 +528,6 @@ impl Scanner {
 
             let existing = db
                 .get_song_by_path(path_clone.to_string_lossy().as_ref())
-                .await
                 .ok()
                 .flatten();
 
@@ -607,30 +540,15 @@ impl Scanner {
                 continue;
             }
 
-            let metadata = match tokio::task::spawn_blocking({
-                let path = path.clone();
-                move || Self::read_metadata(&path)
-            })
-            .await
-            {
-                Ok(Ok(m)) => m,
-                Ok(Err(e)) => {
-                    warn!("Failed to read metadata from {:?}: {}", path_clone, e);
-                    continue;
-                }
+            let metadata = match Self::read_metadata(&path) {
+                Ok(m) => m,
                 Err(e) => {
-                    error!("Task failed for {:?}: {}", path_clone, e);
+                    warn!("Failed to read metadata from {:?}: {}", path_clone, e);
                     continue;
                 }
             };
 
-            let image_data = tokio::task::spawn_blocking({
-                let path = path.clone();
-                move || Self::extract_image(&path)
-            })
-            .await
-            .ok()
-            .flatten();
+            let image_data = Self::extract_image(&path);
 
             let track = ScannedTrack {
                 path: path.clone(),
@@ -640,16 +558,13 @@ impl Scanner {
                 image_data,
             };
 
-            match self
-                .save_track(
-                    db,
-                    &track,
-                    &mut seen_image_ids,
-                    &mut artist_cache,
-                    &mut album_cache,
-                )
-                .await
-            {
+            match self.save_track(
+                db,
+                &track,
+                &mut seen_image_ids,
+                &mut artist_cache,
+                &mut album_cache,
+            ) {
                 Ok(()) => {
                     scanned += 1;
                     if is_new {
@@ -674,7 +589,7 @@ impl Scanner {
     pub async fn queue_changed_files(
         &self,
         db: Arc<Database>,
-        tx: mpsc::Sender<ScanStats>,
+        tx: mpsc::UnboundedSender<ScanStats>,
         changed_paths: Vec<PathBuf>,
     ) {
         if changed_paths.is_empty() {
@@ -691,61 +606,63 @@ impl Scanner {
         }
 
         let scanner = self.clone();
-        tokio::spawn(async move {
-            loop {
-                let batch: Vec<PathBuf> = {
-                    let mut pending = scanner.pending_changed_paths.lock().await;
-                    if pending.is_empty() {
-                        Vec::new()
-                    } else {
-                        pending.drain().collect()
-                    }
-                };
-
-                if batch.is_empty() {
-                    scanner
-                        .incremental_worker_running
-                        .store(false, Ordering::Release);
-
-                    let has_pending = {
-                        let pending = scanner.pending_changed_paths.lock().await;
-                        !pending.is_empty()
+        self.executor
+            .spawn(async move {
+                loop {
+                    let batch: Vec<PathBuf> = {
+                        let mut pending = scanner.pending_changed_paths.lock().await;
+                        if pending.is_empty() {
+                            Vec::new()
+                        } else {
+                            pending.drain().collect()
+                        }
                     };
 
-                    if has_pending
-                        && !scanner
+                    if batch.is_empty() {
+                        scanner
                             .incremental_worker_running
-                            .swap(true, Ordering::AcqRel)
-                    {
-                        continue;
+                            .store(false, Ordering::Release);
+
+                        let has_pending = {
+                            let pending = scanner.pending_changed_paths.lock().await;
+                            !pending.is_empty()
+                        };
+
+                        if has_pending
+                            && !scanner
+                                .incremental_worker_running
+                                .swap(true, Ordering::AcqRel)
+                        {
+                            continue;
+                        }
+
+                        break;
                     }
 
-                    break;
+                    info!(
+                        "Processing coalesced incremental batch with {} files",
+                        batch.len()
+                    );
+
+                    let _scan_guard = scanner.scan_lock.lock().await;
+                    match scanner.process_changed_files_inner(&db, batch) {
+                        Ok(stats) => {
+                            info!(
+                                "Incremental scan complete - Scanned: {}, Added: {}, Updated: {}, Removed: {}",
+                                stats.scanned, stats.added, stats.updated, stats.removed
+                            );
+                            let _ = tx.unbounded_send(stats);
+                        }
+                        Err(e) => {
+                            error!("Incremental scan failed: {}", e);
+                        }
+                    }
                 }
-
-                info!(
-                    "Processing coalesced incremental batch with {} files",
-                    batch.len()
-                );
-
-                let _scan_guard = scanner.scan_lock.lock().await;
-                match scanner.process_changed_files_inner(&db, batch).await {
-                    Ok(stats) => {
-                        info!(
-                            "Incremental scan complete - Scanned: {}, Added: {}, Updated: {}, Removed: {}",
-                            stats.scanned, stats.added, stats.updated, stats.removed
-                        );
-                        let _ = tx.send(stats).await;
-                    }
-                    Err(e) => {
-                        error!("Incremental scan failed: {}", e);
-                    }
-                }
-            }
-        });
+            })
+            .detach();
     }
 
-    async fn save_track(
+    fn save_track(
         &self,
         db: &Database,
         track: &ScannedTrack,
@@ -758,7 +675,7 @@ impl Scanner {
 
         let image_id = if let Some(image) = &track.image_data {
             if seen_image_ids.insert(image.id.clone()) {
-                db.upsert_image(&image.id, &image.data).await?;
+                db.upsert_image(&image.id, &image.data)?;
             }
             Some(image.id.clone())
         } else {
@@ -769,7 +686,7 @@ impl Scanner {
             if let Some(artist_id) = artist_cache.get(artist_name) {
                 Some(artist_id.clone())
             } else {
-                let artist_id = db.upsert_artist(artist_name).await?;
+                let artist_id = db.upsert_artist(artist_name)?;
                 artist_cache.insert(artist_name.clone(), artist_id.clone());
                 Some(artist_id)
             }
@@ -781,15 +698,13 @@ impl Scanner {
             let key = (album_name.clone(), artist_id.clone());
             if let Some((cached_album_id, has_image)) = album_cache.get_mut(&key) {
                 if !*has_image && image_id.is_some() {
-                    db.upsert_album(album_name, artist_id.as_ref(), image_id.as_deref())
-                        .await?;
+                    db.upsert_album(album_name, artist_id.as_ref(), image_id.as_deref())?;
                     *has_image = true;
                 }
                 Some(cached_album_id.clone())
             } else {
-                let album_id = db
-                    .upsert_album(album_name, artist_id.as_ref(), image_id.as_deref())
-                    .await?;
+                let album_id =
+                    db.upsert_album(album_name, artist_id.as_ref(), image_id.as_deref())?;
                 album_cache.insert(key, (album_id.clone(), image_id.is_some()));
                 Some(album_id)
             }
@@ -814,12 +729,72 @@ impl Scanner {
             track.file_size,
             track.file_modified,
             meta.lufs,
-        )
-        .await?;
+        )?;
 
         debug!("Saved track: {:?}", track.path);
         Ok(())
     }
+}
+
+fn process_one_file(
+    path: PathBuf,
+    existing_track_state: &HashMap<String, (i64, i64)>,
+    force: bool,
+) -> Option<(Option<ScannedTrack>, bool, bool)> {
+    let file_path = path.to_string_lossy().to_string();
+
+    let file_meta = match std::fs::metadata(&path) {
+        Ok(meta) => meta,
+        Err(e) => {
+            warn!("Failed to read metadata for {}: {}", file_path, e);
+            return Some((None, false, true));
+        }
+    };
+
+    let file_size = file_meta.len() as i64;
+    let file_modified = file_meta
+        .modified()
+        .ok()
+        .and_then(|m| m.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    let existing = existing_track_state.get(&file_path).copied();
+    let is_new = existing.is_none();
+
+    if let Some((existing_size, existing_modified)) = existing
+        && !Scanner::should_process_file(
+            existing_size,
+            existing_modified,
+            file_size,
+            file_modified,
+            force,
+        )
+    {
+        return Some((None, false, false));
+    }
+
+    let metadata = match Scanner::read_metadata(&path) {
+        Ok(meta) => meta,
+        Err(e) => {
+            warn!("Failed to read metadata for {}: {}", file_path, e);
+            return Some((None, true, false));
+        }
+    };
+
+    let image_data = Scanner::extract_image(&path);
+
+    Some((
+        Some(ScannedTrack {
+            path,
+            file_size,
+            file_modified,
+            metadata,
+            image_data,
+        }),
+        is_new,
+        false,
+    ))
 }
 
 pub fn expand_tilde(path: &str) -> PathBuf {
@@ -845,11 +820,12 @@ impl MusicWatcher {
     pub fn new(
         scanner: Arc<Scanner>,
         db: Arc<Database>,
-    ) -> Result<(Self, mpsc::Receiver<ScanStats>)> {
-        let (tx, rx) = mpsc::channel(100);
+        executor: BackgroundExecutor,
+    ) -> Result<(Self, mpsc::UnboundedReceiver<ScanStats>)> {
+        let (tx, rx) = mpsc::unbounded::<ScanStats>();
         let scanner_clone = scanner.clone();
         let db_clone = db.clone();
-        let runtime_handle = tokio::runtime::Handle::current();
+        let exec_clone = executor.clone();
 
         let mut debouncer = new_debouncer(
             Duration::from_secs(2),
@@ -888,22 +864,24 @@ impl MusicWatcher {
                         let path_str = path.to_string_lossy().to_string();
                         let db = db_clone.clone();
                         let tx = tx.clone();
-                        runtime_handle.spawn(async move {
-                            if db.delete_song_by_path(&path_str).await.is_ok() {
-                                let stats = ScanStats {
-                                    scanned: 0,
-                                    added: 0,
-                                    updated: 0,
-                                    removed: 1,
-                                };
-                                let _ = tx.send(stats).await;
-                            } else {
-                                error!(
-                                    "Failed to remove deleted track {}: (error logged above)",
-                                    path_str
-                                );
-                            }
-                        });
+                        exec_clone
+                            .spawn(async move {
+                                if db.delete_song_by_path(&path_str).is_ok() {
+                                    let stats = ScanStats {
+                                        scanned: 0,
+                                        added: 0,
+                                        updated: 0,
+                                        removed: 1,
+                                    };
+                                    let _ = tx.unbounded_send(stats);
+                                } else {
+                                    error!(
+                                        "Failed to remove deleted track {}: (error logged above)",
+                                        path_str
+                                    );
+                                }
+                            })
+                            .detach();
                     }
 
                     let changed_audio_files: Vec<PathBuf> = changed_audio_files
@@ -920,11 +898,13 @@ impl MusicWatcher {
                         let scanner = scanner_clone.clone();
                         let db = db_clone.clone();
                         let tx = tx.clone();
-                        runtime_handle.spawn(async move {
-                            scanner
-                                .queue_changed_files(db, tx, changed_audio_files)
-                                .await;
-                        });
+                        exec_clone
+                            .spawn(async move {
+                                scanner
+                                    .queue_changed_files(db, tx, changed_audio_files)
+                                    .await;
+                            })
+                            .detach();
                     }
                 }
                 Err(errors) => {

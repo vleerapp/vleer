@@ -1,6 +1,11 @@
-use anyhow::Context;
-use std::fs::{self, OpenOptions};
-use std::path::PathBuf;
+use std::io::{BufRead, BufReader};
+use std::sync::mpsc;
+use std::thread;
+
+use interprocess::local_socket::prelude::*;
+use interprocess::local_socket::{GenericFilePath, GenericNamespaced, ListenerOptions, Stream};
+
+const APP_ID: &str = "vleer";
 
 pub enum AcquireResult {
     Acquired(SingleInstanceGuard),
@@ -8,110 +13,62 @@ pub enum AcquireResult {
 }
 
 pub struct SingleInstanceGuard {
+    _rx: mpsc::Receiver<()>,
     #[cfg(unix)]
-    _lock_file: std::fs::File,
-    #[cfg(not(any(unix, windows)))]
-    _lock_file: std::fs::File,
-    #[cfg(windows)]
-    handle: windows::Win32::Foundation::HANDLE,
+    app_id: String,
 }
 
-#[cfg(windows)]
 impl Drop for SingleInstanceGuard {
     fn drop(&mut self) {
-        let _ = unsafe { windows::Win32::Foundation::CloseHandle(self.handle) };
+        #[cfg(unix)]
+        {
+            let _ = std::fs::remove_file(format!("/tmp/{}.sock", self.app_id));
+        }
     }
 }
 
-fn lock_file_path() -> PathBuf {
-    dirs::data_local_dir()
-        .or_else(dirs::data_dir)
-        .unwrap_or_else(std::env::temp_dir)
-        .join("vleer")
-        .join("instance.lock")
+fn make_name() -> interprocess::local_socket::Name<'static> {
+    if GenericNamespaced::is_supported() {
+        Box::leak(APP_ID.to_string().into_boxed_str())
+            .to_ns_name::<GenericNamespaced>()
+            .unwrap()
+    } else {
+        Box::leak(format!("/tmp/{APP_ID}.sock").into_boxed_str())
+            .to_fs_name::<GenericFilePath>()
+            .unwrap()
+    }
 }
 
-#[cfg(unix)]
 pub fn try_acquire() -> anyhow::Result<AcquireResult> {
-    use std::io::ErrorKind;
-    use std::os::fd::AsRawFd;
-    use std::os::raw::c_int;
-
-    const LOCK_EX: c_int = 2;
-    const LOCK_NB: c_int = 4;
-
-    unsafe extern "C" {
-        fn flock(fd: c_int, operation: c_int) -> c_int;
-    }
-
-    let lock_path = lock_file_path();
-    if let Some(parent) = lock_path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create lock directory '{}'", parent.display()))?;
-    }
-
-    let lock_file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&lock_path)
-        .with_context(|| format!("failed to open lock file '{}'", lock_path.display()))?;
-
-    let result = unsafe { flock(lock_file.as_raw_fd(), LOCK_EX | LOCK_NB) };
-    if result == 0 {
-        return Ok(AcquireResult::Acquired(SingleInstanceGuard {
-            _lock_file: lock_file,
-        }));
-    }
-
-    let err = std::io::Error::last_os_error();
-    if err.kind() == ErrorKind::WouldBlock {
+    if Stream::connect(make_name()).is_ok() {
         return Ok(AcquireResult::AlreadyRunning);
     }
 
-    Err(err).with_context(|| format!("failed to acquire lock file '{}'", lock_path.display()))
-}
-
-#[cfg(windows)]
-pub fn try_acquire() -> anyhow::Result<AcquireResult> {
-    use anyhow::anyhow;
-    use windows::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError};
-    use windows::Win32::System::Threading::CreateMutexW;
-    use windows::core::w;
-
-    let handle = unsafe { CreateMutexW(None, false, w!("Global\\VleerSingleInstance"))? };
-    let last_error = unsafe { GetLastError() };
-    if last_error == ERROR_ALREADY_EXISTS {
-        let _ = unsafe { CloseHandle(handle) };
-        return Ok(AcquireResult::AlreadyRunning);
+    #[cfg(unix)]
+    {
+        let _ = std::fs::remove_file(format!("/tmp/{APP_ID}.sock"));
+        std::thread::sleep(std::time::Duration::from_millis(50));
     }
 
-    Ok(AcquireResult::Acquired(SingleInstanceGuard { handle }))
-}
+    let listener = ListenerOptions::new()
+        .name(make_name())
+        .create_sync()
+        .map_err(|e| anyhow::anyhow!("failed to create single-instance listener: {e}"))?;
 
-#[cfg(not(any(unix, windows)))]
-pub fn try_acquire() -> anyhow::Result<AcquireResult> {
-    use std::io::ErrorKind;
+    let (tx, rx) = mpsc::channel::<()>();
 
-    let lock_path = lock_file_path();
-    if let Some(parent) = lock_path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create lock directory '{}'", parent.display()))?;
-    }
+    thread::spawn(move || {
+        for conn in listener.incoming().filter_map(|c| c.ok()) {
+            let mut line = String::new();
+            if BufReader::new(conn).read_line(&mut line).is_ok() {
+                let _ = tx.send(());
+            }
+        }
+    });
 
-    let lock_file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create_new(true)
-        .open(&lock_path);
-
-    match lock_file {
-        Ok(file) => Ok(AcquireResult::Acquired(SingleInstanceGuard {
-            _lock_file: file,
-        })),
-        Err(err) if err.kind() == ErrorKind::AlreadyExists => Ok(AcquireResult::AlreadyRunning),
-        Err(err) => Err(err)
-            .with_context(|| format!("failed to create lock file '{}'", lock_path.display())),
-    }
+    Ok(AcquireResult::Acquired(SingleInstanceGuard {
+        _rx: rx,
+        #[cfg(unix)]
+        app_id: APP_ID.to_string(),
+    }))
 }

@@ -5,9 +5,9 @@ use crate::media::queue::Queue;
 use crate::ui::components::div::{flex_col, flex_row};
 use crate::ui::components::icons::{self, icon};
 use crate::ui::variables::Variables;
+use futures::channel::mpsc;
 use gpui::{prelude::*, *};
 use std::rc::Rc;
-use tokio::sync::mpsc;
 use tracing::error;
 
 #[derive(Default)]
@@ -43,22 +43,11 @@ impl BackgroundUiNotifier {
     }
 
     pub fn notify(&self, event: BackgroundUiEvent) {
-        let _ = self.tx.send(event);
+        let _ = self.tx.unbounded_send(event);
     }
 }
 
 impl Global for BackgroundUiNotifier {}
-
-fn run_sync<F, T>(future: F) -> T
-where
-    F: std::future::Future<Output = T>,
-{
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        tokio::task::block_in_place(|| handle.block_on(future))
-    } else {
-        crate::RUNTIME.block_on(future)
-    }
-}
 
 pub type MenuHandler = Rc<dyn Fn(&mut Window, &mut App) + 'static>;
 
@@ -275,15 +264,18 @@ pub fn play_song_now(song_id: Cuid, cx: &mut App) {
 
 pub fn play_album_now(album_id: Cuid, cx: &mut App) {
     let db = cx.global::<Database>().clone();
+    let bg = cx.background_executor().clone();
 
     cx.spawn(async move |cx| {
-        let song_ids = db
-            .get_album_songs(&album_id)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .map(|song| song.id)
-            .collect::<Vec<_>>();
+        let song_ids = bg
+            .spawn(async move {
+                db.get_album_songs(&album_id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|song| song.id)
+                    .collect::<Vec<_>>()
+            })
+            .await;
 
         if song_ids.is_empty() {
             return;
@@ -298,7 +290,7 @@ pub fn play_album_now(album_id: Cuid, cx: &mut App) {
 
 pub fn song_context_menu_items(song_id: Cuid, cx: &App) -> Vec<ContextMenuItem> {
     let db = cx.global::<Database>().clone();
-    let song = run_sync(db.get_song(song_id.clone())).ok().flatten();
+    let song = db.get_song(&song_id).ok().flatten();
     let (favorite, pinned) = song
         .map(|s| (s.favorite, s.pinned))
         .unwrap_or((false, false));
@@ -339,7 +331,7 @@ pub fn song_context_menu_items(song_id: Cuid, cx: &App) -> Vec<ContextMenuItem> 
             let id = id_fav.clone();
             let new_val = !favorite;
             write_and_notify(cx, move |db| {
-                if let Err(e) = run_sync(db.set_favorite::<Song>(&id, new_val)) {
+                if let Err(e) = db.set_favorite::<Song>(&id, new_val) {
                     error!("set_favorite song failed: {e}");
                 }
             });
@@ -348,7 +340,7 @@ pub fn song_context_menu_items(song_id: Cuid, cx: &App) -> Vec<ContextMenuItem> 
             let id = id_pin.clone();
             let new_val = !pinned;
             write_and_notify_pinned(cx, move |db| {
-                if let Err(e) = run_sync(db.set_pinned::<Song>(&id, new_val)) {
+                if let Err(e) = db.set_pinned::<Song>(&id, new_val) {
                     error!("set_pinned song failed: {e}");
                 }
             });
@@ -361,7 +353,7 @@ pub fn song_context_menu_items(song_id: Cuid, cx: &App) -> Vec<ContextMenuItem> 
         ContextMenuItem::destructive("Remove from library", icons::TRASH, move |_, cx| {
             let id = id_remove.clone();
             write_and_notify(cx, move |db| {
-                if let Err(e) = run_sync(db.delete_song(&id)) {
+                if let Err(e) = db.delete_song(&id) {
                     error!("remove_song failed: {e}");
                 }
             });
@@ -371,7 +363,7 @@ pub fn song_context_menu_items(song_id: Cuid, cx: &App) -> Vec<ContextMenuItem> 
 
 pub fn album_context_menu_items(album_id: Cuid, cx: &App) -> Vec<ContextMenuItem> {
     let db = cx.global::<Database>().clone();
-    let album = run_sync(db.get_album(album_id.clone())).ok().flatten();
+    let album = db.get_album(&album_id).ok().flatten();
     let (favorite, pinned) = album
         .map(|a| (a.favorite, a.pinned))
         .unwrap_or((false, false));
@@ -394,8 +386,7 @@ pub fn album_context_menu_items(album_id: Cuid, cx: &App) -> Vec<ContextMenuItem
         ContextMenuItem::entry("Play all songs", icons::PLAY, move |_, cx| {
             let id = id_play.clone();
             let db = cx.global::<Database>().clone();
-            let ids = run_sync(db.get_album_songs(&id));
-            if let Ok(song_ids) = ids
+            if let Ok(song_ids) = db.get_album_songs(&id)
                 && !song_ids.is_empty()
             {
                 cx.update_global::<Queue, _>(|q, _| {
@@ -413,7 +404,7 @@ pub fn album_context_menu_items(album_id: Cuid, cx: &App) -> Vec<ContextMenuItem
             let id = id_fav.clone();
             let new_val = !favorite;
             write_and_notify(cx, move |db| {
-                if let Err(e) = run_sync(db.set_favorite::<Album>(&id, new_val)) {
+                if let Err(e) = db.set_favorite::<Album>(&id, new_val) {
                     error!("set_favorite album failed: {e}");
                 }
             });
@@ -422,7 +413,7 @@ pub fn album_context_menu_items(album_id: Cuid, cx: &App) -> Vec<ContextMenuItem
             let id = id_pin.clone();
             let new_val = !pinned;
             write_and_notify_pinned(cx, move |db| {
-                if let Err(e) = run_sync(db.set_pinned::<Album>(&id, new_val)) {
+                if let Err(e) = db.set_pinned::<Album>(&id, new_val) {
                     error!("set_pinned album failed: {e}");
                 }
             });
@@ -434,7 +425,7 @@ pub fn album_context_menu_items(album_id: Cuid, cx: &App) -> Vec<ContextMenuItem
         ContextMenuItem::destructive("Remove from library", icons::TRASH, move |_, cx| {
             let id = id_remove.clone();
             write_and_notify(cx, move |db| {
-                if let Err(e) = run_sync(db.delete_album(&id)) {
+                if let Err(e) = db.delete_album(&id) {
                     error!("remove album failed: {e}");
                 }
             });
@@ -444,7 +435,7 @@ pub fn album_context_menu_items(album_id: Cuid, cx: &App) -> Vec<ContextMenuItem
 
 pub fn artist_context_menu_items(artist_id: Cuid, cx: &App) -> Vec<ContextMenuItem> {
     let db = cx.global::<Database>().clone();
-    let artist = run_sync(db.get_artist(artist_id.clone())).ok().flatten();
+    let artist = db.get_artist(&artist_id).ok().flatten();
     let favorite = artist.as_ref().map(|a| a.favorite).unwrap_or(false);
     let pinned = artist.as_ref().map(|a| a.pinned).unwrap_or(false);
 
@@ -468,7 +459,7 @@ pub fn artist_context_menu_items(artist_id: Cuid, cx: &App) -> Vec<ContextMenuIt
             let id = id_fav.clone();
             let new_val = !favorite;
             write_and_notify(cx, move |db| {
-                if let Err(e) = run_sync(db.set_favorite::<Artist>(&id, new_val)) {
+                if let Err(e) = db.set_favorite::<Artist>(&id, new_val) {
                     error!("set_favorite artist failed: {e}");
                 }
             });
@@ -477,7 +468,7 @@ pub fn artist_context_menu_items(artist_id: Cuid, cx: &App) -> Vec<ContextMenuIt
             let id = id_pin.clone();
             let new_val = !pinned;
             write_and_notify_pinned(cx, move |db| {
-                if let Err(e) = run_sync(db.set_pinned::<Artist>(&id, new_val)) {
+                if let Err(e) = db.set_pinned::<Artist>(&id, new_val) {
                     error!("set_pinned artist failed: {e}");
                 }
             });
@@ -490,7 +481,7 @@ pub fn artist_context_menu_items(artist_id: Cuid, cx: &App) -> Vec<ContextMenuIt
 
 pub fn playlist_context_menu_items(playlist_id: Cuid, cx: &App) -> Vec<ContextMenuItem> {
     let db = cx.global::<Database>().clone();
-    let playlist = run_sync(db.get_playlist(&playlist_id)).ok().flatten();
+    let playlist = db.get_playlist(&playlist_id).ok().flatten();
     let pinned = playlist.map(|p| p.pinned).unwrap_or(false);
 
     let pin_label = if pinned { "Unpin" } else { "Pin" };
@@ -505,8 +496,7 @@ pub fn playlist_context_menu_items(playlist_id: Cuid, cx: &App) -> Vec<ContextMe
         ContextMenuItem::entry("Play playlist", icons::PLAY, move |_, cx| {
             let id = id_play.clone();
             let db = cx.global::<Database>().clone();
-            let songs = run_sync(db.get_playlist_songs(&id));
-            if let Ok(songs) = songs {
+            if let Ok(songs) = db.get_playlist_songs(&id) {
                 let song_ids: Vec<Cuid> = songs.into_iter().map(|t| t.song.id).collect();
                 if !song_ids.is_empty() {
                     cx.update_global::<Queue, _>(|q, _| {
@@ -524,7 +514,7 @@ pub fn playlist_context_menu_items(playlist_id: Cuid, cx: &App) -> Vec<ContextMe
             let id = id_pin.clone();
             let new_val = !pinned;
             write_and_notify_pinned(cx, move |db| {
-                if let Err(e) = run_sync(db.set_pinned::<Playlist>(&id, new_val)) {
+                if let Err(e) = db.set_pinned::<Playlist>(&id, new_val) {
                     error!("set_pinned playlist failed: {e}");
                 }
             });
@@ -533,7 +523,7 @@ pub fn playlist_context_menu_items(playlist_id: Cuid, cx: &App) -> Vec<ContextMe
         ContextMenuItem::entry("Clear playlist", icons::X, move |_, cx| {
             let id = id_clear.clone();
             write_and_notify(cx, move |db| {
-                if let Err(e) = run_sync(db.clear_playlist(&id)) {
+                if let Err(e) = db.clear_playlist(&id) {
                     error!("clear_playlist failed: {e}");
                 }
             });
@@ -543,7 +533,7 @@ pub fn playlist_context_menu_items(playlist_id: Cuid, cx: &App) -> Vec<ContextMe
         ContextMenuItem::destructive("Delete playlist", icons::TRASH, move |_, cx| {
             let id = id_delete.clone();
             write_and_notify(cx, move |db| {
-                if let Err(e) = run_sync(db.delete_playlist(&id)) {
+                if let Err(e) = db.delete_playlist(&id) {
                     error!("delete_playlist failed: {e}");
                 }
             });
