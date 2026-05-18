@@ -4,13 +4,24 @@ use crate::data::db::models::{
 };
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type)]
-#[sqlx(transparent)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Cuid(String);
 
 impl Cuid {
     pub fn new() -> Self {
         Cuid(cuid2::create_id())
+    }
+}
+
+impl rusqlite::ToSql for Cuid {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        Ok(self.0.as_str().into())
+    }
+}
+
+impl rusqlite::types::FromSql for Cuid {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        String::column_result(value).map(Cuid)
     }
 }
 

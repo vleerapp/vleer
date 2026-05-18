@@ -1,7 +1,7 @@
 use crate::data::models::{Album, Artist, Cuid, Event, EventType, Playlist, RecentItem, Song};
-use sqlx::{FromRow, Row, sqlite::SqliteRow};
+use rusqlite::Row;
 
-#[derive(Debug, Clone, FromRow)]
+#[derive(Debug, Clone)]
 pub struct ImageRow {
     pub id: Cuid,
     pub data: Vec<u8>,
@@ -9,7 +9,18 @@ pub struct ImageRow {
     pub date_updated: String,
 }
 
-#[derive(Debug, Clone, FromRow)]
+impl ImageRow {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("id")?,
+            data: row.get("data")?,
+            date_created: row.get("date_created")?,
+            date_updated: row.get("date_updated")?,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct SongRow {
     pub id: Cuid,
     pub title: String,
@@ -31,7 +42,32 @@ pub struct SongRow {
     pub date_updated: String,
 }
 
-#[derive(Debug, Clone, FromRow)]
+impl SongRow {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(SongRow {
+            id: row.get("id")?,
+            title: row.get("title")?,
+            artist_id: row.get("artist_id")?,
+            artist_name: row.get("artist_name")?,
+            album_id: row.get("album_id")?,
+            file_path: row.get("file_path")?,
+            file_size: row.get("file_size")?,
+            file_modified: row.get("file_modified")?,
+            genre: row.get("genre")?,
+            date: row.get("date")?,
+            duration: row.get("duration")?,
+            image_id: row.get("image_id")?,
+            track_number: row.get("track_number")?,
+            favorite: row.get("favorite")?,
+            lufs: row.get("lufs")?,
+            pinned: row.get("pinned")?,
+            date_added: row.get("date_added")?,
+            date_updated: row.get("date_updated")?,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct SongListRow {
     pub id: Cuid,
     pub title: String,
@@ -41,7 +77,20 @@ pub struct SongListRow {
     pub image_id: Option<String>,
 }
 
-#[derive(Debug, Clone, FromRow)]
+impl SongListRow {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("id")?,
+            title: row.get("title")?,
+            artist_name: row.get("artist_name")?,
+            album_title: row.get("album_title")?,
+            duration: row.get("duration")?,
+            image_id: row.get("image_id")?,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ArtistRow {
     pub id: Cuid,
     pub name: String,
@@ -50,14 +99,36 @@ pub struct ArtistRow {
     pub pinned: bool,
 }
 
-#[derive(Debug, Clone, FromRow)]
+impl ArtistRow {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("id")?,
+            name: row.get("name")?,
+            image_id: row.get("image_id")?,
+            favorite: row.get("favorite")?,
+            pinned: row.get("pinned")?,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ArtistListRow {
     pub id: Cuid,
     pub name: String,
     pub image_id: Option<String>,
 }
 
-#[derive(Debug, Clone, FromRow)]
+impl ArtistListRow {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("id")?,
+            name: row.get("name")?,
+            image_id: row.get("image_id")?,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct AlbumRow {
     pub id: Cuid,
     pub title: String,
@@ -67,7 +138,20 @@ pub struct AlbumRow {
     pub pinned: bool,
 }
 
-#[derive(Debug, Clone, FromRow)]
+impl AlbumRow {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("id")?,
+            title: row.get("title")?,
+            artist_id: row.get("artist_id")?,
+            image_id: row.get("image_id")?,
+            favorite: row.get("favorite")?,
+            pinned: row.get("pinned")?,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct AlbumListRow {
     pub id: Cuid,
     pub title: String,
@@ -76,7 +160,19 @@ pub struct AlbumListRow {
     pub year: Option<String>,
 }
 
-#[derive(Debug, Clone, FromRow)]
+impl AlbumListRow {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("id")?,
+            title: row.get("title")?,
+            artist_name: row.get("artist_name")?,
+            image_id: row.get("image_id")?,
+            year: row.get("year")?,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct PlaylistRow {
     pub id: Cuid,
     pub name: String,
@@ -87,7 +183,21 @@ pub struct PlaylistRow {
     pub date_created: String,
 }
 
-#[derive(Debug, Clone, FromRow)]
+impl PlaylistRow {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("id")?,
+            name: row.get("name")?,
+            description: row.get("description")?,
+            image_id: row.get("image_id")?,
+            pinned: row.get("pinned")?,
+            date_updated: row.get("date_updated")?,
+            date_created: row.get("date_created")?,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct PlaylistTrackRow {
     pub id: Cuid,
     pub playlist_id: Cuid,
@@ -96,37 +206,18 @@ pub struct PlaylistTrackRow {
 }
 
 impl PlaylistTrackRow {
-    pub fn from_row(row: &SqliteRow) -> Result<Self, sqlx::Error> {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
         Ok(Self {
-            id: row.try_get("id")?,
-            playlist_id: row.try_get("playlist_id")?,
-            position: row.try_get("position")?,
-            song: SongRow {
-                id: row.try_get("id")?,
-                title: row.try_get("title")?,
-                artist_id: row.try_get("artist_id")?,
-                artist_name: row.try_get("artist_name")?,
-                album_id: row.try_get("album_id")?,
-                file_path: row.try_get("file_path")?,
-                file_size: row.try_get("file_size")?,
-                file_modified: row.try_get("file_modified")?,
-                genre: row.try_get("genre")?,
-                date: row.try_get("date")?,
-                duration: row.try_get("duration")?,
-                image_id: row.try_get("image_id")?,
-                track_number: row.try_get("track_number")?,
-                favorite: row.try_get("favorite")?,
-                lufs: row.try_get("lufs")?,
-                pinned: row.try_get("pinned")?,
-                date_added: row.try_get("date_added")?,
-                date_updated: row.try_get("date_updated")?,
-            },
+            id: row.get("id")?,
+            playlist_id: row.get("playlist_id")?,
+            position: row.get("position")?,
+            song: SongRow::from_row(row)?,
         })
     }
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, FromRow)]
+#[derive(Debug, Clone)]
 pub struct EventRow {
     pub id: Cuid,
     pub event_type: String,
@@ -136,6 +227,15 @@ pub struct EventRow {
 
 #[allow(dead_code)]
 impl EventRow {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("id")?,
+            event_type: row.get("event_type")?,
+            context_id: row.get("context_id")?,
+            timestamp: row.get("timestamp")?,
+        })
+    }
+
     pub fn into_event(self) -> Event {
         Event {
             id: self.id,
@@ -153,12 +253,24 @@ impl EventRow {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, FromRow)]
+#[derive(Debug, Clone)]
 pub struct EventContextRow {
     pub id: Cuid,
     pub song_id: Option<Cuid>,
     pub playlist_id: Option<Cuid>,
     pub date_created: String,
+}
+
+#[allow(dead_code)]
+impl EventContextRow {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("id")?,
+            song_id: row.get("song_id")?,
+            playlist_id: row.get("playlist_id")?,
+            date_created: row.get("date_created")?,
+        })
+    }
 }
 
 pub trait Toggleable {
@@ -179,7 +291,7 @@ impl Toggleable for Playlist {
     const TABLE: &'static str = "playlists";
 }
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone)]
 pub struct SearchResultRow {
     pub id: Cuid,
     pub name: String,
@@ -187,7 +299,18 @@ pub struct SearchResultRow {
     pub item_type: String,
 }
 
-#[derive(Debug, Clone, FromRow)]
+impl SearchResultRow {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("id")?,
+            name: row.get("name")?,
+            image: row.get("image")?,
+            item_type: row.get("item_type")?,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct RecentItemRow {
     pub song_count: i64,
     pub first_song_id: Cuid,
@@ -200,6 +323,19 @@ pub struct RecentItemRow {
 }
 
 impl RecentItemRow {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            song_count: row.get("song_count")?,
+            first_song_id: row.get("first_song_id")?,
+            first_song_title: row.get("first_song_title")?,
+            image_id: row.get("image_id")?,
+            first_year: row.get("first_year")?,
+            album_id: row.get("album_id")?,
+            album_title: row.get("album_title")?,
+            artist_name: row.get("artist_name")?,
+        })
+    }
+
     pub fn into_recent_item(self) -> RecentItem {
         if let Some(album_id) = self.album_id
             && self.song_count > 1
@@ -224,10 +360,20 @@ impl RecentItemRow {
     }
 }
 
-#[derive(sqlx::FromRow)]
 pub struct PinnedItemRow {
     pub id: Cuid,
     pub name: String,
     pub image_id: Option<String>,
     pub item_type: String,
+}
+
+impl PinnedItemRow {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("id")?,
+            name: row.get("name")?,
+            image_id: row.get("image_id")?,
+            item_type: row.get("item_type")?,
+        })
+    }
 }
