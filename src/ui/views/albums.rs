@@ -50,17 +50,14 @@ impl AlbumsView {
             let query_for_spawn = query.clone();
             let (count, first_page) = bg
                 .spawn(async move {
-                    crate::RUNTIME.block_on(async {
-                        let count = db.get_albums_count(&query_for_spawn).await.unwrap_or(0);
-                        let first_page = if count > 0 {
-                            db.get_albums(&query_for_spawn, 0, page_size)
-                                .await
-                                .unwrap_or_default()
-                        } else {
-                            Vec::new()
-                        };
-                        (count, first_page)
-                    })
+                    let count = db.get_albums_count(&query_for_spawn).unwrap_or(0);
+                    let first_page = if count > 0 {
+                        db.get_albums(&query_for_spawn, 0, page_size)
+                            .unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    };
+                    (count, first_page)
                 })
                 .await;
 
@@ -196,11 +193,8 @@ impl AlbumsView {
             let query_for_spawn = query.clone();
             let albums = bg
                 .spawn(async move {
-                    crate::RUNTIME.block_on(async {
-                        db.get_albums(&query_for_spawn, offset, page_size as i64)
-                            .await
-                            .unwrap_or_default()
-                    })
+                    db.get_albums(&query_for_spawn, offset, page_size as i64)
+                        .unwrap_or_default()
                 })
                 .await;
 

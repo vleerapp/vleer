@@ -1,26 +1,15 @@
 pub mod bundled;
 pub mod image_cache;
 
+use crate::data::db::repo::Database;
 use crate::ui::assets::bundled::BundledAssets;
-use gpui::{App, Asset, Global, ImageCacheError, RenderImage, Resource};
+use gpui::{App, Asset, ImageCacheError, RenderImage, Resource};
 use gpui::{AssetSource, Result as GpuiResult};
 use image::{Frame, ImageError};
-use sqlx::SqlitePool;
+use rusqlite::{OptionalExtension, params};
 use std::borrow::Cow;
-use std::sync::{Arc, LazyLock};
-use std::time::Duration;
-use tokio::sync::Semaphore;
+use std::sync::Arc;
 use url::Url;
-
-#[derive(Clone)]
-pub struct ImagePool(pub Arc<SqlitePool>);
-
-impl Global for ImagePool {}
-
-static IMAGE_LOAD_SEMAPHORE: LazyLock<Arc<Semaphore>> =
-    LazyLock::new(|| Arc::new(Semaphore::new(8)));
-
-const IMAGE_QUERY_TIMEOUT: Duration = Duration::from_millis(500);
 
 pub enum VleerImageLoader {}
 
@@ -32,8 +21,9 @@ impl Asset for VleerImageLoader {
         source: Self::Source,
         cx: &mut App,
     ) -> impl std::future::Future<Output = Self::Output> + Send + 'static {
-        let pool = cx.global::<ImagePool>().0.clone();
-        let semaphore = IMAGE_LOAD_SEMAPHORE.clone();
+        let pool = cx.global::<Database>().image_pool.clone();
+        let executor = cx.background_executor().clone();
+
         async move {
             let path = match &source {
                 Resource::Embedded(p) => p.as_ref().to_string(),
@@ -48,36 +38,24 @@ impl Asset for VleerImageLoader {
                 ImageCacheError::Asset(format!("invalid image uri: {}", path).into())
             })?;
 
-            crate::RUNTIME
+            executor
                 .spawn(async move {
-                    let _permit = semaphore.acquire().await.map_err(|e| {
-                        ImageCacheError::Asset(format!("semaphore closed: {}", e).into())
-                    })?;
-
-                    let row = tokio::time::timeout(
-                        IMAGE_QUERY_TIMEOUT,
-                        sqlx::query_as::<_, (Vec<u8>,)>("SELECT data FROM images WHERE id = ?")
-                            .bind(&image_id)
-                            .fetch_optional(&*pool),
-                    )
-                    .await
-                    .map_err(|_| {
-                        ImageCacheError::Asset(
-                            format!("image query timed out: {}", image_id).into(),
+                    let conn = pool
+                        .get()
+                        .map_err(|e| ImageCacheError::Asset(format!("pool: {}", e).into()))?;
+                    let bytes: Option<Vec<u8>> = conn
+                        .query_row(
+                            "SELECT data FROM images WHERE id = ?1",
+                            params![image_id],
+                            |row| row.get(0),
                         )
-                    })?
-                    .map_err(|e| ImageCacheError::Asset(format!("sqlx: {}", e).into()))?;
-
-                    let bytes = row
-                        .ok_or_else(|| ImageCacheError::Asset("image not found".into()))?
-                        .0;
-
-                    tokio::task::spawn_blocking(move || decode_bytes(&bytes))
-                        .await
-                        .map_err(|e| ImageCacheError::Asset(format!("decode join: {}", e).into()))?
+                        .optional()
+                        .map_err(|e| ImageCacheError::Asset(format!("rusqlite: {}", e).into()))?;
+                    let bytes =
+                        bytes.ok_or_else(|| ImageCacheError::Asset("image not found".into()))?;
+                    decode_bytes(&bytes)
                 })
                 .await
-                .map_err(|e| ImageCacheError::Asset(format!("tokio join: {}", e).into()))?
         }
     }
 }

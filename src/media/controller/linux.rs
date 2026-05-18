@@ -35,31 +35,31 @@ impl LinuxController {
         Self { tx }
     }
 
-    pub async fn update_metadata(&self, metadata: ResolvedMetadata) -> Result<()> {
+    pub fn update_metadata(&self, metadata: ResolvedMetadata) -> Result<()> {
         self.tx
             .send(Command::UpdateMetadata(metadata))
             .map_err(|_| anyhow!("mpris command channel closed"))
     }
 
-    pub async fn set_state(&self, state: PlaybackState) -> Result<()> {
+    pub fn set_state(&self, state: PlaybackState) -> Result<()> {
         self.tx
             .send(Command::SetState(state))
             .map_err(|_| anyhow!("mpris command channel closed"))
     }
 
-    pub async fn set_position(&self, position_ms: u64) -> Result<()> {
+    pub fn set_position(&self, position_ms: u64) -> Result<()> {
         self.tx
             .send(Command::SetPosition(position_ms))
             .map_err(|_| anyhow!("mpris command channel closed"))
     }
 
-    pub async fn set_can_go_next(&self, can_go_next: bool) -> Result<()> {
+    pub fn set_can_go_next(&self, can_go_next: bool) -> Result<()> {
         self.tx
             .send(Command::SetCanGoNext(can_go_next))
             .map_err(|_| anyhow!("mpris command channel closed"))
     }
 
-    pub async fn set_can_go_previous(&self, can_go_previous: bool) -> Result<()> {
+    pub fn set_can_go_previous(&self, can_go_previous: bool) -> Result<()> {
         self.tx
             .send(Command::SetCanGoPrevious(can_go_previous))
             .map_err(|_| anyhow!("mpris command channel closed"))

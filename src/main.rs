@@ -3,7 +3,6 @@
     windows_subsystem = "windows"
 )]
 
-use std::sync::LazyLock;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -12,13 +11,6 @@ mod data;
 mod media;
 mod single_instance;
 mod ui;
-
-static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
-    tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap()
-});
 
 fn main() -> anyhow::Result<()> {
     let data_dir = dirs::data_dir()
@@ -60,5 +52,5 @@ fn main() -> anyhow::Result<()> {
 
     tracing::info!("Starting application");
 
-    crate::RUNTIME.block_on(crate::ui::app::run())
+    futures::executor::block_on(crate::ui::app::run())
 }

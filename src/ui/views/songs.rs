@@ -179,19 +179,17 @@ fn spawn_count_fetch(
     let bg = cx.background_executor().clone();
     cx.spawn(async move |cx: &mut AsyncApp| {
         let q = query.clone();
-        let count =
-            match bg
-                .spawn(async move {
-                    crate::RUNTIME.block_on(async { db.get_songs_count(Some(&q)).await })
-                })
-                .await
-            {
-                Ok(c) => c as usize,
-                Err(e) => {
-                    error!("songs count query failed: {}", e);
-                    0
-                }
-            };
+        let count = match bg.spawn(async move { db.get_songs_count(Some(&q)) }).await {
+            Ok(count) if count >= 0 => count as usize,
+            Ok(count) => {
+                error!("songs count query returned a negative count: {}", count);
+                0
+            }
+            Err(e) => {
+                error!("songs count query failed: {}", e);
+                0
+            }
+        };
 
         cx.update(|cx| {
             let table_entity = {
@@ -234,11 +232,7 @@ fn spawn_page_fetch(
     cx.spawn(async move |cx: &mut AsyncApp| {
         let q = query.clone();
         let items = match bg
-            .spawn(async move {
-                crate::RUNTIME.block_on(async {
-                    db.get_songs(Some(&q), sort, ascending, offset, limit).await
-                })
-            })
+            .spawn(async move { db.get_songs(Some(&q), sort, ascending, offset, limit) })
             .await
         {
             Ok(items) => items,
@@ -365,10 +359,7 @@ impl SongsView {
             cx.spawn(async move |cx: &mut AsyncApp| {
                 let song_ids = match bg
                     .spawn(async move {
-                        crate::RUNTIME.block_on(async {
-                            db.get_song_ids_from_offset(&query, sort, ascending, (index + 1) as i64)
-                                .await
-                        })
+                        db.get_song_ids_from_offset(&query, sort, ascending, (index + 1) as i64)
                     })
                     .await
                 {

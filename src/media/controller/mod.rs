@@ -71,25 +71,25 @@ impl MediaController {
         Self::start_monitor(cx, controller);
     }
 
-    pub async fn set_state(&self, state: PlaybackState) -> Result<()> {
-        self.inner.platform.set_state(state).await
+    pub fn set_state(&self, state: PlaybackState) -> Result<()> {
+        self.inner.platform.set_state(state)
     }
 
-    pub async fn update_song(&self, song: Song) -> Result<()> {
+    pub fn update_song(&self, song: Song) -> Result<()> {
         let db = self.inner.db.clone();
 
         let artist = match song.artist_id.clone() {
-            Some(id) => db.get_artist(id).await.ok().flatten().map(|a| a.name),
+            Some(id) => db.get_artist(&id).ok().flatten().map(|a| a.name),
             None => None,
         };
 
         let album = match song.album_id.clone() {
-            Some(id) => db.get_album(id).await.ok().flatten().map(|a| a.title),
+            Some(id) => db.get_album(&id).ok().flatten().map(|a| a.title),
             None => None,
         };
 
         let artwork_data = match song.image_id.as_deref() {
-            Some(id) => db.get_image(id).await.ok().flatten().map(|i| i.data),
+            Some(id) => db.get_image(id).ok().flatten().map(|i| i.data),
             None => None,
         };
 
@@ -113,22 +113,19 @@ impl MediaController {
             track_id: Some(format!("/app/vleer/track/{}", song.id)),
         };
 
-        self.inner.platform.update_metadata(metadata).await
+        self.inner.platform.update_metadata(metadata)
     }
 
-    pub async fn set_position_ms(&self, position_ms: u64) -> Result<()> {
-        self.inner.platform.set_position(position_ms).await
+    pub fn set_position_ms(&self, position_ms: u64) -> Result<()> {
+        self.inner.platform.set_position(position_ms)
     }
 
-    pub async fn set_can_go_next(&self, can_go_next: bool) -> Result<()> {
-        self.inner.platform.set_can_go_next(can_go_next).await
+    pub fn set_can_go_next(&self, can_go_next: bool) -> Result<()> {
+        self.inner.platform.set_can_go_next(can_go_next)
     }
 
-    pub async fn set_can_go_previous(&self, can_go_previous: bool) -> Result<()> {
-        self.inner
-            .platform
-            .set_can_go_previous(can_go_previous)
-            .await
+    pub fn set_can_go_previous(&self, can_go_previous: bool) -> Result<()> {
+        self.inner.platform.set_can_go_previous(can_go_previous)
     }
 
     #[cfg(target_os = "windows")]
@@ -144,13 +141,14 @@ impl MediaController {
     }
 
     fn start_monitor(cx: &mut App, controller: MediaController) {
+        let executor = cx.background_executor().clone();
         cx.spawn(async move |cx| {
             let mut last_position_ms: Option<u64> = None;
             let mut last_can_next: Option<bool> = None;
             let mut last_can_prev: Option<bool> = None;
 
             loop {
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                executor.timer(std::time::Duration::from_millis(500)).await;
 
                 let (position_ms, can_next, can_prev) = cx.update(|app| {
                     let position_ms = app
@@ -169,17 +167,17 @@ impl MediaController {
                 });
 
                 if last_position_ms != Some(position_ms) {
-                    controller.set_position_ms(position_ms).await.ok();
+                    controller.set_position_ms(position_ms).ok();
                     last_position_ms = Some(position_ms);
                 }
 
                 if last_can_next != Some(can_next) {
-                    controller.set_can_go_next(can_next).await.ok();
+                    controller.set_can_go_next(can_next).ok();
                     last_can_next = Some(can_next);
                 }
 
                 if last_can_prev != Some(can_prev) {
-                    controller.set_can_go_previous(can_prev).await.ok();
+                    controller.set_can_go_previous(can_prev).ok();
                     last_can_prev = Some(can_prev);
                 }
             }

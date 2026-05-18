@@ -51,16 +51,7 @@ impl Library {
         let db = cx.global::<Database>().clone();
 
         cx.spawn(async move |this, cx: &mut AsyncApp| {
-            let items = match crate::RUNTIME
-                .spawn(async move { db.get_pinned_items().await })
-                .await
-            {
-                Ok(items) => items,
-                Err(e) => {
-                    error!("pinned_items join failed: {}", e);
-                    return;
-                }
-            };
+            let items = db.get_pinned_items();
 
             cx.update(|cx| {
                 this.update(cx, |lib, cx| {
@@ -103,11 +94,9 @@ impl Library {
             this._search_task = Some(cx.spawn(async move |this, cx: &mut AsyncApp| {
                 let (results, counts) = bg
                     .spawn(async move {
-                        crate::RUNTIME.block_on(async {
-                            let r = db.search_library(&query, SEARCH_RESULT_LIMIT).await;
-                            let counts = db.get_search_match_counts(&query).await;
-                            (r, counts)
-                        })
+                        let r = db.search_library(&query, SEARCH_RESULT_LIMIT);
+                        let counts = db.get_search_match_counts(&query);
+                        (r, counts)
                     })
                     .await;
 
@@ -149,17 +138,9 @@ impl Library {
 
         cx.observe_global::<PinnedItemsChanged>(|_, cx| {
             let db = cx.global::<Database>().clone();
+            let bg = cx.background_executor().clone();
             cx.spawn(async move |this, cx: &mut AsyncApp| {
-                let items = match crate::RUNTIME
-                    .spawn(async move { db.get_pinned_items().await })
-                    .await
-                {
-                    Ok(items) => items,
-                    Err(e) => {
-                        error!("pinned_items join failed: {}", e);
-                        return;
-                    }
-                };
+                let items = bg.spawn(async move { db.get_pinned_items() }).await;
                 cx.update(|cx| {
                     this.update(cx, |lib, cx| {
                         lib.pinned_items = items;
@@ -259,25 +240,35 @@ fn pinned_item(
                                 let item_type = item_type_clone.clone();
                                 let id = id_clone.clone();
                                 let db = cx.global::<Database>().clone();
+                                let bg = cx.background_executor().clone();
 
                                 cx.spawn(async move |cx: &mut AsyncApp| {
-                                    let song_ids = match item_type.as_str() {
-                                        "Album" => db
-                                            .get_album_songs(&id)
-                                            .await
-                                            .unwrap_or_default()
-                                            .into_iter()
-                                            .map(|s| s.id)
-                                            .collect(),
-                                        "Playlist" => db
-                                            .get_playlist_songs(&id)
-                                            .await
-                                            .unwrap_or_default()
-                                            .into_iter()
-                                            .map(|pt| pt.song.id)
-                                            .collect(),
-                                        "Song" => vec![id],
-                                        _ => Vec::new(),
+                                    let song_ids = match bg
+                                        .spawn(async move {
+                                            match item_type.as_str() {
+                                                "Album" => Ok::<Vec<Cuid>, anyhow::Error>(
+                                                    db.get_album_songs(&id)?
+                                                        .into_iter()
+                                                        .map(|s| s.id)
+                                                        .collect(),
+                                                ),
+                                                "Playlist" => Ok::<Vec<Cuid>, anyhow::Error>(
+                                                    db.get_playlist_songs(&id)?
+                                                        .into_iter()
+                                                        .map(|pt| pt.song.id)
+                                                        .collect(),
+                                                ),
+                                                "Song" => Ok::<Vec<Cuid>, anyhow::Error>(vec![id]),
+                                                _ => Ok::<Vec<Cuid>, anyhow::Error>(Vec::new()),
+                                            }
+                                        })
+                                        .await
+                                    {
+                                        Ok(song_ids) => song_ids,
+                                        Err(e) => {
+                                            error!("pinned item songs query failed: {}", e);
+                                            Vec::new()
+                                        }
                                     };
 
                                     if !song_ids.is_empty() {

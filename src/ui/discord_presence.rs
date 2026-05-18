@@ -37,12 +37,10 @@ impl DiscordPresence {
 
                 if !*connected.lock().unwrap() {
                     let client = Arc::clone(&client);
-                    let connected = Arc::clone(&connected);
-                    let ok = tokio::task::spawn_blocking(move || {
-                        client.lock().unwrap().connect().is_ok()
-                    })
-                    .await
-                    .unwrap_or(false);
+                    let ok = cx
+                        .background_executor()
+                        .spawn(async move { client.lock().unwrap().connect().is_ok() })
+                        .await;
                     *connected.lock().unwrap() = ok;
                     if !ok {
                         continue;
@@ -72,7 +70,7 @@ impl DiscordPresence {
                     cached_song_id = song_id.clone();
 
                     if let Some(id) = song_id {
-                        let song = match db.get_song(id).await {
+                        let song = match db.get_song(&id) {
                             Ok(Some(s)) => s,
                             _ => {
                                 cached_song_info = None;
@@ -81,8 +79,7 @@ impl DiscordPresence {
                         };
 
                         let artist_name = if let Some(ref artist_id) = song.artist_id {
-                            db.get_artist(artist_id.clone())
-                                .await
+                            db.get_artist(&artist_id.clone())
                                 .ok()
                                 .flatten()
                                 .map(|a| a.name)

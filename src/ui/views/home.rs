@@ -59,7 +59,6 @@ impl HomeView {
         cx.spawn(async move |this, cx: &mut AsyncApp| {
             let items = db
                 .get_recently_played_items(HOME_RECENT_ITEMS_LIMIT)
-                .await
                 .unwrap_or_default();
 
             cx.update(|cx| {
@@ -79,7 +78,6 @@ impl HomeView {
         cx.spawn(async move |this, cx: &mut AsyncApp| {
             let items = db
                 .get_recently_added_items(HOME_RECENT_ITEMS_LIMIT)
-                .await
                 .unwrap_or_default();
 
             cx.update(|cx| {

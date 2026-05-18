@@ -135,6 +135,7 @@ impl Playback {
         let equalizer = self.equalizer.clone();
         let visualizer_state = self.visualizer_state.clone();
         let volume = self.volume;
+        let executor = cx.background_executor().clone();
 
         self.load_token = self.load_token.wrapping_add(1);
         let token = self.load_token;
@@ -144,22 +145,9 @@ impl Playback {
         self._device = None;
 
         cx.spawn(async move |cx| {
-            let song = match crate::RUNTIME
-                .spawn(async move { db.get_song(song_id).await })
-                .await
-            {
-                Ok(Ok(song)) => song,
-                Ok(Err(e)) => {
-                    error!("Failed to fetch song: {}", e);
-                    None
-                }
-                Err(e) => {
-                    error!("Failed to fetch song task: {}", e);
-                    None
-                }
-            };
+            let song = db.get_song(&song_id);
 
-            let Some(song) = song else {
+            let Ok(Some(song)) = song else {
                 cx.update(|cx| {
                     cx.update_global::<Playback, _>(|playback, _cx| {
                         if playback.load_token == token {
@@ -173,32 +161,22 @@ impl Playback {
             let path = song.file_path.clone();
             let lufs = song.lufs;
 
-            let prepared = tokio::task::spawn_blocking(move || {
-                Playback::prepare_playback(
-                    path,
-                    lufs,
-                    volume,
-                    normalization_enabled,
-                    eq_settings,
-                    equalizer,
-                    visualizer_state,
-                )
-            })
-            .await;
+            let prepared = executor
+                .spawn(async move {
+                    Playback::prepare_playback(
+                        path,
+                        lufs,
+                        volume,
+                        normalization_enabled,
+                        eq_settings,
+                        equalizer,
+                        visualizer_state,
+                    )
+                })
+                .await;
 
             let prepared = match prepared {
-                Ok(Ok(prepared)) => prepared,
-                Ok(Err(e)) => {
-                    error!("Failed to open track: {}", e);
-                    cx.update(|cx| {
-                        cx.update_global::<Playback, _>(|playback, _cx| {
-                            if playback.load_token == token {
-                                playback.loading = false;
-                            }
-                        });
-                    });
-                    return;
-                }
+                Ok(prepared) => prepared,
                 Err(e) => {
                     error!("Failed to open track: {}", e);
                     cx.update(|cx| {
@@ -251,11 +229,7 @@ impl Playback {
                 debug!("Song cached in queue");
 
                 if let Some(mc) = cx.try_global::<MediaController>() {
-                    let mc = mc.clone();
-                    let song = song.clone();
-                    tokio::spawn(async move {
-                        mc.update_song(song).await.ok();
-                    });
+                    mc.update_song(song.clone()).ok();
                 }
             });
 
@@ -348,10 +322,7 @@ impl Playback {
             debug!("Started playback");
 
             if let Some(mc) = cx.try_global::<MediaController>() {
-                let mc = mc.clone();
-                tokio::spawn(async move {
-                    mc.set_state(PlaybackState::Playing).await.ok();
-                });
+                mc.set_state(PlaybackState::Playing).ok();
             }
         }
     }
@@ -365,10 +336,7 @@ impl Playback {
             debug!("Paused playback");
 
             if let Some(mc) = cx.try_global::<MediaController>() {
-                let mc = mc.clone();
-                tokio::spawn(async move {
-                    mc.set_state(PlaybackState::Paused).await.ok();
-                });
+                mc.set_state(PlaybackState::Paused).ok();
             }
         }
     }
@@ -541,11 +509,13 @@ impl Playback {
     }
 
     pub fn start_monitor<T: 'static>(window: &Window, cx: &mut gpui::Context<T>) {
+        let executor = cx.background_executor().clone();
         cx.spawn_in(window, |_entity, cx: &mut AsyncWindowContext| {
             let mut cx = cx.clone();
+            let executor = executor;
             async move {
                 loop {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    executor.timer(std::time::Duration::from_millis(100)).await;
 
                     let should_advance = cx
                         .update(|_window, cx| {
@@ -573,24 +543,26 @@ impl Playback {
         let db = cx.global::<Database>().clone();
         let background_ui = cx.try_global::<BackgroundUiNotifier>().cloned();
         let should_notify_home = matches!(event_type, EventType::Play);
-        tokio::spawn(async move {
-            let context_id = if let Some(song_id) = &song_id {
-                match db.insert_event_context(Some(song_id), None).await {
-                    Ok(id) => Some(id),
-                    Err(e) => {
-                        error!("Failed to insert event context: {}", e);
-                        None
+        cx.background_executor()
+            .spawn(async move {
+                let context_id = if let Some(song_id) = &song_id {
+                    match db.insert_event_context(Some(song_id), None) {
+                        Ok(id) => Some(id),
+                        Err(e) => {
+                            error!("Failed to insert event context: {}", e);
+                            None
+                        }
                     }
+                } else {
+                    None
+                };
+                if let Err(e) = db.insert_event(event_type, context_id.as_ref()) {
+                    error!("Failed to insert event: {}", e);
+                } else if should_notify_home && let Some(background_ui) = background_ui {
+                    background_ui.notify(BackgroundUiEvent::HomeDataChanged);
                 }
-            } else {
-                None
-            };
-            if let Err(e) = db.insert_event(event_type, context_id.as_ref()).await {
-                error!("Failed to insert event: {}", e);
-            } else if should_notify_home && let Some(background_ui) = background_ui {
-                background_ui.notify(BackgroundUiEvent::HomeDataChanged);
-            }
-        });
+            })
+            .detach();
     }
 
     fn compute_log_volume(volume: f32) -> f32 {
