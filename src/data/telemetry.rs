@@ -1,7 +1,7 @@
 use anyhow::Result;
 use gpui::{App, Global};
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use ureq::Agent;
 use std::{fs, path::PathBuf, time::Duration};
 use tracing::{debug, error, info};
 use uuid::Uuid;
@@ -27,7 +27,7 @@ pub struct TelemetrySubmission {
 
 #[derive(Clone)]
 pub struct Telemetry {
-    client: Client,
+    agent: Agent,
     data_dir: PathBuf,
 }
 
@@ -35,15 +35,15 @@ impl Global for Telemetry {}
 
 impl Telemetry {
     pub fn init(cx: &mut App, data_dir: PathBuf) {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(2))
+        let agent: Agent = Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(2)))
             .build()
-            .unwrap_or_else(|_| Client::new());
+            .into();
 
-        cx.set_global(Self { client, data_dir });
+        cx.set_global(Self { agent, data_dir });
     }
 
-    pub async fn submit(&self, db: &Database, config: &Config) {
+    pub fn submit(&self, db: &Database, config: &Config) {
         if !config.get().telemetry {
             debug!("Telemetry disabled in settings, skipping submission.");
             return;
@@ -67,12 +67,10 @@ impl Telemetry {
             user_id,
             app_version: env!("CARGO_PKG_VERSION").to_string(),
             os: self.current_os(),
-            song_count: db.get_songs_count(None).await.unwrap_or(0),
+            song_count: db.get_songs_count(None).unwrap_or(0),
         };
 
-        let res = self.client.post(url).json(&payload).send().await;
-
-        match res {
+        match self.agent.post(url).send_json(&payload) {
             Ok(res) if res.status().is_success() => info!("Telemetry sent"),
             Ok(res) => error!("Telemetry status: {}", res.status()),
             Err(e) if cfg!(debug_assertions) => debug!("Telemetry error (debug build): {e}"),
