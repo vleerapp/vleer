@@ -10,9 +10,7 @@ A free, open-source music app powered by the OpenMusic API Spec—the open stand
 </div>
 <br>
 
-###### This project is in active developement. 4th rewrite btw .\_.
-
-![hero](https://github.com/user-attachments/assets/c86a1abf-12bb-4537-8144-8c8e0c0afdea)
+![hero](https://github.com/user-attachments/assets/418403ed-e5ff-412b-89ac-6fb501de79ab)
 
 ## Roadmap
 
@@ -22,6 +20,9 @@ A free, open-source music app powered by the OpenMusic API Spec—the open stand
 - [ ] OpenMusic API integration
 
 ## Installation
+
+> [!IMPORTANT]
+> Currently there are no releases out yet since Vleer is still being developed so this step can be ignored. If you want to try it out download the latest nightly build [here](https://github.com/vleerapp/vleer/actions/workflows/nightly.yml) just dont expect everything to work flawlessly. 
 
 All releases are signed with [minisign](https://jedisct1.github.io/minisign/). To verify a download:
 
