@@ -258,19 +258,12 @@ fn render_row(
                 .hover(|s| s.bg(variables.element_hover))
                 .gap(px(variables.padding_8))
                 .pr(px(variables.padding_8))
-                .cursor_move()
                 .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
                     let items = song_context_menu_items(song_id_for_ctx.clone(), cx);
                     context_menu.update(cx, |menu, cx| {
                         menu.show(event.position, items, cx);
                     });
                 })
-                .on_drag(
-                    drag_payload,
-                    move |payload: &QueueDragPayload, pos, _window, cx| {
-                        cx.new(|_| payload.clone().with_position(pos))
-                    },
-                )
                 .on_drag_move(move |e: &DragMoveEvent<QueueDragPayload>, _window, cx| {
                     if !e.bounds.contains(&e.event.position) {
                         return;
@@ -317,6 +310,17 @@ fn render_row(
                         .relative()
                         .group("cover-container")
                         .child(cover)
+                        .cursor_pointer()
+                        .on_mouse_down(MouseButton::Left, move |_event, _window, cx| {
+                            cx.stop_propagation();
+                            cx.update_global::<Queue, _>(|q, cx| {
+                                q.set_current_index(real_idx, cx);
+                            });
+                            cx.update_global::<Playback, _>(|p, cx| {
+                                p.play_queue(cx);
+                            });
+                            cx.set_global(QueueChanged);
+                        })
                         .child(
                             flex_row()
                                 .absolute()
@@ -346,18 +350,34 @@ fn render_row(
                         ),
                 )
                 .child(
-                    div()
-                        .overflow_x_hidden()
-                        .text_ellipsis()
-                        .font_weight(FontWeight(500.0))
-                        .text_color(if is_current {
-                            variables.text
-                        } else {
-                            variables.text_secondary
-                        })
-                        .child(song.title.clone()),
+                    flex_row()
+                        .flex_1()
+                        .min_w_0()
+                        .id(ElementId::Name(
+                            format!("queue-item-drag-{}", display_idx).into(),
+                        ))
+                        .items_center()
+                        .cursor_move()
+                        .on_drag(
+                            drag_payload,
+                            move |payload: &QueueDragPayload, pos, _window, cx| {
+                                cx.new(|_| payload.clone().with_position(pos))
+                            },
+                        )
+                        .child(
+                            div()
+                                .overflow_x_hidden()
+                                .text_ellipsis()
+                                .font_weight(FontWeight(500.0))
+                                .text_color(if is_current {
+                                    variables.text
+                                } else {
+                                    variables.text_secondary
+                                })
+                                .child(song.title.clone()),
+                        )
+                        .child(div().flex_1()),
                 )
-                .child(div().flex_1())
                 .child(
                     div()
                         .invisible()
