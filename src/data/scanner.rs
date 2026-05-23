@@ -8,7 +8,7 @@ use notify_debouncer_full::{DebounceEventResult, Debouncer, RecommendedCache, ne
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 use std::time::UNIX_EPOCH;
 use tracing::{debug, error, info, warn};
@@ -16,16 +16,63 @@ use walkdir::WalkDir;
 
 use crate::data::config::Config;
 use crate::data::db::repo::Database;
-use crate::data::metadata::{AudioMetadata, ImageData, extract_image_data};
+use crate::data::metadata::{AudioMetadata, ImageData, extract_image_data, read_metadata_and_image};
 use crate::data::models::Cuid;
 use crate::data::telemetry::Telemetry;
 use crate::ui::components::context_menu::{BackgroundUiEvent, BackgroundUiNotifier};
 
+type FsWatcher = Debouncer<notify::RecommendedWatcher, RecommendedCache>;
+
 const SUPPORTED_EXTENSIONS: &[&str] = &[
     "aac", "aiff", "aif", "flac", "mp3", "mp4", "m4a", "mp4a", "ogg", "oga", "opus", "wav", "wv",
 ];
-const MAX_CONCURRENT_SCANS: usize = 20;
-const STALE_DELETE_BATCH_SIZE: usize = 400;
+const MAX_CONCURRENT_SCANS: usize = 128;
+const IO_POOL_THREADS: usize = 128;
+
+type IoJob = Box<dyn FnOnce() + Send + 'static>;
+
+fn io_pool() -> &'static std::sync::mpsc::Sender<IoJob> {
+    use std::sync::{Mutex, OnceLock};
+    static POOL: OnceLock<std::sync::mpsc::Sender<IoJob>> = OnceLock::new();
+    POOL.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<IoJob>();
+        let rx = Arc::new(Mutex::new(rx));
+        for i in 0..IO_POOL_THREADS {
+            let rx = rx.clone();
+            std::thread::Builder::new()
+                .name(format!("vleer-io-{i}"))
+                .spawn(move || {
+                    loop {
+                        let job = {
+                            let guard = match rx.lock() {
+                                Ok(g) => g,
+                                Err(_) => break,
+                            };
+                            match guard.recv() {
+                                Ok(j) => j,
+                                Err(_) => break,
+                            }
+                        };
+                        job();
+                    }
+                })
+                .expect("failed to spawn IO worker thread");
+        }
+        tx
+    })
+}
+
+fn io_spawn<F, T>(f: F) -> futures::channel::oneshot::Receiver<T>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    let (tx, rx) = futures::channel::oneshot::channel();
+    let _ = io_pool().send(Box::new(move || {
+        let _ = tx.send(f());
+    }));
+    rx
+}
 
 #[derive(Debug, Clone)]
 pub struct ScanStats {
@@ -66,8 +113,11 @@ struct ScanOptions {
 
 #[derive(Clone)]
 pub struct Scanner {
-    scan_paths: Vec<PathBuf>,
+    scan_paths: Arc<std::sync::RwLock<Vec<PathBuf>>>,
+    watcher: Arc<std::sync::Mutex<Option<FsWatcher>>>,
     scan_lock: Arc<AsyncMutex<()>>,
+    cancel_flag: Arc<AtomicBool>,
+    scan_generation: Arc<AtomicU64>,
     pending_changed_paths: Arc<AsyncMutex<HashSet<PathBuf>>>,
     incremental_worker_running: Arc<AtomicBool>,
     scan_progress: Arc<std::sync::Mutex<ScanProgress>>,
@@ -79,13 +129,73 @@ impl Global for Scanner {}
 impl Scanner {
     pub fn new(scan_paths: Vec<PathBuf>, executor: BackgroundExecutor) -> Self {
         Self {
-            scan_paths,
+            scan_paths: Arc::new(std::sync::RwLock::new(scan_paths)),
+            watcher: Arc::new(std::sync::Mutex::new(None)),
             scan_lock: Arc::new(AsyncMutex::new(())),
+            cancel_flag: Arc::new(AtomicBool::new(false)),
+            scan_generation: Arc::new(AtomicU64::new(0)),
             pending_changed_paths: Arc::new(AsyncMutex::new(HashSet::new())),
             incremental_worker_running: Arc::new(AtomicBool::new(false)),
             scan_progress: Arc::new(std::sync::Mutex::new(ScanProgress::default())),
             executor,
         }
+    }
+
+    fn get_scan_paths(&self) -> Vec<PathBuf> {
+        self.scan_paths
+            .read()
+            .map(|p| p.clone())
+            .unwrap_or_default()
+    }
+
+    fn install_watcher(&self, watcher: FsWatcher) {
+        if let Ok(mut slot) = self.watcher.lock() {
+            *slot = Some(watcher);
+        }
+    }
+
+    pub fn update_scan_paths(&self, new_paths: Vec<PathBuf>) {
+        let old_paths: Vec<PathBuf> = {
+            let mut paths = match self.scan_paths.write() {
+                Ok(p) => p,
+                Err(_) => return,
+            };
+            let old = paths.clone();
+            *paths = new_paths.clone();
+            old
+        };
+
+        if old_paths == new_paths {
+            return;
+        }
+
+        if let Ok(mut watcher_slot) = self.watcher.lock()
+            && let Some(watcher) = watcher_slot.as_mut()
+        {
+            for old in &old_paths {
+                if !new_paths.contains(old)
+                    && let Err(e) = watcher.unwatch(old)
+                {
+                    warn!("Failed to unwatch {:?}: {}", old, e);
+                }
+            }
+            for new_p in &new_paths {
+                if !old_paths.contains(new_p)
+                    && new_p.exists()
+                    && let Err(e) = watcher.watch(new_p, RecursiveMode::Recursive)
+                {
+                    warn!("Failed to watch {:?}: {}", new_p, e);
+                }
+            }
+        }
+    }
+
+    fn request_cancel(&self) {
+        self.cancel_flag.store(true, Ordering::Release);
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancel_flag.load(Ordering::Acquire)
     }
 
     fn update_scan_progress(&self, progress: ScanProgress) {
@@ -120,11 +230,99 @@ impl Scanner {
         let scanner = Arc::new(scanner);
         let db_arc = Arc::new(db.clone());
 
+        let scanner_for_observe = scanner.clone();
+        let db_for_observe = db.clone();
+        let background_ui_for_observe = background_ui.clone();
+        let last_paths: Arc<std::sync::Mutex<Vec<PathBuf>>> =
+            Arc::new(std::sync::Mutex::new(scanner.get_scan_paths()));
+        cx.observe_global::<Config>(move |cx| {
+            let new_paths = expand_scan_paths(&cx.global::<Config>().get().scan.paths);
+            let (changed, removed_paths) = {
+                let mut last = match last_paths.lock() {
+                    Ok(l) => l,
+                    Err(_) => return,
+                };
+                if *last == new_paths {
+                    (false, Vec::new())
+                } else {
+                    let removed: Vec<PathBuf> = last
+                        .iter()
+                        .filter(|p| !new_paths.contains(p))
+                        .cloned()
+                        .collect();
+                    *last = new_paths.clone();
+                    (true, removed)
+                }
+            };
+            if !changed {
+                return;
+            }
+
+            info!("Scan paths changed, updating watcher and rescanning");
+            scanner_for_observe.update_scan_paths(new_paths);
+
+            let scanner_clone = scanner_for_observe.clone();
+            let db_clone = db_for_observe.clone();
+            let background_ui_clone = background_ui_for_observe.clone();
+            cx.background_executor()
+                .spawn(async move {
+                    let observer_start = std::time::Instant::now();
+                    let mut pre_removed = 0usize;
+                    if !removed_paths.is_empty() {
+                        let prefixes: Vec<String> = removed_paths
+                            .iter()
+                            .map(|p| p.to_string_lossy().to_string())
+                            .collect();
+                        let del_start = std::time::Instant::now();
+                        match db_clone.delete_songs_under_prefixes(&prefixes) {
+                            Ok(n) => {
+                                pre_removed = n;
+                                info!(
+                                    "Path-change: bulk-deleted {} songs in {:?} for prefixes {:?}",
+                                    n,
+                                    del_start.elapsed(),
+                                    removed_paths
+                                );
+                                if n > 0 && let Some(background_ui) = &background_ui_clone {
+                                    background_ui
+                                        .notify(BackgroundUiEvent::LibraryDataChanged);
+                                }
+                            }
+                            Err(e) => {
+                                error!("Bulk-delete under removed prefixes failed: {}", e);
+                            }
+                        }
+                    }
+
+                    let scan_start = std::time::Instant::now();
+                    match scanner_clone.scan(&db_clone).await {
+                        Ok(stats) => {
+                            info!(
+                                "Path-change rescan in {:?} (observer total {:?}) - Scanned: {}, Added: {}, Updated: {}, Removed: {} (+ {} pre-removed)",
+                                scan_start.elapsed(),
+                                observer_start.elapsed(),
+                                stats.scanned, stats.added, stats.updated, stats.removed, pre_removed
+                            );
+                            if (stats.added > 0 || stats.updated > 0 || stats.removed > 0)
+                                && let Some(background_ui) = &background_ui_clone
+                            {
+                                background_ui.notify(BackgroundUiEvent::LibraryDataChanged);
+                            }
+                        }
+                        Err(e) => {
+                            error!("Path-change rescan failed: {}", e);
+                        }
+                    }
+                })
+                .detach();
+        })
+        .detach();
+
         let exec = executor.clone();
         executor
             .spawn(async move {
-                match MusicWatcher::new(scanner.clone(), db_arc, exec.clone()) {
-                    Ok((watcher, mut rx)) => {
+                match MusicWatcher::install(scanner.clone(), db_arc, exec.clone()) {
+                    Ok(mut rx) => {
                         let db_clone = db.clone();
                         let telemetry_clone = telemetry.clone();
                         let config_clone = config.clone();
@@ -132,7 +330,6 @@ impl Scanner {
 
                         exec.clone()
                             .spawn(async move {
-                                let _watcher = watcher;
                                 while let Some(stats) = rx.next().await {
                                     info!(
                                         "Library scan completed - Scanned: {}, Added: {}, Updated: {}, Removed: {}",
@@ -229,58 +426,36 @@ impl Scanner {
         force || existing_size != current_size || existing_modified != current_modified
     }
 
-    fn normalize_path_for_matching(path: &Path) -> Option<PathBuf> {
-        if path.as_os_str().is_empty() {
-            return None;
-        }
-
-        if let Ok(canonical) = path.canonicalize() {
-            return Some(canonical);
-        }
-
-        if path.is_absolute() {
-            return Some(path.to_path_buf());
-        }
-
-        std::env::current_dir().ok().map(|cwd| cwd.join(path))
-    }
-
-    fn scan_roots_for_matching(&self) -> Vec<PathBuf> {
-        self.scan_paths
-            .iter()
-            .filter_map(|root| Self::normalize_path_for_matching(root))
-            .collect()
-    }
-
-    fn path_in_scan_roots(song_path: &Path, scan_roots: &[PathBuf]) -> bool {
-        let Some(normalized_song_path) = Self::normalize_path_for_matching(song_path) else {
-            return false;
-        };
-
-        scan_roots
-            .iter()
-            .any(|root| normalized_song_path.starts_with(root))
-    }
-
     async fn collect_audio_files(&self) -> Result<Vec<PathBuf>> {
         let mut all_files = Vec::new();
+        let scan_paths = self.get_scan_paths();
 
-        for root in &self.scan_paths {
+        for root in scan_paths {
+            if self.is_cancelled() {
+                break;
+            }
             if !root.exists() || !root.is_dir() {
                 continue;
             }
 
-            let root = root.clone();
+            let cancel_flag = self.cancel_flag.clone();
             let files = self
                 .executor
                 .spawn(async move {
-                    WalkDir::new(&root)
+                    let mut files = Vec::new();
+                    for entry in WalkDir::new(&root)
                         .follow_links(true)
                         .into_iter()
                         .filter_map(|e| e.ok())
-                        .filter(|e| e.file_type().is_file() && Scanner::is_audio_file(e.path()))
-                        .map(|e| e.path().to_path_buf())
-                        .collect::<Vec<_>>()
+                    {
+                        if cancel_flag.load(Ordering::Acquire) {
+                            break;
+                        }
+                        if entry.file_type().is_file() && Scanner::is_audio_file(entry.path()) {
+                            files.push(entry.path().to_path_buf());
+                        }
+                    }
+                    files
                 })
                 .await;
 
@@ -302,53 +477,31 @@ impl Scanner {
             .collect())
     }
 
-    fn remove_missing_tracks(&self, db: &Database) -> Result<usize> {
+    fn remove_missing_tracks(
+        &self,
+        db: &Database,
+        scanned_files: &HashSet<String>,
+    ) -> Result<usize> {
         let paths = self.collect_song_paths(db)?;
-        let scan_roots = self.scan_roots_for_matching();
-        let mut stale_paths = Vec::new();
-        let mut missing_candidates = 0usize;
-        let mut out_of_scope_candidates = 0usize;
 
-        for path_str in paths {
-            let song_path = Path::new(&path_str);
-            let missing_on_disk = !song_path.exists();
-            let outside_scan_roots = !Self::path_in_scan_roots(song_path, &scan_roots);
-
-            if missing_on_disk || outside_scan_roots {
-                if missing_on_disk {
-                    missing_candidates += 1;
-                } else {
-                    out_of_scope_candidates += 1;
-                }
-                stale_paths.push(path_str);
-            }
-        }
+        let stale_paths: Vec<String> = paths
+            .into_iter()
+            .filter(|p| !scanned_files.contains(p))
+            .collect();
 
         if stale_paths.is_empty() {
             return Ok(0);
         }
 
-        let mut removed = 0usize;
-        for chunk in stale_paths.chunks(STALE_DELETE_BATCH_SIZE) {
-            match db.delete_songs_by_paths(chunk) {
-                Ok(deleted) => {
-                    removed += deleted;
-                }
-                Err(e) => {
-                    error!(
-                        "Failed to remove stale track batch (size {}): {}",
-                        chunk.len(),
-                        e
-                    );
-                }
+        let removed = match db.delete_songs_by_paths(&stale_paths) {
+            Ok(n) => n,
+            Err(e) => {
+                error!("Failed to remove {} stale tracks: {}", stale_paths.len(), e);
+                0
             }
-        }
+        };
 
-        info!(
-            "Removed {} stale tracks ({} missing, {} out-of-scope)",
-            removed, missing_candidates, out_of_scope_candidates
-        );
-
+        info!("Removed {} stale tracks", removed);
         Ok(removed)
     }
 
@@ -360,8 +513,22 @@ impl Scanner {
         let mut failed = 0;
 
         let audio_files = self.collect_audio_files().await?;
+        if self.is_cancelled() {
+            info!("Scan cancelled before processing files");
+            self.clear_scan_progress();
+            return Ok(ScanStats {
+                scanned: 0,
+                added: 0,
+                updated: 0,
+                removed: 0,
+            });
+        }
         let existing_track_state = Arc::new(self.collect_existing_track_state(db)?);
         let total_files = audio_files.len();
+        let scanned_files: HashSet<String> = audio_files
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
 
         self.update_scan_progress(ScanProgress {
             current: 0,
@@ -376,21 +543,17 @@ impl Scanner {
         );
 
         let force = options.force;
-        let executor = self.executor.clone();
 
         let tracks_stream = stream::iter(audio_files)
             .map({
                 let existing_track_state = existing_track_state.clone();
-                let executor = executor.clone();
                 move |path: PathBuf| {
                     let existing_track_state = existing_track_state.clone();
-                    let executor = executor.clone();
                     async move {
-                        executor
-                            .spawn(
-                                async move { process_one_file(path, &existing_track_state, force) },
-                            )
-                            .await
+                        let rx = io_spawn(move || {
+                            process_one_file(path, &existing_track_state, force)
+                        });
+                        rx.await.ok().flatten()
                     }
                 }
             })
@@ -402,7 +565,12 @@ impl Scanner {
         let mut artist_cache: HashMap<String, Cuid> = HashMap::new();
         let mut album_cache: HashMap<(String, Option<Cuid>), (Cuid, bool)> = HashMap::new();
 
+        let mut cancelled = false;
         while let Some((track_opt, is_new, is_failed)) = tracks_stream.next().await {
+            if self.is_cancelled() {
+                cancelled = true;
+                break;
+            }
             if is_failed {
                 failed += 1;
                 continue;
@@ -449,7 +617,21 @@ impl Scanner {
             });
         }
 
-        let removed = self.remove_missing_tracks(db)?;
+        if cancelled || self.is_cancelled() {
+            info!(
+                "Scan cancelled mid-progress: {} scanned, {} added, {} updated, {} skipped, {} failed",
+                scanned, added, updated, skipped, failed
+            );
+            self.clear_scan_progress();
+            return Ok(ScanStats {
+                scanned,
+                added,
+                updated,
+                removed: 0,
+            });
+        }
+
+        let removed = self.remove_missing_tracks(db, &scanned_files)?;
 
         info!(
             "Scan complete: {} scanned, {} added, {} updated, {} skipped, {} failed, {} removed",
@@ -471,24 +653,39 @@ impl Scanner {
         })
     }
 
-    pub async fn scan(&self, db: &Database) -> Result<ScanStats> {
+    async fn run_scan(&self, db: &Database, options: ScanOptions) -> Result<ScanStats> {
+        let my_gen = self
+            .scan_generation
+            .fetch_add(1, Ordering::AcqRel)
+            .wrapping_add(1);
+        self.request_cancel();
+
         let _scan_guard = self.scan_lock.lock().await;
-        let result = self.scan_with_options(db, ScanOptions::default()).await;
+
+        if self.scan_generation.load(Ordering::Acquire) != my_gen {
+            debug!("Scan request {} superseded before start", my_gen);
+            return Ok(ScanStats {
+                scanned: 0,
+                added: 0,
+                updated: 0,
+                removed: 0,
+            });
+        }
+
+        self.cancel_flag.store(false, Ordering::Release);
+        let result = self.scan_with_options(db, options).await;
         if result.is_err() {
             self.clear_scan_progress();
         }
         result
     }
 
+    pub async fn scan(&self, db: &Database) -> Result<ScanStats> {
+        self.run_scan(db, ScanOptions::default()).await
+    }
+
     pub async fn force_scan(&self, db: &Database) -> Result<ScanStats> {
-        let _scan_guard = self.scan_lock.lock().await;
-        let result = self
-            .scan_with_options(db, ScanOptions { force: true })
-            .await;
-        if result.is_err() {
-            self.clear_scan_progress();
-        }
-        result
+        self.run_scan(db, ScanOptions { force: true }).await
     }
 
     fn process_changed_files_inner(
@@ -774,15 +971,13 @@ fn process_one_file(
         return Some((None, false, false));
     }
 
-    let metadata = match Scanner::read_metadata(&path) {
-        Ok(meta) => meta,
+    let (metadata, image_data) = match read_metadata_and_image(&path) {
+        Ok(result) => result,
         Err(e) => {
             warn!("Failed to read metadata for {}: {}", file_path, e);
             return Some((None, true, false));
         }
     };
-
-    let image_data = Scanner::extract_image(&path);
 
     Some((
         Some(ScannedTrack {
@@ -810,18 +1005,14 @@ pub fn expand_scan_paths(paths: &[String]) -> Vec<PathBuf> {
     paths.iter().map(|p| expand_tilde(p)).collect()
 }
 
-pub struct MusicWatcher {
-    _scanner: Arc<Scanner>,
-    _db: Arc<Database>,
-    _debouncer: Debouncer<notify::RecommendedWatcher, RecommendedCache>,
-}
+pub struct MusicWatcher;
 
 impl MusicWatcher {
-    pub fn new(
+    pub fn install(
         scanner: Arc<Scanner>,
         db: Arc<Database>,
         executor: BackgroundExecutor,
-    ) -> Result<(Self, mpsc::UnboundedReceiver<ScanStats>)> {
+    ) -> Result<mpsc::UnboundedReceiver<ScanStats>> {
         let (tx, rx) = mpsc::unbounded::<ScanStats>();
         let scanner_clone = scanner.clone();
         let db_clone = db.clone();
@@ -916,19 +1107,20 @@ impl MusicWatcher {
         )
         .context("Failed to create filesystem watcher")?;
 
-        for path in &scanner.scan_paths {
+        for path in scanner.get_scan_paths() {
+            if !path.exists() {
+                debug!("Skipping non-existent watch path: {:?}", path);
+                continue;
+            }
             debug!("Watching directory for changes: {:?}", path);
             debouncer
-                .watch(path, RecursiveMode::Recursive)
+                .watch(&path, RecursiveMode::Recursive)
                 .with_context(|| format!("Failed to watch directory: {:?}", path))?;
         }
 
-        let watcher = Self {
-            _scanner: scanner,
-            _db: db,
-            _debouncer: debouncer,
-        };
+        scanner.install_watcher(debouncer);
+        let _ = db;
 
-        Ok((watcher, rx))
+        Ok(rx)
     }
 }
