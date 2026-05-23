@@ -9,8 +9,14 @@ use anyhow::Result;
 use gpui::Global;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
+use rust_embed::RustEmbed;
 use rusqlite::{OptionalExtension, ToSql, params};
+use rusqlite_migration::Migrations;
 use std::path::Path;
+
+#[derive(RustEmbed)]
+#[folder = "./migrations"]
+struct MigrationFiles;
 
 fn build_pool(
     path: &Path,
@@ -26,6 +32,25 @@ fn build_pool(
         ))
     });
     Ok(Pool::builder().max_size(max_size).build(manager)?)
+}
+
+fn run_migrations(conn: &mut rusqlite::Connection) -> Result<()> {
+    let mut files: Vec<(String, String)> = MigrationFiles::iter()
+        .filter_map(|name| {
+            let sql = MigrationFiles::get(&name)?;
+            let text = std::str::from_utf8(sql.data.as_ref()).ok()?.to_owned();
+            Some((name.into_owned(), text))
+        })
+        .collect();
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let migrations: Vec<rusqlite_migration::M> = files
+        .iter()
+        .map(|(_, sql)| rusqlite_migration::M::up(sql))
+        .collect();
+
+    Migrations::new(migrations).to_latest(conn)?;
+    Ok(())
 }
 
 fn collect_mapped<T, U, F>(
@@ -55,6 +80,10 @@ impl Global for Database {}
 
 impl Database {
     pub fn new(path: &Path) -> Result<Self> {
+        let mut conn = rusqlite::Connection::open(path)?;
+        run_migrations(&mut conn)?;
+        drop(conn);
+
         let pool = build_pool(path, 8, 3000)?;
         let image_pool = build_pool(path, 4, 5000)?;
         Ok(Self { pool, image_pool })
@@ -179,18 +208,131 @@ impl Database {
             return Ok(0);
         }
 
-        let placeholders = (1..=file_paths.len())
-            .map(|i| format!("?{i}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let sql = format!("DELETE FROM songs WHERE file_path IN ({placeholders})");
-
+        const CHUNK: usize = 500;
         let mut conn = self.pool.get()?;
         let tx = conn.transaction()?;
-        let params: Vec<&dyn ToSql> = file_paths.iter().map(|p| p as &dyn ToSql).collect();
-        let count = tx.execute(&sql, params.as_slice())?;
+        let mut total = 0usize;
+        for chunk in file_paths.chunks(CHUNK) {
+            let placeholders = (1..=chunk.len())
+                .map(|i| format!("?{i}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = format!("DELETE FROM songs WHERE file_path IN ({placeholders})");
+            let params: Vec<&dyn ToSql> = chunk.iter().map(|p| p as &dyn ToSql).collect();
+            total += tx.execute(&sql, params.as_slice())?;
+        }
         tx.commit()?;
-        Ok(count)
+        Ok(total)
+    }
+
+    pub fn delete_songs_under_prefixes(&self, prefixes: &[String]) -> Result<usize> {
+        if prefixes.is_empty() {
+            return Ok(0);
+        }
+
+        let total_start = std::time::Instant::now();
+        let mut conn = self.pool.get()?;
+        let tx = conn.transaction()?;
+
+        const MAINTENANCE_TRIGGERS: &[&str] = &[
+            "songs_ad",
+            "delete_album_trigger",
+            "delete_unused_song_image",
+            "delete_artist_trigger",
+            "delete_unused_album_image",
+            "albums_ad",
+            "delete_unused_artist_image",
+            "artists_ad",
+        ];
+
+        let mut saved_triggers: Vec<String> = Vec::with_capacity(MAINTENANCE_TRIGGERS.len());
+        {
+            let mut stmt = tx
+                .prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name = ?1")?;
+            for name in MAINTENANCE_TRIGGERS {
+                if let Ok(sql) = stmt.query_row(params![name], |row| row.get::<_, String>(0)) {
+                    saved_triggers.push(sql);
+                }
+            }
+        }
+
+        for name in MAINTENANCE_TRIGGERS {
+            tx.execute_batch(&format!("DROP TRIGGER IF EXISTS {}", name))?;
+        }
+
+        let mut total = 0usize;
+        for prefix in prefixes {
+            let mut start = prefix.clone();
+            if !start.ends_with('/') && !start.ends_with('\\') {
+                start.push(std::path::MAIN_SEPARATOR);
+            }
+            let mut end_bytes = start.as_bytes().to_vec();
+            if let Some(last) = end_bytes.last_mut() {
+                *last = last.saturating_add(1);
+            }
+            let end = match String::from_utf8(end_bytes) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let stmt_start = std::time::Instant::now();
+            let count = tx.execute(
+                "DELETE FROM songs WHERE file_path >= ?1 AND file_path < ?2",
+                params![start, end],
+            )?;
+            tracing::info!(
+                "delete_songs_under_prefixes: deleted {} rows for prefix={:?} in {:?}",
+                count,
+                prefix,
+                stmt_start.elapsed()
+            );
+            total += count;
+        }
+
+        let cleanup_start = std::time::Instant::now();
+        let fts_removed = tx.execute(
+            "DELETE FROM songs_fts WHERE song_id NOT IN (SELECT id FROM songs)",
+            [],
+        )?;
+        let albums_removed = tx.execute(
+            "DELETE FROM albums WHERE NOT EXISTS (SELECT 1 FROM songs WHERE songs.album_id = albums.id)",
+            [],
+        )?;
+        let artists_removed = tx.execute(
+            "DELETE FROM artists
+             WHERE NOT EXISTS (SELECT 1 FROM songs WHERE songs.artist_id = artists.id)
+               AND NOT EXISTS (SELECT 1 FROM albums WHERE albums.artist_id = artists.id)",
+            [],
+        )?;
+        let images_removed = tx.execute(
+            "DELETE FROM images
+             WHERE NOT EXISTS (SELECT 1 FROM songs WHERE songs.image_id = images.id)
+               AND NOT EXISTS (SELECT 1 FROM albums WHERE albums.image_id = images.id)
+               AND NOT EXISTS (SELECT 1 FROM artists WHERE artists.image_id = images.id)
+               AND NOT EXISTS (SELECT 1 FROM playlists WHERE playlists.image_id = images.id)",
+            [],
+        )?;
+        tracing::info!(
+            "delete_songs_under_prefixes: bulk cleanup in {:?} - {} fts, {} albums, {} artists, {} images",
+            cleanup_start.elapsed(),
+            fts_removed,
+            albums_removed,
+            artists_removed,
+            images_removed
+        );
+
+        for sql in &saved_triggers {
+            tx.execute_batch(sql)?;
+        }
+
+        let commit_start = std::time::Instant::now();
+        tx.commit()?;
+        tracing::info!(
+            "delete_songs_under_prefixes: commit took {:?}, total {:?} for {} rows",
+            commit_start.elapsed(),
+            total_start.elapsed(),
+            total
+        );
+        Ok(total)
     }
 
     pub fn get_song_paths(&self) -> Result<Vec<String>> {

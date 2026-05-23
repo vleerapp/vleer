@@ -25,6 +25,7 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tokio = { version = "1.52.3", features = ["full"] }
 futures = "0.3.32"
 rusqlite = { version = "0.39.0", features = ["bundled", "chrono"] }
+rusqlite_migration = { version = "2.5.0", features = ["from-directory"] }
 r2d2 = "0.8.10"
 r2d2_sqlite = "0.34.0"
 serde = { version = "1.0.228", features = ["derive"] }
