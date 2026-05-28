@@ -9,9 +9,9 @@ use anyhow::Result;
 use gpui::Global;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rust_embed::RustEmbed;
 use rusqlite::{OptionalExtension, ToSql, params};
 use rusqlite_migration::Migrations;
+use rust_embed::RustEmbed;
 use std::path::Path;
 
 #[derive(RustEmbed)]
@@ -247,8 +247,8 @@ impl Database {
 
         let mut saved_triggers: Vec<String> = Vec::with_capacity(MAINTENANCE_TRIGGERS.len());
         {
-            let mut stmt = tx
-                .prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name = ?1")?;
+            let mut stmt =
+                tx.prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name = ?1")?;
             for name in MAINTENANCE_TRIGGERS {
                 if let Ok(sql) = stmt.query_row(params![name], |row| row.get::<_, String>(0)) {
                     saved_triggers.push(sql);

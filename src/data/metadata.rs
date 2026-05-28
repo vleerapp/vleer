@@ -34,10 +34,7 @@ pub struct ImageData {
     pub data: Vec<u8>,
 }
 
-fn extract_metadata_from_tag(
-    tag: Option<&Tag>,
-    duration: Duration,
-) -> AudioMetadata {
+fn extract_metadata_from_tag(tag: Option<&Tag>, duration: Duration) -> AudioMetadata {
     let (title, artist, album, genre, year, track_number, lufs) = if let Some(tag) = tag {
         let title = tag.title().map(|s| s.to_string());
         let artist = tag.artist().map(|s| s.to_string());

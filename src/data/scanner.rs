@@ -16,7 +16,9 @@ use walkdir::WalkDir;
 
 use crate::data::config::Config;
 use crate::data::db::repo::Database;
-use crate::data::metadata::{AudioMetadata, ImageData, extract_image_data, read_metadata_and_image};
+use crate::data::metadata::{
+    AudioMetadata, ImageData, extract_image_data, read_metadata_and_image,
+};
 use crate::data::models::Cuid;
 use crate::data::telemetry::Telemetry;
 use crate::ui::components::context_menu::{BackgroundUiEvent, BackgroundUiNotifier};
@@ -550,9 +552,8 @@ impl Scanner {
                 move |path: PathBuf| {
                     let existing_track_state = existing_track_state.clone();
                     async move {
-                        let rx = io_spawn(move || {
-                            process_one_file(path, &existing_track_state, force)
-                        });
+                        let rx =
+                            io_spawn(move || process_one_file(path, &existing_track_state, force));
                         rx.await.ok().flatten()
                     }
                 }
