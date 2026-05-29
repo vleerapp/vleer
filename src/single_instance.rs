@@ -7,6 +7,15 @@ use interprocess::local_socket::{GenericFilePath, GenericNamespaced, ListenerOpt
 
 const APP_ID: &str = "vleer";
 
+#[cfg(unix)]
+fn socket_path() -> String {
+    if GenericNamespaced::is_supported() {
+        format!("/tmp/{APP_ID}")
+    } else {
+        format!("/tmp/{APP_ID}.sock")
+    }
+}
+
 pub enum AcquireResult {
     Acquired(SingleInstanceGuard),
     AlreadyRunning,
@@ -14,15 +23,13 @@ pub enum AcquireResult {
 
 pub struct SingleInstanceGuard {
     _rx: mpsc::Receiver<()>,
-    #[cfg(unix)]
-    app_id: String,
 }
 
 impl Drop for SingleInstanceGuard {
     fn drop(&mut self) {
         #[cfg(unix)]
         {
-            let _ = std::fs::remove_file(format!("/tmp/{}.sock", self.app_id));
+            let _ = std::fs::remove_file(socket_path());
         }
     }
 }
@@ -46,8 +53,11 @@ pub fn try_acquire() -> anyhow::Result<AcquireResult> {
 
     #[cfg(unix)]
     {
-        let _ = std::fs::remove_file(format!("/tmp/{APP_ID}.sock"));
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        let sock_path = socket_path();
+        if std::path::Path::new(&sock_path).exists() {
+            std::fs::remove_file(&sock_path)
+                .map_err(|e| anyhow::anyhow!("failed to remove stale socket {sock_path}: {e}"))?;
+        }
     }
 
     let listener = ListenerOptions::new()
@@ -66,9 +76,5 @@ pub fn try_acquire() -> anyhow::Result<AcquireResult> {
         }
     });
 
-    Ok(AcquireResult::Acquired(SingleInstanceGuard {
-        _rx: rx,
-        #[cfg(unix)]
-        app_id: APP_ID.to_string(),
-    }))
+    Ok(AcquireResult::Acquired(SingleInstanceGuard { _rx: rx }))
 }
