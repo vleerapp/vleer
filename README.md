@@ -19,19 +19,52 @@ A free, open-source music app powered by the OpenMusic API Spec—the open stand
 - [ ] Stable local music player
 - [ ] OpenMusic API integration
 
-## Installation
+## Installation/Testing
 
-> [!IMPORTANT]
-> Currently there are no releases out yet since Vleer is still being developed so this step can be ignored. If you want to try it out download the latest nightly build [here](https://github.com/vleerapp/vleer/actions/workflows/nightly.yml) just dont expect everything to work flawlessly. 
+<details>
+<summary>Linux</summary>
 
-All releases are signed with [minisign](https://jedisct1.github.io/minisign/). To verify a download:
+Download the latest nightly build [here](https://github.com/vleerapp/vleer/actions/workflows/nightly.yml).
 
+**Arch Linux:** 
 ```bash
-minisign -Vm <file> -P RWQc0Dzx5Dhao5YtQGj79Y4AN7U1pjJFctj3dCLr4tQqkjewjl5xnSqe
+yay -S vleer-git
 ```
 
-> [!NOTE]
-> **macOS:** You may see a warning that the app is damaged. Run `xattr -dr com.apple.quarantine /Applications/Vleer.app` to fix it.
+(Optional) Verify downloads with [minisign](https://jedisct1.github.io/minisign/):
 
-> [!NOTE]
-> **Windows:** SmartScreen may block the installer. Click "More info" then "Run anyway".
+```bash
+minisign -Vm <downloaded_file_name> -P RWQc0Dzx5Dhao5YtQGj79Y4AN7U1pjJFctj3dCLr4tQqkjewjl5xnSqe
+```
+
+</details>
+
+<details>
+<summary>Windows</summary>
+
+Download the latest nightly build [here](https://github.com/vleerapp/vleer/actions/workflows/nightly.yml).
+
+SmartScreen may block the installer. Click "More info" then "Run anyway".
+
+(Optional) Verify downloads with [minisign](https://jedisct1.github.io/minisign/):
+
+```bash
+minisign -Vm <downloaded_file_name> -P RWQc0Dzx5Dhao5YtQGj79Y4AN7U1pjJFctj3dCLr4tQqkjewjl5xnSqe
+```
+
+</details>
+
+<details>
+<summary>macOS</summary>
+
+Download the latest nightly build [here](https://github.com/vleerapp/vleer/actions/workflows/nightly.yml).
+
+You may see a warning that the app is damaged. Run `xattr -dr com.apple.quarantine /Applications/Vleer.app` to fix it.
+
+(Optional) Verify downloads with [minisign](https://jedisct1.github.io/minisign/):
+
+```bash
+minisign -Vm <downloaded_file_name> -P RWQc0Dzx5Dhao5YtQGj79Y4AN7U1pjJFctj3dCLr4tQqkjewjl5xnSqe
+```
+
+</details>
