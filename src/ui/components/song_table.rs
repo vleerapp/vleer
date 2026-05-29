@@ -436,19 +436,17 @@ impl Render for SongTableItem {
                             .id(data.album.clone())
                             .text_color(variables.text_secondary)
                             .when_some(album_id.clone(), |div, album_id| {
-                                div.cursor_pointer()
-                                    .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
+                                div.cursor_pointer().on_mouse_down(
+                                    MouseButton::Left,
+                                    move |_event, window, cx| {
                                         cx.set_global(SelectedAlbum(Some(album_id.clone())));
                                         if let Some(Some(root)) = window.root::<MainWindow>() {
                                             root.update(cx, |view, cx| {
-                                                view.set_current_view(
-                                                    AppView::Album,
-                                                    window,
-                                                    cx,
-                                                );
+                                                view.set_current_view(AppView::Album, window, cx);
                                             });
                                         }
-                                    })
+                                    },
+                                )
                             })
                             .child(
                                 div()
@@ -847,13 +845,10 @@ impl Render for SongTable {
                 )
             });
 
-        div().h_full().w_full().min_h_0().child(
-            div()
-                .h_full()
-                .w_full()
-                .flex_col()
-                .child(header)
-                .child(list),
-        )
+        div()
+            .h_full()
+            .w_full()
+            .min_h_0()
+            .child(div().h_full().w_full().flex_col().child(header).child(list))
     }
 }

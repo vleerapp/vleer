@@ -191,14 +191,15 @@ fn pinned_item(
         .pr(px(variables.padding_8))
         .when(is_album, |div| {
             let album_id = id.clone();
-            div.cursor_pointer().on_mouse_down(MouseButton::Left, move |_event, window, cx| {
-                cx.set_global(SelectedAlbum(Some(album_id.clone())));
-                if let Some(Some(root)) = window.root::<MainWindow>() {
-                    root.update(cx, |view, cx| {
-                        view.set_current_view(AppView::Album, window, cx);
-                    });
-                }
-            })
+            div.cursor_pointer()
+                .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
+                    cx.set_global(SelectedAlbum(Some(album_id.clone())));
+                    if let Some(Some(root)) = window.root::<MainWindow>() {
+                        root.update(cx, |view, cx| {
+                            view.set_current_view(AppView::Album, window, cx);
+                        });
+                    }
+                })
         })
         .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
             let items = match item_type_for_ctx.as_str() {

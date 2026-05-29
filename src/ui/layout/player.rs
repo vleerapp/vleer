@@ -23,8 +23,17 @@ use crate::{
     },
 };
 
+#[allow(dead_code)]
+struct CachedSong {
+    id: Cuid,
+    title: String,
+    artist: String,
+    cover: Option<String>,
+    album_id: Option<Cuid>,
+}
+
 pub struct Player {
-    cached_song_data: Option<(Cuid, String, String, Option<String>, Option<Cuid>)>,
+    cached_song_data: Option<CachedSong>,
     context_menu: Entity<ContextMenu>,
 }
 
@@ -84,13 +93,13 @@ impl Render for Player {
                 .clone()
                 .unwrap_or_else(|| "Unknown Artist".to_string());
 
-            self.cached_song_data = Some((
-                song.id.clone(),
-                title.clone(),
-                artist.clone(),
-                cover.clone(),
-                song.album_id.clone(),
-            ));
+            self.cached_song_data = Some(CachedSong {
+                id: song.id.clone(),
+                title: title.clone(),
+                artist: artist.clone(),
+                cover: cover.clone(),
+                album_id: song.album_id.clone(),
+            });
             Some((title, artist, cover, song.album_id.clone()))
         } else {
             self.cached_song_data = None;
@@ -209,15 +218,17 @@ impl Render for Player {
                 .gap(px(variables.padding_8))
                 .items_center()
                 .when_some(album_id.clone(), |div, album_id| {
-                    div.cursor_pointer()
-                        .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
+                    div.cursor_pointer().on_mouse_down(
+                        MouseButton::Left,
+                        move |_event, window, cx| {
                             cx.set_global(SelectedAlbum(Some(album_id.clone())));
                             if let Some(Some(root)) = window.root::<MainWindow>() {
                                 root.update(cx, |view, cx| {
                                     view.set_current_view(AppView::Album, window, cx);
                                 });
                             }
-                        })
+                        },
+                    )
                 })
                 .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
                     if let Some(id) = &song_id {

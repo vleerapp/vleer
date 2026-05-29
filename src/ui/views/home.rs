@@ -186,7 +186,11 @@ fn recent_item_tile(
     };
     let play_item_id = item_id.clone();
     let menu_item_id = item_id.clone();
-    let nav_album_id = if !is_song { Some(item_id.clone()) } else { None };
+    let nav_album_id = if !is_song {
+        Some(item_id.clone())
+    } else {
+        None
+    };
 
     Card::new(format!("{id_prefix}-item-{idx}"), title, cover_size)
         .subtitle(subtitle)
