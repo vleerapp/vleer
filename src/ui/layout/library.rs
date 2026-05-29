@@ -243,6 +243,7 @@ fn pinned_item(
                             .child(icon(icons::PLAY).size(px(16.0)).text_color(variables.text))
                             .cursor_pointer()
                             .on_mouse_down(MouseButton::Left, move |_event, _window, cx| {
+                                cx.stop_propagation();
                                 let item_type = item_type_clone.clone();
                                 let id = id_clone.clone();
                                 let db = cx.global::<Database>().clone();
