@@ -138,19 +138,6 @@ jobs:
           done
           rm -f minisign.key
 
-      - name: Generate SHA256SUMS
-        shell: bash
-        run: |
-          cd target/release/bundles
-          sha256sum *.{dmg,msi,deb,AppImage,tar.gz} 2>/dev/null > SHA256SUMS.txt || true
-
-      - name: Sign SHA256SUMS
-        shell: bash
-        run: |
-          echo "${{ secrets.MINISIGN_SECRET_KEY }}" > minisign.key
-          echo "${{ secrets.MINISIGN_PASSWORD }}" | minisign -Sm target/release/bundles/SHA256SUMS.txt -s minisign.key
-          rm -f minisign.key
-
       - name: Rename artifacts
         shell: bash
         run: |
@@ -160,15 +147,20 @@ jobs:
           cd target/release/bundles
           for f in *; do
             [[ "$f" == *.minisig ]] && continue
-            [[ "$f" == "SHA256SUMS.txt" ]] && continue
             [[ -f "$f" ]] || continue
-            EXT="${f#*.}"
+            case "$f" in
+              *.app.tar.gz) EXT="app.tar.gz" ;;
+              *.tar.gz) EXT="tar.gz" ;;
+              *.tar.xz) EXT="tar.xz" ;;
+              *.pkg.tar.zst) EXT="pkg.tar.zst" ;;
+              *) EXT="${f##*.}" ;;
+            esac
             mv "$f" "${PREFIX}.${EXT}"
             [[ -f "${f}.minisig" ]] && mv "${f}.minisig" "${PREFIX}.${EXT}.minisig"
           done
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.version.outputs.full }}_${{ matrix.os_name }}_${{ matrix.arch }}
           path: |
