@@ -497,8 +497,7 @@ impl Render for SongTableItem {
                                     .gap(px(3.0))
                                     .when(!is_current, |s| s.invisible())
                                     .children((0..4).map(|i| {
-                                        let height_pct =
-                                            (spectrum[i] * 100.0).clamp(10.0, 80.0);
+                                        let height_pct = (spectrum[i] * 100.0).clamp(10.0, 80.0);
                                         let height_px = COVER_SIZE * (height_pct / 100.0);
                                         div().w(px(4.0)).h(px(height_px)).bg(variables.text)
                                     })),
@@ -511,7 +510,9 @@ impl Render for SongTableItem {
                                     .items_center()
                                     .justify_center()
                                     .invisible()
-                                    .when(!is_playing, |s| s.group_hover("number-cell", |c| c.visible()))
+                                    .when(!is_playing, |s| {
+                                        s.group_hover("number-cell", |c| c.visible())
+                                    })
                                     .child(
                                         icon(icons::PLAY).size(px(16.0)).text_color(variables.text),
                                     ),
@@ -548,18 +549,16 @@ impl Render for SongTableItem {
                                     .flex()
                                     .items_center()
                                     .gap(px(3.0))
-                                    .when(is_current, |s| s.child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap(px(3.0))
-                                            .children((0..4).map(|i| {
+                                    .when(is_current, |s| {
+                                        s.child(div().flex().items_center().gap(px(3.0)).children(
+                                            (0..4).map(|i| {
                                                 let height_pct =
                                                     (spectrum[i] * 100.0).clamp(10.0, 80.0);
                                                 let height_px = 14.0 * (height_pct / 100.0);
                                                 div().w(px(3.0)).h(px(height_px)).bg(variables.text)
-                                            })),
-                                    ))
+                                            }),
+                                        ))
+                                    })
                                     .when(!is_current, |s| s.child(number_value)),
                             );
                     }
