@@ -1,6 +1,8 @@
 use super::{PlaybackState, ResolvedMetadata};
 use crate::media::playback::PlaybackCommand;
 use anyhow::{Result, anyhow};
+use futures::executor::LocalPool;
+use futures::task::LocalSpawnExt;
 use image::ImageFormat;
 use mpris_server::{Metadata, PlaybackStatus, Player, Time, TrackId};
 use std::cell::Cell;
@@ -70,12 +72,10 @@ fn run_mpris(
     mut rx: mpsc::UnboundedReceiver<Command>,
     playback_tx: mpsc::UnboundedSender<PlaybackCommand>,
 ) -> Result<()> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
-    let local = tokio::task::LocalSet::new();
+    let mut pool = LocalPool::new();
+    let spawner = pool.spawner();
 
-    local.block_on(&runtime, async move {
+    pool.run_until(async move {
         let player = Player::builder("vleer")
             .identity("Vleer")
             .desktop_entry("vleer")
@@ -151,7 +151,9 @@ fn run_mpris(
             });
         }
 
-        tokio::task::spawn_local(player.run());
+        spawner
+            .spawn_local(player.run())
+            .map_err(|err| anyhow!("failed to spawn mpris server task: {err}"))?;
 
         let mut artwork_cache = ArtworkCache::default();
 
