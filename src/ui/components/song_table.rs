@@ -230,11 +230,11 @@ impl Render for SongTableItem {
             .child(div().absolute().size_0().child(context_menu_entity));
 
         if let Some(data) = &row_data {
-            let is_playing = if let Some(current_song) = cx.global::<Queue>().get_current_song(cx) {
-                current_song.id == data.id && cx.global::<Playback>().get_playing()
-            } else {
-                false
-            };
+            let is_current = cx
+                .global::<Queue>()
+                .get_current_song(cx)
+                .is_some_and(|s| s.id == data.id);
+            let is_playing = is_current && cx.global::<Playback>().get_playing();
 
             if is_playing && !self.is_animating {
                 self.is_animating = true;
@@ -347,7 +347,7 @@ impl Render for SongTableItem {
                                         .gap(px(3.0))
                                         .p(px(5.0))
                                         .bg(black().opacity(0.5))
-                                        .when(!is_playing, |s| s.invisible())
+                                        .when(!is_current, |s| s.invisible())
                                         .group_hover("cover-container", |s| s.invisible())
                                         .children((0..4).map(|i| {
                                             let height_pct =
@@ -483,6 +483,7 @@ impl Render for SongTableItem {
                             .child(
                                 div()
                                     .text_color(variables.text_secondary)
+                                    .when(is_current, |s| s.invisible())
                                     .group_hover("number-cell", |s| s.invisible())
                                     .child(number_value),
                             )
@@ -493,8 +494,24 @@ impl Render for SongTableItem {
                                     .flex()
                                     .items_center()
                                     .justify_center()
+                                    .gap(px(3.0))
+                                    .when(!is_current, |s| s.invisible())
+                                    .children((0..4).map(|i| {
+                                        let height_pct =
+                                            (spectrum[i] * 100.0).clamp(10.0, 80.0);
+                                        let height_px = COVER_SIZE * (height_pct / 100.0);
+                                        div().w(px(4.0)).h(px(height_px)).bg(variables.text)
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .absolute()
+                                    .inset_0()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
                                     .invisible()
-                                    .group_hover("number-cell", |s| s.visible())
+                                    .when(!is_playing, |s| s.group_hover("number-cell", |c| c.visible()))
                                     .child(
                                         icon(icons::PLAY).size(px(16.0)).text_color(variables.text),
                                     ),
@@ -526,7 +543,25 @@ impl Render for SongTableItem {
                         column_div = column_div
                             .text_color(variables.text_secondary)
                             .text_ellipsis()
-                            .child(number_value);
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(3.0))
+                                    .when(is_current, |s| s.child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(3.0))
+                                            .children((0..4).map(|i| {
+                                                let height_pct =
+                                                    (spectrum[i] * 100.0).clamp(10.0, 80.0);
+                                                let height_px = 14.0 * (height_pct / 100.0);
+                                                div().w(px(3.0)).h(px(height_px)).bg(variables.text)
+                                            })),
+                                    ))
+                                    .when(!is_current, |s| s.child(number_value)),
+                            );
                     }
                 } else {
                     let value = data.get_column_value(column);
