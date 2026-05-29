@@ -21,6 +21,7 @@ use crate::{
             },
         },
         layout::library::Search,
+        variables::Variables,
         views::{ActiveView, AppView},
     },
 };
@@ -56,8 +57,10 @@ fn song_entry_from_list_item(item: SongListItem) -> Arc<SongEntry> {
         title: item.title,
         artist,
         album,
+        album_id: item.album_id,
         duration: format!("{}:{:02}", minutes, seconds),
         cover_uri: item.image_id.map(|id| format!("!image://{}", id)),
+        track_number: None,
     })
 }
 
@@ -400,6 +403,8 @@ impl SongsView {
             Some(queue_handler),
             None,
             false,
+            true,
+            true,
         );
         *table_weak.borrow_mut() = Some(table.downgrade());
 
@@ -463,10 +468,13 @@ impl SongsView {
 }
 
 impl Render for SongsView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let variables = cx.global::<Variables>();
+
         flex_col()
             .id("songs-border")
             .size_full()
+            .p(px(variables.padding_24))
             .child(self.table.clone())
     }
 }

@@ -2,9 +2,11 @@ use crate::data::db::repo::Database;
 use crate::data::models::{Album, Artist, Cuid, Playlist, Song};
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
+use crate::ui::app::MainWindow;
 use crate::ui::components::div::{flex_col, flex_row};
 use crate::ui::components::icons::{self, icon};
 use crate::ui::variables::Variables;
+use crate::ui::views::{AppView, SelectedAlbum};
 use futures::channel::mpsc;
 use gpui::{prelude::*, *};
 use std::rc::Rc;
@@ -291,9 +293,9 @@ pub fn play_album_now(album_id: Cuid, cx: &mut App) {
 pub fn song_context_menu_items(song_id: Cuid, cx: &App) -> Vec<ContextMenuItem> {
     let db = cx.global::<Database>().clone();
     let song = db.get_song(&song_id).ok().flatten();
-    let (favorite, pinned) = song
-        .map(|s| (s.favorite, s.pinned))
-        .unwrap_or((false, false));
+    let (favorite, pinned, album_id) = song
+        .map(|s| (s.favorite, s.pinned, s.album_id))
+        .unwrap_or((false, false, None));
 
     let fav_label = if favorite { "Unfavorite" } else { "Favorite" };
     let fav_icon = if favorite {
@@ -353,7 +355,19 @@ pub fn song_context_menu_items(song_id: Cuid, cx: &App) -> Vec<ContextMenuItem> 
         }),
         ContextMenuItem::separator(),
         ContextMenuItem::entry("Go to artist", icons::ARTIST, move |_, _| {}),
-        ContextMenuItem::entry("Go to album", icons::ALBUM, move |_, _| {}),
+        ContextMenuItem::entry("Go to album", icons::ALBUM, {
+            let id = album_id.clone();
+            move |window, cx| {
+                if let Some(album_id) = &id {
+                    cx.set_global(SelectedAlbum(Some(album_id.clone())));
+                    if let Some(Some(root)) = window.root::<MainWindow>() {
+                        root.update(cx, |view, cx| {
+                            view.set_current_view(AppView::Album, window, cx);
+                        });
+                    }
+                }
+            }
+        }),
         ContextMenuItem::entry("Properties", icons::PROPERTIES, move |_, _| {}),
         ContextMenuItem::separator(),
         ContextMenuItem::destructive("Remove from library", icons::TRASH, {
@@ -389,23 +403,6 @@ pub fn album_context_menu_items(album_id: Cuid, cx: &App) -> Vec<ContextMenuItem
     let pin_icon = if pinned { icons::UNPIN } else { icons::PIN };
 
     vec![
-        ContextMenuItem::entry("Play all songs", icons::PLAY, {
-            let id = album_id.clone();
-            move |_, cx| {
-                let db = cx.global::<Database>().clone();
-                if let Ok(song_ids) = db.get_album_songs(&id)
-                    && !song_ids.is_empty()
-                {
-                    cx.update_global::<Queue, _>(|q, _| {
-                        q.add_songs(song_ids.into_iter().map(|s| s.id).collect());
-                    });
-                    cx.update_global::<Playback, _>(|playback, cx| {
-                        playback.play_queue(cx);
-                    });
-                    cx.set_global(QueueChanged);
-                }
-            }
-        }),
         ContextMenuItem::entry("Add all to playlist", icons::PLUS, move |_, _| {}),
         ContextMenuItem::separator(),
         ContextMenuItem::entry(fav_label, fav_icon, {
@@ -512,24 +509,6 @@ pub fn playlist_context_menu_items(playlist_id: Cuid, cx: &App) -> Vec<ContextMe
     let pin_icon = if pinned { icons::UNPIN } else { icons::PIN };
 
     vec![
-        ContextMenuItem::entry("Play playlist", icons::PLAY, {
-            let id = playlist_id.clone();
-            move |_, cx| {
-                let db = cx.global::<Database>().clone();
-                if let Ok(songs) = db.get_playlist_songs(&id) {
-                    let song_ids: Vec<Cuid> = songs.into_iter().map(|t| t.song.id).collect();
-                    if !song_ids.is_empty() {
-                        cx.update_global::<Queue, _>(|q, _| {
-                            q.add_songs(song_ids);
-                        });
-                        cx.update_global::<Playback, _>(|playback, cx| {
-                            playback.play_queue(cx);
-                        });
-                        cx.set_global(QueueChanged);
-                    }
-                }
-            }
-        }),
         ContextMenuItem::entry("Add to library", icons::PLUS, move |_, _| {}),
         ContextMenuItem::entry(pin_label, pin_icon, {
             let id = playlist_id.clone();

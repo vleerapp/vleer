@@ -181,6 +181,7 @@ impl RenderOnce for Card {
                             .hover(|s| s.bg(variables.accent_background))
                             .cursor_pointer()
                             .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
+                                cx.stop_propagation();
                                 (on_play)(window, cx);
                             })
                             .child(

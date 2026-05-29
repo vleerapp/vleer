@@ -73,6 +73,7 @@ pub struct SongListRow {
     pub title: String,
     pub artist_name: Option<String>,
     pub album_title: Option<String>,
+    pub album_id: Option<Cuid>,
     pub duration: i32,
     pub image_id: Option<String>,
 }
@@ -84,6 +85,7 @@ impl SongListRow {
             title: row.get("title")?,
             artist_name: row.get("artist_name")?,
             album_title: row.get("album_title")?,
+            album_id: row.get("album_id")?,
             duration: row.get("duration")?,
             image_id: row.get("image_id")?,
         })

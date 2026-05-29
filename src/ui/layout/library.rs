@@ -10,6 +10,7 @@ use crate::ui::components::div::flex_row;
 use crate::ui::components::icons::icon;
 use crate::ui::components::scrollbar::ScrollableElement;
 use crate::ui::{
+    app::MainWindow,
     components::{
         div::flex_col,
         icons,
@@ -17,7 +18,7 @@ use crate::ui::{
         nav_button::NavButton,
     },
     variables::Variables,
-    views::AppView,
+    views::{AppView, SelectedAlbum},
 };
 use gpui::prelude::FluentBuilder;
 use gpui::*;
@@ -167,6 +168,7 @@ fn pinned_item(
     context_menu: Entity<ContextMenu>,
 ) -> impl IntoElement {
     let is_artist = item_type == "Artist";
+    let is_album = item_type == "Album";
     let item_type_clone = item_type.clone();
     let item_type_for_ctx = item_type.clone();
     let id_clone = id.clone();
@@ -187,6 +189,17 @@ fn pinned_item(
         .hover(|s| s.bg(variables.element_hover))
         .gap(px(variables.padding_8))
         .pr(px(variables.padding_8))
+        .when(is_album, |div| {
+            let album_id = id.clone();
+            div.cursor_pointer().on_mouse_down(MouseButton::Left, move |_event, window, cx| {
+                cx.set_global(SelectedAlbum(Some(album_id.clone())));
+                if let Some(Some(root)) = window.root::<MainWindow>() {
+                    root.update(cx, |view, cx| {
+                        view.set_current_view(AppView::Album, window, cx);
+                    });
+                }
+            })
+        })
         .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
             let items = match item_type_for_ctx.as_str() {
                 "Song" => song_context_menu_items(id_for_ctx.clone(), cx),

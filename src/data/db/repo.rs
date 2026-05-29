@@ -402,7 +402,7 @@ impl Database {
         if !has_query {
             let sql = format!(
                 "SELECT s.id, s.title, ar.name AS artist_name, al.title AS album_title,
-                        s.duration, s.image_id
+                        s.album_id, s.duration, s.image_id
                  FROM songs s
                  LEFT JOIN artists ar ON s.artist_id = ar.id
                  LEFT JOIN albums al ON s.album_id = al.id
@@ -424,13 +424,13 @@ impl Database {
 
         let sql = format!(
             "SELECT s.id, s.title, ar.name AS artist_name, al.title AS album_title,
-                    s.duration, s.image_id
+                    s.album_id, s.duration, s.image_id
              FROM songs_fts
              JOIN songs s ON s.id = songs_fts.song_id
              LEFT JOIN artists ar ON s.artist_id = ar.id
              LEFT JOIN albums al ON s.album_id = al.id
              WHERE songs_fts MATCH ?2
-             GROUP BY s.id, s.title, ar.name, al.title, s.duration, s.image_id
+             GROUP BY s.id, s.title, ar.name, al.title, s.album_id, s.duration, s.image_id
              ORDER BY {order_clause}
              LIMIT ?3 OFFSET ?4"
         );

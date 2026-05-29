@@ -36,6 +36,7 @@ pub const PROPERTIES: &str = "!bundled:icons/properties.svg";
 pub const TRASH: &str = "!bundled:icons/trash.svg";
 pub const PLAY_NEXT: &str = "!bundled:icons/play-next.svg";
 pub const PLAY_LAST: &str = "!bundled:icons/play-last.svg";
+pub const DOTS: &str = "!bundled:icons/dots.svg";
 
 use gpui::*;
 

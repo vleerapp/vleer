@@ -1,3 +1,4 @@
+mod album;
 mod albums;
 mod artists;
 mod home;
@@ -8,9 +9,10 @@ mod songs;
 use gpui::*;
 use std::collections::HashMap;
 
+use crate::data::models::Cuid;
 use crate::ui::views::{
-    albums::AlbumsView, artists::ArtistsView, home::HomeView, playlists::PlaylistsView,
-    settings::SettingsView, songs::SongsView,
+    album::AlbumView, albums::AlbumsView, artists::ArtistsView, home::HomeView,
+    playlists::PlaylistsView, settings::SettingsView, songs::SongsView,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -20,6 +22,7 @@ pub enum AppView {
     Songs,
     Settings,
     Albums,
+    Album,
     Artists,
     Playlists,
 }
@@ -31,6 +34,7 @@ impl AppView {
             AppView::Songs => "Songs",
             AppView::Settings => "Settings",
             AppView::Albums => "Albums",
+            AppView::Album => "Album",
             AppView::Artists => "Artists",
             AppView::Playlists => "Playlists",
         }
@@ -47,6 +51,11 @@ impl Default for ActiveView {
 }
 
 impl Global for ActiveView {}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SelectedAlbum(pub Option<Cuid>);
+
+impl Global for SelectedAlbum {}
 
 pub struct ViewRegistry;
 
@@ -69,6 +78,11 @@ impl ViewRegistry {
         views.insert(
             AppView::Albums,
             cx.new(|cx| AlbumsView::new(window, cx)).into(),
+        );
+
+        views.insert(
+            AppView::Album,
+            cx.new(|cx| AlbumView::new(window, cx)).into(),
         );
 
         views.insert(

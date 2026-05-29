@@ -4,6 +4,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::{
     data::{db::repo::Database, models::AlbumListItem},
     ui::{
+        app::MainWindow,
         components::{
             card::{CARD_GRID_GAP, Card, calculate_card_layout},
             context_menu::{
@@ -14,7 +15,7 @@ use crate::{
         },
         layout::{library::Search, queue::QueueVisible},
         variables::Variables,
-        views::{ActiveView, AppView},
+        views::{ActiveView, AppView, SelectedAlbum},
     },
 };
 
@@ -274,6 +275,7 @@ fn album_tile(
 
     let album_id = album.id.clone();
     let play_album_id = album_id.clone();
+    let nav_album_id = album_id.clone();
 
     Card::new(
         format!("album-item-{}", idx),
@@ -284,6 +286,14 @@ fn album_tile(
     .image_uri(album.image_id.clone())
     .on_play(move |_window, cx| {
         play_album_now(play_album_id.clone(), cx);
+    })
+    .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
+        cx.set_global(SelectedAlbum(Some(nav_album_id.clone())));
+        if let Some(Some(root)) = window.root::<MainWindow>() {
+            root.update(cx, |view, cx| {
+                view.set_current_view(AppView::Album, window, cx);
+            });
+        }
     })
     .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
         let items = album_context_menu_items(album_id.clone(), cx);

@@ -1,6 +1,7 @@
 use crate::{
     data::{db::repo::Database, models::RecentItem},
     ui::{
+        app::MainWindow,
         components::{
             card::{CARD_GRID_GAP, Card, calculate_card_layout},
             context_menu::{
@@ -13,6 +14,7 @@ use crate::{
         },
         layout::queue::QueueVisible,
         variables::Variables,
+        views::{AppView, SelectedAlbum},
     },
 };
 use gpui::{prelude::FluentBuilder, *};
@@ -184,6 +186,7 @@ fn recent_item_tile(
     };
     let play_item_id = item_id.clone();
     let menu_item_id = item_id.clone();
+    let nav_album_id = if !is_song { Some(item_id.clone()) } else { None };
 
     Card::new(format!("{id_prefix}-item-{idx}"), title, cover_size)
         .subtitle(subtitle)
@@ -194,6 +197,16 @@ fn recent_item_tile(
             } else {
                 play_album_now(play_item_id.clone(), cx);
             }
+        })
+        .when_some(nav_album_id, |card, album_id| {
+            card.on_mouse_down(MouseButton::Left, move |_event, window, cx| {
+                cx.set_global(SelectedAlbum(Some(album_id.clone())));
+                if let Some(Some(root)) = window.root::<MainWindow>() {
+                    root.update(cx, |view, cx| {
+                        view.set_current_view(AppView::Album, window, cx);
+                    });
+                }
+            })
         })
         .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
             let menu_items = if is_song {

@@ -29,7 +29,7 @@ use crate::{
             queue::{QueuePane, QueueVisible},
         },
         variables::Variables,
-        views::{ActiveView, AppView, ViewRegistry},
+        views::{ActiveView, AppView, SelectedAlbum, ViewRegistry},
     },
 };
 
@@ -284,6 +284,7 @@ pub async fn run() -> anyhow::Result<()> {
             cx.set_global(database);
             cx.set_global(Search::default());
             cx.set_global(ActiveView::default());
+            cx.set_global(SelectedAlbum::default());
             cx.set_global(BackgroundUiNotifier::new(background_ui_tx));
             cx.set_global(PinnedItemsChanged);
             cx.set_global(LibraryDataChanged);

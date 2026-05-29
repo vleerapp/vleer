@@ -1,11 +1,13 @@
 use crate::data::models::Cuid;
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
+use crate::ui::app::MainWindow;
 use crate::ui::components::context_menu::{ContextMenu, QueueChanged, song_context_menu_items};
 use crate::ui::components::div::{flex_col, flex_row};
 use crate::ui::components::icons::{self, icon};
 use crate::ui::components::scrollbar::{Scrollbar, ScrollbarAxis, ScrollbarHandle};
 use crate::ui::variables::Variables;
+use crate::ui::views::{AppView, SelectedAlbum};
 use gpui::{prelude::*, *};
 use rustc_hash::FxHashMap;
 use std::rc::Rc;
@@ -13,6 +15,7 @@ use std::sync::Arc;
 use tracing::debug;
 
 const ANIMATION_FPS: f32 = 15.0;
+const COVER_SIZE: f32 = 36.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ColumnSize {
@@ -67,8 +70,10 @@ pub struct SongEntry {
     pub title: String,
     pub artist: String,
     pub album: String,
+    pub album_id: Option<Cuid>,
     pub duration: String,
     pub cover_uri: Option<String>,
+    pub track_number: Option<i32>,
 }
 
 impl SongEntry {
@@ -95,6 +100,8 @@ pub struct SongTableLayout {
     pub number_width: f32,
     pub duration_width: f32,
     pub show_numbers: bool,
+    pub show_album: bool,
+    pub show_cover: bool,
     pub sort_method: Option<TableSort>,
 }
 
@@ -147,6 +154,8 @@ pub struct SongTableItem {
     number_width: f32,
     duration_width: f32,
     show_numbers: bool,
+    show_album: bool,
+    show_cover: bool,
     row_index: usize,
     is_animating: bool,
     context_menu: Entity<ContextMenu>,
@@ -167,6 +176,8 @@ impl SongTableItem {
             number_width: layout.number_width,
             duration_width: layout.duration_width,
             show_numbers: layout.show_numbers,
+            show_album: layout.show_album,
+            show_cover: layout.show_cover,
             row_index,
             is_animating: false,
             context_menu: cx.new(|_| ContextMenu::new()),
@@ -186,6 +197,8 @@ impl Render for SongTableItem {
 
         let element_id = ElementId::Name(format!("song-{}", self.row_index).into());
         let show_numbers = self.show_numbers;
+        let show_album = self.show_album;
+        let show_cover = self.show_cover;
         let context_menu_entity = self.context_menu.clone();
 
         let mut row = flex_row()
@@ -280,7 +293,14 @@ impl Render for SongTableItem {
                 if matches!(column, SongColumn::Number) && !show_numbers {
                     continue;
                 }
-                let size = column.size(self.number_width, self.duration_width);
+                if matches!(column, SongColumn::Album) && !show_album {
+                    continue;
+                }
+                let size = if matches!(column, SongColumn::Number) && !show_cover {
+                    ColumnSize::Fixed(COVER_SIZE)
+                } else {
+                    column.size(self.number_width, self.duration_width)
+                };
                 let mut column_div = div();
 
                 match size {
@@ -293,15 +313,17 @@ impl Render for SongTableItem {
                 }
 
                 if matches!(column, SongColumn::Title) {
-                    let image_size = 36.0;
+                    let image_size = COVER_SIZE;
                     let get_queue = get_queue.clone();
-                    let row_data = row_data.clone();
-                    column_div = column_div
+                    let row_data_play = row_data.clone();
+                    let mut title_row = column_div
                         .flex()
                         .flex_row()
                         .gap(px(variables.padding_8))
-                        .items_center()
-                        .child(
+                        .items_center();
+
+                    if show_cover {
+                        title_row = title_row.child(
                             div()
                                 .id("cover")
                                 .size(px(image_size))
@@ -353,7 +375,7 @@ impl Render for SongTableItem {
                                 .cursor_pointer()
                                 .on_mouse_down(MouseButton::Left, {
                                     move |_event, _window, cx| {
-                                        let Some(data) = &row_data else {
+                                        let Some(data) = &row_data_play else {
                                             return;
                                         };
                                         debug!("Songs play click: song_id={}", data.id);
@@ -379,37 +401,55 @@ impl Render for SongTableItem {
                                         }
                                     }
                                 }),
-                        )
-                        .child(
-                            flex_col()
-                                .id("title-and-artist")
-                                .flex_1()
-                                .min_w_0()
-                                .gap(px(2.0))
-                                .items_start()
-                                .child(
-                                    div()
-                                        .overflow_hidden()
-                                        .text_ellipsis()
-                                        .font_weight(FontWeight(500.0))
-                                        .hover(|this| this.underline())
-                                        .child(data.title.clone()),
-                                )
-                                .child(
-                                    div()
-                                        .id(data.artist.clone())
-                                        .text_color(variables.text_secondary)
-                                        .overflow_hidden()
-                                        .text_ellipsis()
-                                        .hover(|s| s.underline())
-                                        .child(data.artist.clone()),
-                                ),
                         );
+                    }
+
+                    column_div = title_row.child(
+                        flex_col()
+                            .id("title-and-artist")
+                            .flex_1()
+                            .min_w_0()
+                            .gap(px(2.0))
+                            .items_start()
+                            .child(
+                                div()
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .font_weight(FontWeight(500.0))
+                                    .hover(|this| this.underline())
+                                    .child(data.title.clone()),
+                            )
+                            .child(
+                                div()
+                                    .id(data.artist.clone())
+                                    .text_color(variables.text_secondary)
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .hover(|s| s.underline())
+                                    .child(data.artist.clone()),
+                            ),
+                    );
                 } else if matches!(column, SongColumn::Album) {
+                    let album_id = data.album_id.clone();
                     column_div = column_div.items_start().child(
                         div()
                             .id(data.album.clone())
                             .text_color(variables.text_secondary)
+                            .when_some(album_id.clone(), |div, album_id| {
+                                div.cursor_pointer()
+                                    .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
+                                        cx.set_global(SelectedAlbum(Some(album_id.clone())));
+                                        if let Some(Some(root)) = window.root::<MainWindow>() {
+                                            root.update(cx, |view, cx| {
+                                                view.set_current_view(
+                                                    AppView::Album,
+                                                    window,
+                                                    cx,
+                                                );
+                                            });
+                                        }
+                                    })
+                            })
                             .child(
                                 div()
                                     .id(data.album.clone())
@@ -419,12 +459,79 @@ impl Render for SongTableItem {
                                     .hover(|s| s.underline()),
                             ),
                     )
-                } else {
-                    let value = if matches!(column, SongColumn::Number) {
-                        (self.row_index + 1).to_string().into()
+                } else if matches!(column, SongColumn::Number) {
+                    let number_value: SharedString = data
+                        .track_number
+                        .map(|n| n.to_string())
+                        .unwrap_or_else(|| (self.row_index + 1).to_string())
+                        .into();
+
+                    if !show_cover {
+                        let get_queue = get_queue.clone();
+                        let row_data_play = row_data.clone();
+                        let number_cell = div()
+                            .id(ElementId::Name(
+                                format!("song-number-{}", self.row_index).into(),
+                            ))
+                            .relative()
+                            .group("number-cell")
+                            .cursor_pointer()
+                            .size(px(COVER_SIZE))
+                            .flex_shrink_0()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .p(px(variables.padding_8))
+                            .child(
+                                div()
+                                    .text_color(variables.text_secondary)
+                                    .group_hover("number-cell", |s| s.invisible())
+                                    .child(number_value),
+                            )
+                            .child(
+                                div()
+                                    .absolute()
+                                    .inset_0()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .invisible()
+                                    .group_hover("number-cell", |s| s.visible())
+                                    .child(
+                                        icon(icons::PLAY).size(px(16.0)).text_color(variables.text),
+                                    ),
+                            )
+                            .on_mouse_down(MouseButton::Left, move |_event, _window, cx| {
+                                let Some(data) = &row_data_play else {
+                                    return;
+                                };
+                                debug!("Songs play click: song_id={}", data.id);
+
+                                cx.update_global::<Queue, _>(|queue, _cx| {
+                                    queue.clear();
+                                    queue.add_song(data.id.clone());
+                                });
+
+                                cx.update_global::<Playback, _>(|playback, cx| {
+                                    playback.play_queue(cx);
+                                });
+
+                                cx.set_global(QueueChanged);
+
+                                if let Some(get_queue) = &get_queue {
+                                    (get_queue)(cx, data.id.clone(), row_index, sort_method);
+                                }
+                            });
+                        row = row.child(number_cell);
+                        continue;
                     } else {
-                        data.get_column_value(column)
-                    };
+                        column_div = column_div
+                            .text_color(variables.text_secondary)
+                            .text_ellipsis()
+                            .child(number_value);
+                    }
+                } else {
+                    let value = data.get_column_value(column);
                     column_div = column_div
                         .text_color(variables.text_secondary)
                         .text_ellipsis()
@@ -457,6 +564,8 @@ pub struct SongTable {
     number_width: f32,
     duration_width: f32,
     show_numbers: bool,
+    show_album: bool,
+    show_cover: bool,
     scroll_handle: UniformListScrollHandle,
 }
 
@@ -482,6 +591,8 @@ impl SongTable {
         get_queue: Option<QueueHandler>,
         on_select: Option<OnSelectHandler>,
         show_numbers: bool,
+        show_album: bool,
+        show_cover: bool,
     ) -> Entity<Self> {
         cx.new(|cx| {
             let views = cx.new(|_| FxHashMap::default());
@@ -556,6 +667,8 @@ impl SongTable {
                 number_width,
                 duration_width,
                 show_numbers,
+                show_album,
+                show_cover,
                 scroll_handle: UniformListScrollHandle::default(),
             }
         })
@@ -574,6 +687,8 @@ impl Render for SongTable {
         let number_width = self.number_width;
         let duration_width = self.duration_width;
         let show_numbers = self.show_numbers;
+        let show_album = self.show_album;
+        let show_cover = self.show_cover;
         let row_count = self.row_count;
 
         let mut header = flex_row()
@@ -589,13 +704,22 @@ impl Render for SongTable {
             if matches!(column_id, SongColumn::Number) && !show_numbers {
                 continue;
             }
-            let size = column.size(number_width, duration_width);
+            if matches!(column_id, SongColumn::Album) && !show_album {
+                continue;
+            }
+            let size = if matches!(column_id, SongColumn::Number) && !show_cover {
+                ColumnSize::Fixed(COVER_SIZE)
+            } else {
+                column.size(number_width, duration_width)
+            };
             let is_sortable = !matches!(column_id, SongColumn::Number);
+            let number_no_cover = matches!(column_id, SongColumn::Number) && !show_cover;
 
             let mut header_col = flex_row()
                 .id(ElementId::Name(format!("header-col-{}", i).into()))
                 .gap(px(variables.padding_8))
                 .items_center()
+                .when(number_no_cover, |this| this.pl(px(variables.padding_8)))
                 .when(is_sortable, |div| div.cursor_pointer());
 
             match size {
@@ -689,6 +813,8 @@ impl Render for SongTable {
                                                         number_width,
                                                         duration_width,
                                                         show_numbers,
+                                                        show_album,
+                                                        show_cover,
                                                         sort_method,
                                                     },
                                                     SongTableHandlers {
@@ -726,7 +852,6 @@ impl Render for SongTable {
                 .h_full()
                 .w_full()
                 .flex_col()
-                .p(px(variables.padding_24))
                 .child(header)
                 .child(list),
         )

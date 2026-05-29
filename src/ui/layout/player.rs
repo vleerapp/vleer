@@ -8,6 +8,7 @@ use crate::{
         queue::{Queue, RepeatMode},
     },
     ui::{
+        app::MainWindow,
         components::{
             button::Button,
             context_menu::{ContextMenu, QueueChanged, song_context_menu_items},
@@ -18,11 +19,12 @@ use crate::{
         },
         layout::queue::QueueVisible,
         variables::Variables,
+        views::{AppView, SelectedAlbum},
     },
 };
 
 pub struct Player {
-    cached_song_data: Option<(Cuid, String, String, Option<String>)>,
+    cached_song_data: Option<(Cuid, String, String, Option<String>, Option<Cuid>)>,
     context_menu: Entity<ContextMenu>,
 }
 
@@ -87,11 +89,12 @@ impl Render for Player {
                 title.clone(),
                 artist.clone(),
                 cover.clone(),
+                song.album_id.clone(),
             ));
-            Some((title, artist, cover))
+            Some((title, artist, cover, song.album_id.clone()))
         } else {
             self.cached_song_data = None;
-            None
+            None::<(String, String, Option<String>, Option<Cuid>)>
         };
 
         let is_playing = cx.global::<Playback>().get_playing();
@@ -199,12 +202,23 @@ impl Render for Player {
             .child(next_button)
             .child(repeat_button);
 
-        let track_info = if let Some((title, artist, cover_uri)) = current_song {
+        let track_info = if let Some((title, artist, cover_uri, album_id)) = current_song {
             let ctx_menu = self.context_menu.clone();
             let song_id = cx.global::<Queue>().get_current_song_id();
             flex_row()
                 .gap(px(variables.padding_8))
                 .items_center()
+                .when_some(album_id.clone(), |div, album_id| {
+                    div.cursor_pointer()
+                        .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
+                            cx.set_global(SelectedAlbum(Some(album_id.clone())));
+                            if let Some(Some(root)) = window.root::<MainWindow>() {
+                                root.update(cx, |view, cx| {
+                                    view.set_current_view(AppView::Album, window, cx);
+                                });
+                            }
+                        })
+                })
                 .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
                     if let Some(id) = &song_id {
                         let items = song_context_menu_items(id.clone(), cx);
