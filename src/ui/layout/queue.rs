@@ -204,7 +204,6 @@ struct RowState<'a> {
     real_idx: usize,
     song: &'a Song,
     is_current: bool,
-    is_playing: bool,
     spectrum: [f32; 4],
 }
 
@@ -219,7 +218,6 @@ fn render_row(
         real_idx,
         song,
         is_current,
-        is_playing,
         spectrum,
     } = state;
     let song = song.clone();
@@ -302,6 +300,13 @@ fn render_row(
                         cx.set_global(QueueChanged);
                     }
                 })
+                .on_drag(
+                    drag_payload,
+                    move |payload: &QueueDragPayload, pos, _window, cx| {
+                        cx.new(|_| payload.clone().with_position(pos))
+                    },
+                )
+                .cursor_move()
                 .child(
                     div()
                         .size(px(ROW_HEIGHT))
@@ -328,7 +333,7 @@ fn render_row(
                                 .gap(px(3.0))
                                 .p(px(5.0))
                                 .bg(black().opacity(0.5))
-                                .when(!is_playing, |s| s.invisible())
+                                .when(!is_current, |s| s.invisible())
                                 .group_hover("cover-container", |s| s.invisible())
                                 .children((0..4).map(move |i| {
                                     let height_pct = (spectrum[i] * 100.0).clamp(10.0, 80.0);
@@ -357,13 +362,6 @@ fn render_row(
                             format!("queue-item-drag-{}", display_idx).into(),
                         ))
                         .items_center()
-                        .cursor_move()
-                        .on_drag(
-                            drag_payload,
-                            move |payload: &QueueDragPayload, pos, _window, cx| {
-                                cx.new(|_| payload.clone().with_position(pos))
-                            },
-                        )
                         .child(
                             div()
                                 .overflow_x_hidden()
@@ -556,7 +554,6 @@ impl Render for QueuePane {
                                                     .as_ref()
                                                     .map(|id| id == &song.id)
                                                     .unwrap_or(false);
-                                                let is_playing = is_current && is_globally_playing;
 
                                                 let is_slot = drag_from == Some(real_idx);
 
@@ -575,7 +572,6 @@ impl Render for QueuePane {
                                                             real_idx,
                                                             song,
                                                             is_current,
-                                                            is_playing,
                                                             spectrum,
                                                         },
                                                         &variables,
