@@ -11,12 +11,13 @@ use crate::{
     media::{playback::Playback, queue::Queue},
     ui::{
         components::{
+            button::Button,
             context_menu::{
                 ContextMenu, LibraryDataChanged, QueueChanged, album_context_menu_items,
                 play_album_now,
             },
             div::{flex_col, flex_row},
-            icons::{self, icon},
+            icons,
             song_table::{
                 GetRowCountHandler, GetRowHandler, QueueHandler, SongEntry, SongTable,
                 SongTableEvent,
@@ -294,35 +295,24 @@ impl Render for AlbumView {
                         .gap(px(variables.padding_8))
                         .pt(px(variables.padding_8))
                         .child(
-                            flex_row()
-                                .id("album-play-button")
+                            Button::new("album-play-button")
+                                .icon(icons::PLAY)
                                 .items_center()
                                 .gap(px(variables.padding_8))
-                                .px(px(variables.padding_8))
-                                .py(px(variables.padding_8))
-                                .bg(variables.accent)
-                                .text_color(variables.background)
-                                .cursor_pointer()
+                                .bg_color(variables.accent)
+                                .color(variables.background)
+                                .hover_color(variables.background)
                                 .hover(|s| s.bg(variables.accent_background))
-                                .on_mouse_down(MouseButton::Left, move |_event, _window, cx| {
+                                .on_click(move |_event, _window, cx| {
                                     play_album_now(album_id_play.clone(), cx);
-                                })
-                                .child(
-                                    icon(icons::PLAY)
-                                        .size(px(variables.padding_16))
-                                        .text_color(variables.background),
-                                ),
+                                }),
                         )
                         .child(
-                            flex_row()
-                                .id("album-shuffle-button")
+                            Button::new("album-shuffle-button")
+                                .icon(icons::SHUFFLE)
                                 .items_center()
                                 .gap(px(variables.padding_8))
-                                .px(px(variables.padding_8))
-                                .py(px(variables.padding_8))
-                                .cursor_pointer()
-                                .hover(|s| s.text_color(variables.text))
-                                .on_mouse_down(MouseButton::Left, move |_event, _window, cx| {
+                                .on_click(move |_event, _window, cx| {
                                     let song_ids: Vec<Cuid> = songs_for_shuffle
                                         .borrow()
                                         .iter()
@@ -340,25 +330,19 @@ impl Render for AlbumView {
                                         playback.play_queue(cx);
                                     });
                                     cx.set_global(QueueChanged);
-                                })
-                                .child(icon(icons::SHUFFLE).size(px(variables.padding_16))),
+                                }),
                         )
                         .child(
-                            flex_row()
-                                .id("album-more-button")
+                            Button::new("album-more-button")
+                                .icon(icons::DOTS)
                                 .items_center()
                                 .gap(px(variables.padding_8))
-                                .px(px(variables.padding_8))
-                                .py(px(variables.padding_8))
-                                .cursor_pointer()
-                                .hover(|s| s.bg(variables.element_hover))
-                                .on_mouse_down(MouseButton::Left, move |event, _window, cx| {
+                                .on_click(move |event, _window, cx| {
                                     let items = album_context_menu_items(album_id_menu.clone(), cx);
                                     menu_for_button.update(cx, |menu, cx| {
-                                        menu.show(event.position, items, cx);
+                                        menu.show(event.position(), items, cx);
                                     });
-                                })
-                                .child(icon(icons::DOTS).size(px(variables.padding_16))),
+                                }),
                         ),
                 );
 

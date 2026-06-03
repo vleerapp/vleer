@@ -116,11 +116,10 @@ impl Render for Player {
             .unwrap_or(false);
 
         let play_button = Button::new("play_pause")
-            .group("playpause-button")
-            .child(if is_playing {
-                icon(icons::PAUSE).group_hover("playpause-button", |s| s.text_color(variables.text))
+            .icon(if is_playing {
+                icons::PAUSE
             } else {
-                icon(icons::PLAY).group_hover("playpause-button", |s| s.text_color(variables.text))
+                icons::PLAY
             })
             .on_click(cx.listener(|_this, _event, _window, cx| {
                 cx.update_global::<Playback, _>(|playback, cx| {
@@ -130,11 +129,7 @@ impl Render for Player {
             }));
 
         let prev_button = Button::new("previous")
-            .group("previous-button")
-            .child(
-                icon(icons::PREVIOUS)
-                    .group_hover("previous-button", |s| s.text_color(variables.text)),
-            )
+            .icon(icons::PREVIOUS)
             .on_click(cx.listener(|_this, _event, _window, cx| {
                 cx.update_global::<Playback, _>(|playback, cx| {
                     playback.previous(cx);
@@ -142,29 +137,27 @@ impl Render for Player {
                 cx.notify();
             }));
 
-        let next_button = Button::new("next")
-            .group("next-button")
-            .child(icon(icons::NEXT).group_hover("next-button", |s| s.text_color(variables.text)))
-            .on_click(cx.listener(|_this, _event, _window, cx| {
+        let next_button = Button::new("next").icon(icons::NEXT).on_click(cx.listener(
+            |_this, _event, _window, cx| {
                 cx.update_global::<Playback, _>(|playback, cx| {
                     playback.next(cx);
                 });
                 cx.notify();
-            }));
+            },
+        ));
 
         let shuffle_button = Button::new("shuffle")
-            .group("shuffle-button")
-            .child(
-                icon(icons::SHUFFLE)
-                    .when(is_shuffle, |s| s.text_color(variables.accent))
-                    .group_hover("shuffle-button", |s| {
-                        if !is_shuffle {
-                            s.text_color(variables.text)
-                        } else {
-                            s
-                        }
-                    }),
-            )
+            .icon(icons::SHUFFLE)
+            .color(if is_shuffle {
+                variables.accent
+            } else {
+                variables.text_secondary
+            })
+            .hover_color(if is_shuffle {
+                variables.accent
+            } else {
+                variables.text
+            })
             .on_click(cx.listener(|_this, _event, _window, cx| {
                 cx.update_global::<Queue, _>(|queue, _cx| {
                     queue.set_shuffle(queue.get_shuffle() ^ true);
@@ -177,23 +170,20 @@ impl Render for Player {
             RepeatMode::All => icons::REPLAY,
             RepeatMode::One => icons::REPLAY_1,
         };
+        let is_repeat_active = repeat_mode != RepeatMode::Off;
 
         let repeat_button = Button::new("repeat")
-            .group("repeat-button")
-            .child(
-                icon(repeat_icon)
-                    .when(
-                        repeat_mode == RepeatMode::All || repeat_mode == RepeatMode::One,
-                        |s| s.text_color(variables.accent),
-                    )
-                    .group_hover("repeat-button", |s| {
-                        if repeat_mode == RepeatMode::Off {
-                            s.text_color(variables.text)
-                        } else {
-                            s
-                        }
-                    }),
-            )
+            .icon(repeat_icon)
+            .color(if is_repeat_active {
+                variables.accent
+            } else {
+                variables.text_secondary
+            })
+            .hover_color(if is_repeat_active {
+                variables.accent
+            } else {
+                variables.text
+            })
             .on_click(cx.listener(|_this, _event, _window, cx| {
                 cx.update_global::<Queue, _>(|queue, _cx| {
                     queue.cycle_repeat_mode();
@@ -304,18 +294,17 @@ impl Render for Player {
         };
 
         let queue_button = Button::new("queue-toggle")
-            .group("queue-toggle-button")
-            .child(
-                icon(icons::QUEUE)
-                    .when(queue_visible, |s| s.text_color(variables.accent))
-                    .group_hover("queue-toggle-button", |s| {
-                        if !queue_visible {
-                            s.text_color(variables.text)
-                        } else {
-                            s
-                        }
-                    }),
-            )
+            .icon(icons::QUEUE)
+            .color(if queue_visible {
+                variables.accent
+            } else {
+                variables.text_secondary
+            })
+            .hover_color(if queue_visible {
+                variables.accent
+            } else {
+                variables.text
+            })
             .on_click(cx.listener(|_this, _event, _window, cx| {
                 cx.update_global::<QueueVisible, _>(|q, _cx| {
                     q.0 = !q.0;
