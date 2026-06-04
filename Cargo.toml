@@ -24,10 +24,9 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tokio = { version = "1.52.3", features = ["sync"] }
 futures = "0.3.32"
-rusqlite = { version = "0.39.0", features = ["bundled", "chrono"] }
-rusqlite_migration = { version = "2.5.0", features = ["from-directory"] }
-r2d2 = "0.8.10"
-r2d2_sqlite = "0.34.0"
+rusqlite = { version = "0.40.0", features = ["bundled", "chrono"] }
+rusqlite_migration = { version = "2.6.0", features = ["from-directory"] }
+parking_lot = "0.12.5"
 serde = { version = "1.0.228", features = ["derive"] }
 toml = "1.1.2"
 rodio = { git = "https://github.com/vleerapp/rodio", rev = "188026ef4ede2cdb81522ba02595606a14c37f9a", features = [
@@ -48,12 +47,12 @@ image = "0.25.10"
 sha2 = "0.11.0"
 indexmap = "2.14.0"
 rustc-hash = "2.1.2"
-unicode-segmentation = "1.13.2"
+unicode-segmentation = "1.13.3"
 lru = "0.18.0"
 lazy_static = "1.5.0"
 dashmap = "6.2.1"
 ureq = { version = "3.3.0", features = ["json"] }
-uuid = { version = "1.23.1", features = ["serde", "v4"] }
+uuid = { version = "1.23.2", features = ["serde", "v4"] }
 souvlaki = "0.8.3"
 spectrum-analyzer = "1.7.0"
 discord-rich-presence = "1.1.0"
@@ -67,7 +66,7 @@ interprocess = "2.4.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 mpris-server = "0.10.0"
-zbus = "5.15.0"
+zbus = "5.16.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6.2"

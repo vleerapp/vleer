@@ -7,31 +7,26 @@ use crate::data::{
 };
 use anyhow::Result;
 use gpui::Global;
-use r2d2::Pool;
-use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{OptionalExtension, ToSql, params};
+use parking_lot::Mutex;
+use rusqlite::{Connection, OptionalExtension, ToSql, params};
 use rusqlite_migration::Migrations;
 use rust_embed::RustEmbed;
 use std::path::Path;
+use std::sync::Arc;
 
 #[derive(RustEmbed)]
 #[folder = "./migrations"]
 struct MigrationFiles;
 
-fn build_pool(
-    path: &Path,
-    max_size: u32,
-    busy_timeout_ms: u32,
-) -> Result<Pool<SqliteConnectionManager>> {
-    let manager = SqliteConnectionManager::file(path).with_init(move |c| {
-        c.execute_batch(&format!(
-            "PRAGMA journal_mode = WAL;
-             PRAGMA synchronous = NORMAL;
-             PRAGMA busy_timeout = {busy_timeout_ms};
-             PRAGMA auto_vacuum = FULL;"
-        ))
-    });
-    Ok(Pool::builder().max_size(max_size).build(manager)?)
+fn open_connection(path: &Path, busy_timeout_ms: u32) -> Result<Connection> {
+    let conn = Connection::open(path)?;
+    conn.execute_batch(&format!(
+        "PRAGMA journal_mode = WAL;
+         PRAGMA synchronous = NORMAL;
+         PRAGMA busy_timeout = {busy_timeout_ms};
+         PRAGMA auto_vacuum = FULL;"
+    ))?;
+    Ok(conn)
 }
 
 fn run_migrations(conn: &mut rusqlite::Connection) -> Result<()> {
@@ -72,25 +67,28 @@ where
 
 #[derive(Clone)]
 pub struct Database {
-    pub pool: Pool<SqliteConnectionManager>,
-    pub image_pool: Pool<SqliteConnectionManager>,
+    conn: Arc<Mutex<Connection>>,
+    pub image_conn: Arc<Mutex<Connection>>,
 }
 
 impl Global for Database {}
 
 impl Database {
     pub fn new(path: &Path) -> Result<Self> {
-        let mut conn = rusqlite::Connection::open(path)?;
-        run_migrations(&mut conn)?;
-        drop(conn);
+        let mut bootstrap = Connection::open(path)?;
+        run_migrations(&mut bootstrap)?;
+        drop(bootstrap);
 
-        let pool = build_pool(path, 8, 3000)?;
-        let image_pool = build_pool(path, 4, 5000)?;
-        Ok(Self { pool, image_pool })
+        let conn = open_connection(path, 3000)?;
+        let image_conn = open_connection(path, 5000)?;
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+            image_conn: Arc::new(Mutex::new(image_conn)),
+        })
     }
 
     pub fn get_song(&self, id: &Cuid) -> Result<Option<Song>> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         let row = conn
             .query_row(
                 "SELECT s.*, ar.name AS artist_name
@@ -118,13 +116,13 @@ impl Database {
              LEFT JOIN artists ar ON s.artist_id = ar.id
              WHERE s.id IN ({placeholders})"
         );
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         let params: Vec<&dyn ToSql> = ids.iter().map(|id| id as &dyn ToSql).collect();
         collect_mapped::<SongRow, Song, _>(&conn, &sql, params.as_slice(), SongRow::from_row)
     }
 
     pub fn get_song_by_path(&self, file_path: &str) -> Result<Option<Song>> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         let row = conn
             .query_row(
                 "SELECT s.*, ar.name AS artist_name
@@ -156,7 +154,7 @@ impl Database {
     ) -> Result<()> {
         let year_str = year.map(|y| y.to_string());
         let id = Cuid::new();
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO songs (id, title, artist_id, album_id, file_path, file_size, file_modified, genre, date, duration, image_id, track_number, lufs)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
@@ -192,13 +190,13 @@ impl Database {
     }
 
     pub fn delete_song(&self, id: &Cuid) -> Result<()> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         conn.execute("DELETE FROM songs WHERE id = ?1", params![id])?;
         Ok(())
     }
 
     pub fn delete_song_by_path(&self, file_path: &str) -> Result<()> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         conn.execute("DELETE FROM songs WHERE file_path = ?1", params![file_path])?;
         Ok(())
     }
@@ -209,7 +207,7 @@ impl Database {
         }
 
         const CHUNK: usize = 500;
-        let mut conn = self.pool.get()?;
+        let mut conn = self.conn.lock();
         let tx = conn.transaction()?;
         let mut total = 0usize;
         for chunk in file_paths.chunks(CHUNK) {
@@ -231,7 +229,7 @@ impl Database {
         }
 
         let total_start = std::time::Instant::now();
-        let mut conn = self.pool.get()?;
+        let mut conn = self.conn.lock();
         let tx = conn.transaction()?;
 
         const MAINTENANCE_TRIGGERS: &[&str] = &[
@@ -336,7 +334,7 @@ impl Database {
     }
 
     pub fn get_song_paths(&self) -> Result<Vec<String>> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare("SELECT file_path FROM songs")?;
         let rows = stmt
             .query_map([], |row| row.get::<_, String>(0))?
@@ -345,7 +343,7 @@ impl Database {
     }
 
     pub fn get_song_file_states(&self) -> Result<Vec<(String, i64, i64)>> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare("SELECT file_path, file_size, file_modified FROM songs")?;
         let rows = stmt
             .query_map([], |row| {
@@ -360,7 +358,7 @@ impl Database {
     }
 
     pub fn get_songs_count(&self, query: Option<&str>) -> Result<i64> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         let trimmed = query.map(|q| q.trim()).filter(|q| !q.is_empty());
 
         let Some(query) = trimmed else {
@@ -397,7 +395,7 @@ impl Database {
     ) -> Result<Vec<SongListItem>> {
         let has_query = query.map(|q| !q.trim().is_empty()).unwrap_or(false);
         let order_clause = song_order(sort, ascending, has_query);
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
 
         if !has_query {
             let sql = format!(
@@ -453,7 +451,7 @@ impl Database {
         let query = query.trim();
         let has_query = !query.is_empty();
         let order_clause = song_order(sort, ascending, has_query);
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
 
         if !has_query {
             let sql = format!(
@@ -497,7 +495,7 @@ impl Database {
     }
 
     pub fn get_album_songs(&self, album_id: &Cuid) -> Result<Vec<Song>> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         collect_mapped::<SongRow, Song, _>(
             &conn,
             "SELECT s.*, ar.name AS artist_name
@@ -511,7 +509,7 @@ impl Database {
     }
 
     pub fn get_artist(&self, id: &Cuid) -> Result<Option<Artist>> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         let row = conn
             .query_row(
                 "SELECT * FROM artists WHERE id = ?1",
@@ -524,7 +522,7 @@ impl Database {
 
     pub fn upsert_artist(&self, name: &str) -> Result<Cuid> {
         let id = Cuid::new();
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         let result_id: Cuid = conn.query_row(
             "INSERT INTO artists (id, name) VALUES (?1, ?2)
              ON CONFLICT(name) DO UPDATE SET name = excluded.name
@@ -536,7 +534,7 @@ impl Database {
     }
 
     pub fn get_artists_count(&self, query: &str) -> Result<usize> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         let query = query.trim();
         if query.is_empty() {
             let count: i64 =
@@ -554,7 +552,7 @@ impl Database {
     }
 
     pub fn get_artists(&self, query: &str, offset: i64, limit: i64) -> Result<Vec<ArtistListItem>> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         let query = query.trim();
         if query.is_empty() {
             return collect_mapped::<ArtistListRow, ArtistListItem, _>(
@@ -581,7 +579,7 @@ impl Database {
     }
 
     pub fn get_album(&self, id: &Cuid) -> Result<Option<Album>> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         let row = conn
             .query_row(
                 "SELECT * FROM albums WHERE id = ?1",
@@ -593,7 +591,7 @@ impl Database {
     }
 
     pub fn get_albums_count(&self, query: &str) -> Result<usize> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         let query = query.trim();
         if query.is_empty() {
             let count: i64 = conn.query_row("SELECT COUNT(*) FROM albums", [], |row| row.get(0))?;
@@ -618,7 +616,7 @@ impl Database {
     }
 
     pub fn get_albums(&self, query: &str, offset: i64, limit: i64) -> Result<Vec<AlbumListItem>> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         let query = query.trim();
         if query.is_empty() {
             return collect_mapped::<AlbumListRow, AlbumListItem, _>(
@@ -666,7 +664,7 @@ impl Database {
         image_id: Option<&str>,
     ) -> Result<Cuid> {
         let id = Cuid::new();
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         let result_id: Cuid = conn.query_row(
             "INSERT INTO albums (id, title, artist_id, image_id)
              VALUES (?1, ?2, ?3, ?4)
@@ -680,13 +678,13 @@ impl Database {
     }
 
     pub fn delete_album(&self, id: &Cuid) -> Result<()> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         conn.execute("DELETE FROM albums WHERE id = ?1", params![id])?;
         Ok(())
     }
 
     pub fn get_playlist(&self, id: &Cuid) -> Result<Option<Playlist>> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         let row = conn
             .query_row(
                 "SELECT * FROM playlists WHERE id = ?1",
@@ -706,7 +704,7 @@ impl Database {
         image_id: Option<&str>,
         pinned: bool,
     ) -> Result<()> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO playlists (id, name, description, image_id, pinned)
              VALUES (?1, ?2, ?3, ?4, ?5)
@@ -722,7 +720,7 @@ impl Database {
     }
 
     pub fn delete_playlist(&self, id: &Cuid) -> Result<()> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         conn.execute("DELETE FROM playlists WHERE id = ?1", params![id])?;
         Ok(())
     }
@@ -735,7 +733,7 @@ impl Database {
         position: i32,
     ) -> Result<()> {
         let id = Cuid::new();
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO playlist_tracks (id, playlist_id, song_id, position)
              VALUES (?1, ?2, ?3, ?4)
@@ -748,7 +746,7 @@ impl Database {
 
     #[allow(dead_code)]
     pub fn delete_playlist_song(&self, playlist_id: &Cuid, song_id: &Cuid) -> Result<()> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         conn.execute(
             "DELETE FROM playlist_tracks WHERE playlist_id = ?1 AND song_id = ?2",
             params![playlist_id, song_id],
@@ -757,7 +755,7 @@ impl Database {
     }
 
     pub fn clear_playlist(&self, playlist_id: &Cuid) -> Result<()> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         conn.execute(
             "DELETE FROM playlist_tracks WHERE playlist_id = ?1",
             params![playlist_id],
@@ -766,7 +764,7 @@ impl Database {
     }
 
     pub fn get_playlist_songs(&self, playlist_id: &Cuid) -> Result<Vec<PlaylistTrack>> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         collect_mapped::<PlaylistTrackRow, PlaylistTrack, _>(
             &conn,
             "SELECT pt.id, pt.playlist_id, pt.position, s.*, ar.name AS artist_name
@@ -782,7 +780,7 @@ impl Database {
 
     #[allow(dead_code)]
     pub fn get_event(&self, id: &Cuid) -> Result<Option<Event>> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         let row = conn
             .query_row(
                 "SELECT * FROM events WHERE id = ?1",
@@ -802,7 +800,7 @@ impl Database {
             EventType::Resume => "RESUME",
         };
 
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO events (id, event_type, context_id) VALUES (?1, ?2, ?3)",
             params![id, event_type_str, context_id],
@@ -819,7 +817,7 @@ impl Database {
             EventType::Pause => "PAUSE",
             EventType::Resume => "RESUME",
         };
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         collect_mapped::<EventRow, Event, _>(
             &conn,
             "SELECT * FROM events WHERE event_type = ?1 ORDER BY timestamp DESC",
@@ -834,7 +832,7 @@ impl Database {
         playlist_id: Option<&Cuid>,
     ) -> Result<Cuid> {
         let id = Cuid::new();
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO event_contexts (id, song_id, playlist_id) VALUES (?1, ?2, ?3)",
             params![id, song_id, playlist_id],
@@ -844,7 +842,7 @@ impl Database {
 
     #[allow(dead_code)]
     pub fn get_event_context(&self, id: &Cuid) -> Result<Option<EventContext>> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         let row = conn
             .query_row(
                 "SELECT * FROM event_contexts WHERE id = ?1",
@@ -857,7 +855,7 @@ impl Database {
 
     #[allow(dead_code)]
     pub fn get_event_context_by_song(&self, song_id: &Cuid) -> Result<Vec<EventContext>> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         collect_mapped::<EventContextRow, EventContext, _>(
             &conn,
             "SELECT * FROM event_contexts WHERE song_id = ?1",
@@ -868,7 +866,7 @@ impl Database {
 
     #[allow(dead_code)]
     pub fn get_event_context_by_playlist(&self, playlist_id: &Cuid) -> Result<Vec<EventContext>> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         collect_mapped::<EventContextRow, EventContext, _>(
             &conn,
             "SELECT * FROM event_contexts WHERE playlist_id = ?1",
@@ -883,7 +881,7 @@ impl Database {
             T::TABLE,
             T::ID_COL
         );
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         conn.execute(&sql, params![favorite, id])?;
         Ok(())
     }
@@ -894,7 +892,7 @@ impl Database {
             T::TABLE,
             T::ID_COL
         );
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         conn.execute(&sql, params![pinned, id])?;
         Ok(())
     }
@@ -910,7 +908,7 @@ impl Database {
         };
 
         let per_type_limit = (limit.saturating_mul(2)).max(20);
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
 
         collect_mapped::<SearchResultRow, SearchResultRow, _>(
             &conn,
@@ -1003,7 +1001,7 @@ impl Database {
     }
 
     pub fn get_playlists_count(&self, query: &str) -> Result<i64> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         let query = query.trim();
         if query.is_empty() {
             let count: i64 =
@@ -1021,7 +1019,7 @@ impl Database {
     }
 
     pub fn upsert_image(&self, id: &str, data: &[u8]) -> Result<()> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO images (id, data) VALUES (?1, ?2)
              ON CONFLICT(id) DO UPDATE SET
@@ -1033,7 +1031,7 @@ impl Database {
     }
 
     pub fn get_image(&self, id: &str) -> Result<Option<Image>> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         let row = conn
             .query_row(
                 "SELECT * FROM images WHERE id = ?1",
@@ -1046,13 +1044,13 @@ impl Database {
 
     #[allow(dead_code)]
     pub fn delete_image(&self, id: &str) -> Result<()> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         conn.execute("DELETE FROM images WHERE id = ?1", params![id])?;
         Ok(())
     }
 
     pub fn get_recently_added_items(&self, limit: i64) -> Result<Vec<RecentItem>> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             r#"
             WITH recent_songs AS (
@@ -1096,7 +1094,7 @@ impl Database {
     }
 
     pub fn get_recently_played_items(&self, limit: i64) -> Result<Vec<RecentItem>> {
-        let conn = self.pool.get()?;
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             r#"
             WITH recent_song_plays AS (
@@ -1133,7 +1131,7 @@ impl Database {
 
     pub fn get_pinned_items(&self) -> Vec<PinnedItem> {
         let run = || -> Result<Vec<PinnedItem>> {
-            let conn = self.pool.get()?;
+            let conn = self.conn.lock();
             collect_mapped::<PinnedItemRow, PinnedItem, _>(
                 &conn,
                 r#"

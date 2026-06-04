@@ -21,7 +21,7 @@ impl Asset for VleerImageLoader {
         source: Self::Source,
         cx: &mut App,
     ) -> impl std::future::Future<Output = Self::Output> + Send + 'static {
-        let pool = cx.global::<Database>().image_pool.clone();
+        let image_conn = cx.global::<Database>().image_conn.clone();
         let executor = cx.background_executor().clone();
 
         async move {
@@ -40,9 +40,7 @@ impl Asset for VleerImageLoader {
 
             executor
                 .spawn(async move {
-                    let conn = pool
-                        .get()
-                        .map_err(|e| ImageCacheError::Asset(format!("pool: {}", e).into()))?;
+                    let conn = image_conn.lock();
                     let bytes: Option<Vec<u8>> = conn
                         .query_row(
                             "SELECT data FROM images WHERE id = ?1",
