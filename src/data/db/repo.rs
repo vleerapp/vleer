@@ -26,6 +26,7 @@ fn open_connection(path: &Path, busy_timeout_ms: u32) -> Result<Connection> {
          PRAGMA busy_timeout = {busy_timeout_ms};
          PRAGMA auto_vacuum = FULL;"
     ))?;
+    conn.set_prepared_statement_cache_capacity(64);
     Ok(conn)
 }
 
@@ -58,7 +59,7 @@ where
     F: FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
     T: Into<U>,
 {
-    let mut stmt = conn.prepare(sql)?;
+    let mut stmt = conn.prepare_cached(sql)?;
     let rows = stmt
         .query_map(params, mapper)?
         .collect::<rusqlite::Result<Vec<T>>>()?;
@@ -89,16 +90,13 @@ impl Database {
 
     pub fn get_song(&self, id: &Cuid) -> Result<Option<Song>> {
         let conn = self.conn.lock();
-        let row = conn
-            .query_row(
-                "SELECT s.*, ar.name AS artist_name
-                 FROM songs s
-                 LEFT JOIN artists ar ON s.artist_id = ar.id
-                 WHERE s.id = ?1",
-                params![id],
-                SongRow::from_row,
-            )
-            .optional()?;
+        let mut stmt = conn.prepare_cached(
+            "SELECT s.*, ar.name AS artist_name
+             FROM songs s
+             LEFT JOIN artists ar ON s.artist_id = ar.id
+             WHERE s.id = ?1",
+        )?;
+        let row = stmt.query_row(params![id], SongRow::from_row).optional()?;
         Ok(row.map(Into::into))
     }
 
@@ -123,15 +121,14 @@ impl Database {
 
     pub fn get_song_by_path(&self, file_path: &str) -> Result<Option<Song>> {
         let conn = self.conn.lock();
-        let row = conn
-            .query_row(
-                "SELECT s.*, ar.name AS artist_name
-                 FROM songs s
-                 LEFT JOIN artists ar ON s.artist_id = ar.id
-                 WHERE s.file_path = ?1",
-                params![file_path],
-                SongRow::from_row,
-            )
+        let mut stmt = conn.prepare_cached(
+            "SELECT s.*, ar.name AS artist_name
+             FROM songs s
+             LEFT JOIN artists ar ON s.artist_id = ar.id
+             WHERE s.file_path = ?1",
+        )?;
+        let row = stmt
+            .query_row(params![file_path], SongRow::from_row)
             .optional()?;
         Ok(row.map(Into::into))
     }
@@ -335,7 +332,7 @@ impl Database {
 
     pub fn get_song_paths(&self) -> Result<Vec<String>> {
         let conn = self.conn.lock();
-        let mut stmt = conn.prepare("SELECT file_path FROM songs")?;
+        let mut stmt = conn.prepare_cached("SELECT file_path FROM songs")?;
         let rows = stmt
             .query_map([], |row| row.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -344,7 +341,8 @@ impl Database {
 
     pub fn get_song_file_states(&self) -> Result<Vec<(String, i64, i64)>> {
         let conn = self.conn.lock();
-        let mut stmt = conn.prepare("SELECT file_path, file_size, file_modified FROM songs")?;
+        let mut stmt =
+            conn.prepare_cached("SELECT file_path, file_size, file_modified FROM songs")?;
         let rows = stmt
             .query_map([], |row| {
                 Ok((
@@ -362,7 +360,9 @@ impl Database {
         let trimmed = query.map(|q| q.trim()).filter(|q| !q.is_empty());
 
         let Some(query) = trimmed else {
-            let count: i64 = conn.query_row("SELECT COUNT(*) FROM songs", [], |row| row.get(0))?;
+            let count: i64 = conn
+                .prepare_cached("SELECT COUNT(*) FROM songs")?
+                .query_row([], |row| row.get(0))?;
             return Ok(count);
         };
 
@@ -370,17 +370,17 @@ impl Database {
             return Ok(0);
         };
 
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*)
-             FROM (
-                 SELECT song_id
-                 FROM songs_fts
-                 WHERE songs_fts MATCH ?1
-                 GROUP BY song_id
-             ) matched",
-            params![fts_query],
-            |row| row.get(0),
-        )?;
+        let count: i64 = conn
+            .prepare_cached(
+                "SELECT COUNT(*)
+                 FROM (
+                     SELECT song_id
+                     FROM songs_fts
+                     WHERE songs_fts MATCH ?1
+                     GROUP BY song_id
+                 ) matched",
+            )?
+            .query_row(params![fts_query], |row| row.get(0))?;
 
         Ok(count)
     }
@@ -462,7 +462,7 @@ impl Database {
                  ORDER BY {order_clause}
                  LIMIT -1 OFFSET ?1"
             );
-            let mut stmt = conn.prepare(&sql)?;
+            let mut stmt = conn.prepare_cached(&sql)?;
             let rows = stmt
                 .query_map(params![offset], |row| row.get::<_, Cuid>(0))?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -485,7 +485,7 @@ impl Database {
              LIMIT -1 OFFSET ?3"
         );
 
-        let mut stmt = conn.prepare(&sql)?;
+        let mut stmt = conn.prepare_cached(&sql)?;
         let rows = stmt
             .query_map(params![query, fts_query, offset], |row| {
                 row.get::<_, Cuid>(0)
@@ -523,13 +523,13 @@ impl Database {
     pub fn upsert_artist(&self, name: &str) -> Result<Cuid> {
         let id = Cuid::new();
         let conn = self.conn.lock();
-        let result_id: Cuid = conn.query_row(
-            "INSERT INTO artists (id, name) VALUES (?1, ?2)
-             ON CONFLICT(name) DO UPDATE SET name = excluded.name
-             RETURNING id",
-            params![id, name],
-            |row| row.get(0),
-        )?;
+        let result_id: Cuid = conn
+            .prepare_cached(
+                "INSERT INTO artists (id, name) VALUES (?1, ?2)
+                 ON CONFLICT(name) DO UPDATE SET name = excluded.name
+                 RETURNING id",
+            )?
+            .query_row(params![id, name], |row| row.get(0))?;
         Ok(result_id)
     }
 
@@ -537,17 +537,18 @@ impl Database {
         let conn = self.conn.lock();
         let query = query.trim();
         if query.is_empty() {
-            let count: i64 =
-                conn.query_row("SELECT COUNT(*) FROM artists", [], |row| row.get(0))?;
+            let count: i64 = conn
+                .prepare_cached("SELECT COUNT(*) FROM artists")?
+                .query_row([], |row| row.get(0))?;
             return Ok(count as usize);
         }
 
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM artists ar
-             WHERE ar.name LIKE '%' || ?1 || '%' COLLATE NOCASE",
-            params![query],
-            |row| row.get(0),
-        )?;
+        let count: i64 = conn
+            .prepare_cached(
+                "SELECT COUNT(*) FROM artists ar
+                 WHERE ar.name LIKE '%' || ?1 || '%' COLLATE NOCASE",
+            )?
+            .query_row(params![query], |row| row.get(0))?;
         Ok(count as usize)
     }
 
@@ -581,11 +582,8 @@ impl Database {
     pub fn get_album(&self, id: &Cuid) -> Result<Option<Album>> {
         let conn = self.conn.lock();
         let row = conn
-            .query_row(
-                "SELECT * FROM albums WHERE id = ?1",
-                params![id],
-                AlbumRow::from_row,
-            )
+            .prepare_cached("SELECT * FROM albums WHERE id = ?1")?
+            .query_row(params![id], AlbumRow::from_row)
             .optional()?;
         Ok(row.map(Into::into))
     }
@@ -594,24 +592,26 @@ impl Database {
         let conn = self.conn.lock();
         let query = query.trim();
         if query.is_empty() {
-            let count: i64 = conn.query_row("SELECT COUNT(*) FROM albums", [], |row| row.get(0))?;
+            let count: i64 = conn
+                .prepare_cached("SELECT COUNT(*) FROM albums")?
+                .query_row([], |row| row.get(0))?;
             return Ok(count as usize);
         }
 
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*)
-             FROM albums al
-             WHERE
-                 al.title LIKE '%' || ?1 || '%' COLLATE NOCASE
-                 OR EXISTS (
-                     SELECT 1
-                     FROM artists ar
-                     WHERE ar.id = al.artist_id
-                       AND ar.name LIKE '%' || ?1 || '%' COLLATE NOCASE
-                 )",
-            params![query],
-            |row| row.get(0),
-        )?;
+        let count: i64 = conn
+            .prepare_cached(
+                "SELECT COUNT(*)
+                 FROM albums al
+                 WHERE
+                     al.title LIKE '%' || ?1 || '%' COLLATE NOCASE
+                     OR EXISTS (
+                         SELECT 1
+                         FROM artists ar
+                         WHERE ar.id = al.artist_id
+                           AND ar.name LIKE '%' || ?1 || '%' COLLATE NOCASE
+                     )",
+            )?
+            .query_row(params![query], |row| row.get(0))?;
         Ok(count as usize)
     }
 
@@ -665,15 +665,15 @@ impl Database {
     ) -> Result<Cuid> {
         let id = Cuid::new();
         let conn = self.conn.lock();
-        let result_id: Cuid = conn.query_row(
-            "INSERT INTO albums (id, title, artist_id, image_id)
-             VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT(title, artist_id) DO UPDATE SET
-                image_id = COALESCE(excluded.image_id, albums.image_id)
-             RETURNING id",
-            params![id, title, artist_id, image_id],
-            |row| row.get(0),
-        )?;
+        let result_id: Cuid = conn
+            .prepare_cached(
+                "INSERT INTO albums (id, title, artist_id, image_id)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(title, artist_id) DO UPDATE SET
+                    image_id = COALESCE(excluded.image_id, albums.image_id)
+                 RETURNING id",
+            )?
+            .query_row(params![id, title, artist_id, image_id], |row| row.get(0))?;
         Ok(result_id)
     }
 
@@ -1004,17 +1004,18 @@ impl Database {
         let conn = self.conn.lock();
         let query = query.trim();
         if query.is_empty() {
-            let count: i64 =
-                conn.query_row("SELECT COUNT(*) FROM playlists", [], |row| row.get(0))?;
+            let count: i64 = conn
+                .prepare_cached("SELECT COUNT(*) FROM playlists")?
+                .query_row([], |row| row.get(0))?;
             return Ok(count);
         }
 
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM playlists p
-             WHERE p.name LIKE '%' || ?1 || '%' COLLATE NOCASE",
-            params![query],
-            |row| row.get(0),
-        )?;
+        let count: i64 = conn
+            .prepare_cached(
+                "SELECT COUNT(*) FROM playlists p
+                 WHERE p.name LIKE '%' || ?1 || '%' COLLATE NOCASE",
+            )?
+            .query_row(params![query], |row| row.get(0))?;
         Ok(count)
     }
 
