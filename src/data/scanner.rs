@@ -28,8 +28,8 @@ type FsWatcher = Debouncer<notify::RecommendedWatcher, RecommendedCache>;
 const SUPPORTED_EXTENSIONS: &[&str] = &[
     "aac", "aiff", "aif", "flac", "mp3", "mp4", "m4a", "mp4a", "ogg", "oga", "opus", "wav", "wv",
 ];
-const MAX_CONCURRENT_SCANS: usize = 128;
-const IO_POOL_THREADS: usize = 128;
+const MAX_CONCURRENT_SCANS: usize = 4;
+const IO_POOL_THREADS: usize = 4;
 
 type IoJob = Box<dyn FnOnce() + Send + 'static>;
 
