@@ -1,3 +1,4 @@
+use crate::media::playback::play_album_now;
 use gpui::{Context, IntoElement, Render, prelude::FluentBuilder, *};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -7,9 +8,7 @@ use crate::{
         app::MainWindow,
         components::{
             card::{CARD_GRID_GAP, Card, calculate_card_layout},
-            context_menu::{
-                ContextMenu, LibraryDataChanged, album_context_menu_items, play_album_now,
-            },
+            context_menu::{ContextMenu, LibraryDataChanged, album_context_menu_items},
             div::{flex_col, flex_row},
             scrollbar::{Scrollbar, ScrollbarAxis, ScrollbarHandle},
         },

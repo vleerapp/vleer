@@ -8,13 +8,15 @@ use crate::{
         db::repo::Database,
         models::{Album, Cuid},
     },
-    media::{playback::Playback, queue::Queue},
+    media::{
+        playback::{Playback, play_album_now},
+        queue::Queue,
+    },
     ui::{
         components::{
             button::Button,
             context_menu::{
                 ContextMenu, LibraryDataChanged, QueueChanged, album_context_menu_items,
-                play_album_now,
             },
             div::{flex_col, flex_row},
             icons,
@@ -285,6 +287,7 @@ impl Render for AlbumView {
                     div()
                         .font_weight(FontWeight::BOLD)
                         .text_size(px(18.0))
+                        .line_height(px(22.0))
                         .text_ellipsis()
                         .overflow_x_hidden()
                         .child(album.title.clone()),

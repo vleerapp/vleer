@@ -1,3 +1,4 @@
+use crate::media::playback::{play_album_now, play_song_now};
 use crate::{
     data::{db::repo::Database, models::RecentItem},
     ui::{
@@ -6,7 +7,7 @@ use crate::{
             card::{CARD_GRID_GAP, Card, calculate_card_layout},
             context_menu::{
                 ContextMenu, HomeDataChanged, LibraryDataChanged, album_context_menu_items,
-                play_album_now, play_song_now, song_context_menu_items,
+                song_context_menu_items,
             },
             div::{flex_col, flex_row},
             icons::{self, icon},

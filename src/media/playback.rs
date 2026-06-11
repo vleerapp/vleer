@@ -5,7 +5,7 @@ use crate::data::db::repo::Database;
 use crate::data::models::{Cuid, EventType};
 use crate::media::controller::{MediaController, PlaybackState};
 use crate::media::visualizer::{F32Converter, VisualizerSource, VisualizerState};
-use crate::ui::components::context_menu::{BackgroundUiEvent, BackgroundUiNotifier};
+use crate::ui::components::context_menu::{BackgroundUiEvent, BackgroundUiNotifier, QueueChanged};
 use anyhow::{Context, Result};
 use gpui::{App, AsyncWindowContext, BorrowAppContext, Global, Window};
 use rodio::decoder::{Decoder, DecoderBuilder};
@@ -543,10 +543,11 @@ impl Playback {
         let db = cx.global::<Database>().clone();
         let background_ui = cx.try_global::<BackgroundUiNotifier>().cloned();
         let should_notify_home = matches!(event_type, EventType::Play);
+        let playlist_id = cx.global::<Queue>().current_playlist_id.clone();
         cx.background_executor()
             .spawn(async move {
                 let context_id = if let Some(song_id) = &song_id {
-                    match db.insert_event_context(Some(song_id), None) {
+                    match db.insert_event_context(Some(song_id), playlist_id.as_ref()) {
                         Ok(id) => Some(id),
                         Err(e) => {
                             error!("Failed to insert event context: {}", e);
@@ -587,4 +588,175 @@ impl Playback {
         }
         1.0
     }
+}
+
+pub fn play_song_ids_now(song_ids: Vec<Cuid>, cx: &mut App) {
+    if song_ids.is_empty() {
+        return;
+    }
+    cx.update_global::<Queue, _>(|queue, _| {
+        queue.clear();
+        queue.current_playlist_id = None;
+        queue.add_songs(song_ids);
+    });
+    cx.update_global::<Playback, _>(|playback, cx| {
+        playback.play_queue(cx);
+    });
+    cx.set_global(QueueChanged);
+}
+
+pub fn play_song_now(song_id: Cuid, cx: &mut App) {
+    play_song_ids_now(vec![song_id], cx);
+}
+
+pub fn play_album_now(album_id: Cuid, cx: &mut App) {
+    let db = cx.global::<Database>().clone();
+    let bg = cx.background_executor().clone();
+    cx.spawn(async move |cx| {
+        let song_ids = bg
+            .spawn(async move {
+                db.get_album_songs(&album_id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|song| song.id)
+                    .collect::<Vec<_>>()
+            })
+            .await;
+        if song_ids.is_empty() {
+            return;
+        }
+        cx.update(|cx| play_song_ids_now(song_ids, cx));
+    })
+    .detach();
+}
+
+pub fn play_album_next(album_id: Cuid, cx: &mut App) {
+    let db = cx.global::<Database>().clone();
+    let bg = cx.background_executor().clone();
+    cx.spawn(async move |cx| {
+        let song_ids = bg
+            .spawn(async move {
+                db.get_album_songs(&album_id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|song| song.id)
+                    .collect::<Vec<_>>()
+            })
+            .await;
+        if song_ids.is_empty() {
+            return;
+        }
+        cx.update(|cx| {
+            cx.update_global::<Queue, _>(|queue, _| {
+                queue.add_songs_next(song_ids);
+            });
+            cx.set_global(QueueChanged);
+        });
+    })
+    .detach();
+}
+
+pub fn play_album_last(album_id: Cuid, cx: &mut App) {
+    let db = cx.global::<Database>().clone();
+    let bg = cx.background_executor().clone();
+    cx.spawn(async move |cx| {
+        let song_ids = bg
+            .spawn(async move {
+                db.get_album_songs(&album_id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|song| song.id)
+                    .collect::<Vec<_>>()
+            })
+            .await;
+        if song_ids.is_empty() {
+            return;
+        }
+        cx.update(|cx| {
+            cx.update_global::<Queue, _>(|queue, _| {
+                queue.add_songs(song_ids);
+            });
+            cx.set_global(QueueChanged);
+        });
+    })
+    .detach();
+}
+
+pub fn play_playlist_now(playlist_id: Cuid, cx: &mut App) {
+    let db = cx.global::<Database>().clone();
+    let bg = cx.background_executor().clone();
+    cx.spawn(async move |cx| {
+        let pl_id = playlist_id.clone();
+        let song_ids = bg
+            .spawn(async move {
+                db.get_playlist_songs(&playlist_id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|pt| pt.song.id)
+                    .collect::<Vec<_>>()
+            })
+            .await;
+        if song_ids.is_empty() {
+            return;
+        }
+        cx.update(|cx| {
+            play_song_ids_now(song_ids, cx);
+            cx.update_global::<Queue, _>(|queue, _| {
+                queue.current_playlist_id = Some(pl_id);
+            });
+        });
+    })
+    .detach();
+}
+
+pub fn play_playlist_next(playlist_id: Cuid, cx: &mut App) {
+    let db = cx.global::<Database>().clone();
+    let bg = cx.background_executor().clone();
+    cx.spawn(async move |cx| {
+        let song_ids = bg
+            .spawn(async move {
+                db.get_playlist_songs(&playlist_id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|pt| pt.song.id)
+                    .collect::<Vec<_>>()
+            })
+            .await;
+        if song_ids.is_empty() {
+            return;
+        }
+        cx.update(|cx| {
+            cx.update_global::<Queue, _>(|queue, _| {
+                queue.add_songs_next(song_ids);
+            });
+            cx.set_global(QueueChanged);
+        });
+    })
+    .detach();
+}
+
+pub fn play_playlist_last(playlist_id: Cuid, cx: &mut App) {
+    let db = cx.global::<Database>().clone();
+    let bg = cx.background_executor().clone();
+    cx.spawn(async move |cx| {
+        let song_ids = bg
+            .spawn(async move {
+                db.get_playlist_songs(&playlist_id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|pt| pt.song.id)
+                    .collect::<Vec<_>>()
+            })
+            .await;
+        if song_ids.is_empty() {
+            return;
+        }
+        cx.update(|cx| {
+            cx.update_global::<Queue, _>(|queue, _| {
+                queue.add_songs(song_ids);
+            });
+            cx.set_global(QueueChanged);
+        });
+    })
+    .detach();
 }

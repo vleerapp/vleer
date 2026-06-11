@@ -15,6 +15,7 @@ pub struct Queue {
     shuffle_position: Option<usize>,
     repeat_mode: RepeatMode,
     current_song: RefCell<Option<(Cuid, Song)>>,
+    pub current_playlist_id: Option<Cuid>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -36,6 +37,7 @@ impl Queue {
             shuffle_position: None,
             repeat_mode: RepeatMode::Off,
             current_song: RefCell::new(None),
+            current_playlist_id: None,
         }
     }
 
@@ -76,6 +78,16 @@ impl Queue {
             None => 0,
         };
         self.add_song_at(song_id, insert_pos);
+    }
+
+    pub fn add_songs_next(&mut self, song_ids: Vec<Cuid>) {
+        let insert_pos = match self.current_index {
+            Some(idx) => idx + 1,
+            None => 0,
+        };
+        for (i, song_id) in song_ids.into_iter().enumerate() {
+            self.add_song_at(song_id, insert_pos + i);
+        }
     }
 
     pub fn add_songs(&mut self, song_ids: Vec<Cuid>) {
