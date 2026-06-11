@@ -99,6 +99,7 @@ pub struct TextInput {
     text_color: Option<Rgba>,
     centered: bool,
     custom_height: Option<Pixels>,
+    custom_padding_x: Option<Pixels>,
     validator: Option<Validator>,
     last_click_time: Option<Instant>,
     last_click_position: Point<Pixels>,
@@ -125,6 +126,7 @@ impl TextInput {
             text_color: None,
             centered: false,
             custom_height: None,
+            custom_padding_x: None,
             validator: None,
             last_click_time: None,
             last_click_position: Point::new(px(0.0), px(0.0)),
@@ -154,6 +156,11 @@ impl TextInput {
 
     pub fn with_height(mut self, height: impl Into<Pixels>) -> Self {
         self.custom_height = Some(height.into());
+        self
+    }
+
+    pub fn no_padding(mut self) -> Self {
+        self.custom_padding_x = Some(px(0.0));
         self
     }
 
@@ -685,7 +692,7 @@ impl Render for TextInput {
             .bg(self.bg_color.unwrap_or(variables.element))
             .size_full()
             .h(self.custom_height.unwrap_or(px(variables.padding_32)))
-            .px(px(variables.padding_8))
+            .px(self.custom_padding_x.unwrap_or(px(variables.padding_8)))
             .gap(px(variables.padding_8))
             .when_some(self.icon_path.clone(), |this, path| {
                 this.child(icon(path).text_color(active_color))
