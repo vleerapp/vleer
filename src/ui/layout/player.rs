@@ -234,10 +234,7 @@ impl Render for Player {
                         .object_fit(ObjectFit::Cover)
                         .into_any_element()
                 } else {
-                    div()
-                        .size(px(36.0))
-                        .bg(variables.element)
-                        .into_any_element()
+                    div().size(px(36.0)).bg(variables.border).into_any_element()
                 })
                 .child(
                     flex_col()
@@ -263,12 +260,7 @@ impl Render for Player {
             flex_row()
                 .gap(px(variables.padding_8))
                 .items_center()
-                .child(
-                    div()
-                        .size(px(36.0))
-                        .bg(variables.element)
-                        .into_any_element(),
-                )
+                .child(div().size(px(36.0)).bg(variables.border).into_any_element())
                 .child(
                     flex_col()
                         .gap(px(2.0))

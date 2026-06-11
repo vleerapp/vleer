@@ -289,17 +289,6 @@ fn render_row(
                         }
                     });
                 })
-                .on_mouse_down(MouseButton::Left, move |event, _window, cx| {
-                    if event.click_count == 2 {
-                        cx.update_global::<Queue, _>(|q, cx| {
-                            q.set_current_index(real_idx, cx);
-                        });
-                        cx.update_global::<Playback, _>(|p, cx| {
-                            p.play_queue(cx);
-                        });
-                        cx.set_global(QueueChanged);
-                    }
-                })
                 .on_drag(
                     drag_payload,
                     move |payload: &QueueDragPayload, pos, _window, cx| {
