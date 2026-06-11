@@ -2,6 +2,7 @@ use crate::data::db::repo::Database;
 use crate::data::models::{Cuid, PinnedItem};
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
+use crate::ui::components::context_menu::LibraryDataChanged;
 use crate::ui::components::context_menu::{
     ContextMenu, PinnedItemsChanged, QueueChanged, album_context_menu_items,
     artist_context_menu_items, playlist_context_menu_items, song_context_menu_items,
@@ -18,7 +19,7 @@ use crate::ui::{
         nav_button::NavButton,
     },
     variables::Variables,
-    views::{AppView, SelectedAlbum},
+    views::{AppView, SelectedAlbum, SelectedPlaylist},
 };
 use gpui::prelude::FluentBuilder;
 use gpui::*;
@@ -42,6 +43,22 @@ pub struct Library {
     last_query: String,
     _search_task: Option<Task<()>>,
     context_menu: Entity<ContextMenu>,
+}
+
+fn reload_pinned_items(cx: &mut Context<Library>) {
+    let db = cx.global::<Database>().clone();
+    let bg = cx.background_executor().clone();
+    cx.spawn(async move |this, cx: &mut AsyncApp| {
+        let items = bg.spawn(async move { db.get_pinned_items() }).await;
+        cx.update(|cx| {
+            this.update(cx, |lib, cx| {
+                lib.pinned_items = items;
+                cx.notify();
+            })
+        })
+        .ok();
+    })
+    .detach();
 }
 
 impl Library {
@@ -130,19 +147,12 @@ impl Library {
         .detach();
 
         cx.observe_global::<PinnedItemsChanged>(|_, cx| {
-            let db = cx.global::<Database>().clone();
-            let bg = cx.background_executor().clone();
-            cx.spawn(async move |this, cx: &mut AsyncApp| {
-                let items = bg.spawn(async move { db.get_pinned_items() }).await;
-                cx.update(|cx| {
-                    this.update(cx, |lib, cx| {
-                        lib.pinned_items = items;
-                        cx.notify();
-                    })
-                })
-                .ok();
-            })
-            .detach();
+            reload_pinned_items(cx);
+        })
+        .detach();
+
+        cx.observe_global::<LibraryDataChanged>(|_, cx| {
+            reload_pinned_items(cx);
         })
         .detach();
 
@@ -169,18 +179,28 @@ fn pinned_item(
 ) -> impl IntoElement {
     let is_artist = item_type == "Artist";
     let is_album = item_type == "Album";
+    let is_playlist = item_type == "Playlist";
     let item_type_clone = item_type.clone();
     let item_type_for_ctx = item_type.clone();
     let id_clone = id.clone();
     let id_for_ctx = id.clone();
 
     let cover_element = if let Some(uri) = image_id {
-        img(format!("!image://{}", uri))
+        let image = img(format!("!image://{}", uri))
             .size_full()
-            .object_fit(ObjectFit::Cover)
-            .into_any_element()
+            .object_fit(ObjectFit::Cover);
+        if is_artist {
+            image.rounded_full().into_any_element()
+        } else {
+            image.into_any_element()
+        }
     } else {
-        div().bg(variables.border).into_any_element()
+        let placeholder = div().size_full().bg(variables.border);
+        if is_artist {
+            placeholder.rounded_full().into_any_element()
+        } else {
+            placeholder.into_any_element()
+        }
     };
 
     flex_row()
@@ -189,6 +209,9 @@ fn pinned_item(
         .hover(|s| s.bg(variables.element_hover))
         .gap(px(variables.padding_8))
         .pr(px(variables.padding_8))
+        .when(is_artist, |this| {
+            this.rounded_tl(px(18.0)).rounded_bl(px(18.0))
+        })
         .when(is_album, |div| {
             let album_id = id.clone();
             div.cursor_pointer()
@@ -197,6 +220,21 @@ fn pinned_item(
                     if let Some(Some(root)) = window.root::<MainWindow>() {
                         root.update(cx, |view, cx| {
                             view.set_current_view(AppView::Album, window, cx);
+                        });
+                    }
+                })
+        })
+        .when(is_playlist, |div| {
+            let playlist_id = id.clone();
+            div.cursor_pointer()
+                .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
+                    cx.update_global::<SelectedPlaylist, _>(|sel, _| {
+                        sel.id = Some(playlist_id.clone());
+                        sel.focus_title = false;
+                    });
+                    if let Some(Some(root)) = window.root::<MainWindow>() {
+                        root.update(cx, |view, cx| {
+                            view.set_current_view(AppView::Playlist, window, cx);
                         });
                     }
                 })
@@ -216,17 +254,7 @@ fn pinned_item(
         .child(
             div()
                 .size(px(36.0))
-                .map(|this| {
-                    if is_artist {
-                        this.rounded_tr(px(0.0))
-                            .rounded_br(px(0.0))
-                            .rounded_bl(px(18.0))
-                            .rounded_tl(px(18.0))
-                    } else {
-                        this.rounded_full()
-                    }
-                })
-                .rounded(px(18.0))
+                .flex_shrink_0()
                 .relative()
                 .child(cover_element)
                 .when(!is_artist, |this| {
@@ -308,7 +336,7 @@ fn pinned_item(
 }
 
 impl Render for Library {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
         let search = cx.global::<Search>();
         let query = search.query.trim().to_string();
@@ -387,12 +415,100 @@ impl Render for Library {
                                 Some(ar_count),
                                 AppView::Artists,
                             ))
-                            .child(NavButton::new(
-                                icons::PLAYLIST,
-                                Some("Playlists"),
-                                Some(p_count),
-                                AppView::Playlists,
-                            )),
+                            .child({
+                                let is_active = window
+                                    .root::<MainWindow>()
+                                    .and_then(|r| {
+                                        r.map(|r| r.read(cx).current_view() == AppView::Playlists)
+                                    })
+                                    .unwrap_or(false);
+                                let (default_color, hover_color) = if is_active {
+                                    (variables.text, variables.text)
+                                } else {
+                                    (variables.text_secondary, variables.text)
+                                };
+                                flex_row()
+                                    .group("nav_btn_Playlists")
+                                    .id("nav_btn_Playlists")
+                                    .justify_between()
+                                    .items_center()
+                                    .cursor_pointer()
+                                    .text_color(default_color)
+                                    .group_hover("nav_btn_Playlists", |s| s.text_color(hover_color))
+                                    .child(
+                                        flex_row()
+                                            .gap(px(variables.padding_8))
+                                            .child(
+                                                icon(icons::PLAYLIST)
+                                                    .text_color(default_color)
+                                                    .group_hover("nav_btn_Playlists", |s| {
+                                                        s.text_color(hover_color)
+                                                    }),
+                                            )
+                                            .child("Playlists"),
+                                    )
+                                    .child(
+                                        flex_row()
+                                            .gap(px(variables.padding_8))
+                                            .items_center()
+                                            .when(p_count != 0, |this| {
+                                                this.child(p_count.to_string())
+                                            })
+                                            .child(
+                                                div()
+                                                    .id("create-playlist-btn")
+                                                    .cursor_pointer()
+                                                    .child(
+                                                        icon(icons::PLUS)
+                                                            .text_color(variables.text_secondary)
+                                                            .hover(|s| {
+                                                                s.text_color(variables.text)
+                                                            }),
+                                                    )
+                                                    .on_mouse_down(
+                                                        MouseButton::Left,
+                                                        move |_event, window, cx| {
+                                                            cx.stop_propagation();
+                                                            let new_id = Cuid::new();
+                                                            let db =
+                                                                cx.global::<Database>().clone();
+                                                            let _ = db.upsert_playlist(
+                                                                &new_id, "", None, None, false,
+                                                            );
+                                                            cx.update_global::<SelectedPlaylist, _>(
+                                                                |sel, _| {
+                                                                    sel.id = Some(new_id);
+                                                                    sel.focus_title = true;
+                                                                },
+                                                            );
+                                                            cx.set_global(LibraryDataChanged);
+                                                            if let Some(Some(root)) =
+                                                                window.root::<MainWindow>()
+                                                            {
+                                                                root.update(cx, |view, cx| {
+                                                                    view.set_current_view(
+                                                                        AppView::Playlist,
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                });
+                                                            }
+                                                        },
+                                                    ),
+                                            ),
+                                    )
+                                    .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
+                                        if let Some(Some(root)) = window.root::<MainWindow>() {
+                                            root.update(cx, |view, cx| {
+                                                view.set_current_view(
+                                                    AppView::Playlists,
+                                                    window,
+                                                    cx,
+                                                );
+                                            });
+                                        }
+                                    })
+                            }),
                     )
                     .when(has_display || is_searching, |this| {
                         this.child(
