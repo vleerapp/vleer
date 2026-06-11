@@ -1,6 +1,7 @@
 use crate::data::db::models::{
     AlbumListRow, AlbumRow, ArtistListRow, ArtistRow, EventContextRow, EventRow, ImageRow,
-    PinnedItemRow, PlaylistRow, PlaylistTrackRow, SearchResultRow, SongListRow, SongRow,
+    PinnedItemRow, PlaylistListRow, PlaylistRow, PlaylistTrackRow, SearchResultRow, SongListRow,
+    SongRow,
 };
 use serde::{Deserialize, Serialize};
 
@@ -121,6 +122,14 @@ pub struct Artist {
     pub pinned: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlaylistListItem {
+    pub id: Cuid,
+    pub name: String,
+    pub image_id: Option<String>,
+    pub song_count: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Playlist {
     pub id: Cuid,
@@ -138,6 +147,7 @@ pub struct PlaylistTrack {
     pub playlist_id: Cuid,
     pub song: Song,
     pub position: i32,
+    pub album_title: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -262,6 +272,7 @@ impl From<PlaylistTrackRow> for PlaylistTrack {
             playlist_id: row.playlist_id,
             song: row.song.into(),
             position: row.position,
+            album_title: row.album_title,
         }
     }
 }
@@ -297,6 +308,17 @@ impl From<ArtistListRow> for ArtistListItem {
             id: row.id,
             name: row.name,
             image_id: row.image_id,
+        }
+    }
+}
+
+impl From<PlaylistListRow> for PlaylistListItem {
+    fn from(row: PlaylistListRow) -> Self {
+        Self {
+            id: row.id,
+            name: row.name,
+            image_id: row.image_id,
+            song_count: row.song_count,
         }
     }
 }

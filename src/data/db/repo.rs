@@ -2,7 +2,8 @@ use crate::data::{
     db::models::*,
     models::{
         Album, AlbumListItem, Artist, ArtistListItem, Cuid, Event, EventContext, EventType, Image,
-        PinnedItem, Playlist, PlaylistTrack, RecentItem, Song, SongListItem, SongSort,
+        PinnedItem, Playlist, PlaylistListItem, PlaylistTrack, RecentItem, Song, SongListItem,
+        SongSort,
     },
 };
 use anyhow::Result;
@@ -695,7 +696,6 @@ impl Database {
         Ok(row.map(Into::into))
     }
 
-    #[allow(dead_code)]
     pub fn upsert_playlist(
         &self,
         id: &Cuid,
@@ -725,21 +725,14 @@ impl Database {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    pub fn upsert_playlist_song(
-        &self,
-        playlist_id: &Cuid,
-        song_id: &Cuid,
-        position: i32,
-    ) -> Result<()> {
+    pub fn upsert_playlist_song(&self, playlist_id: &Cuid, song_id: &Cuid) -> Result<()> {
         let id = Cuid::new();
         let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO playlist_tracks (id, playlist_id, song_id, position)
-             VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT(playlist_id, song_id) DO UPDATE SET
-                position = excluded.position",
-            params![id, playlist_id, song_id, position],
+             VALUES (?1, ?2, ?3, COALESCE((SELECT MAX(position) FROM playlist_tracks WHERE playlist_id = ?2), -1) + 1)
+             ON CONFLICT(playlist_id, song_id) DO NOTHING",
+            params![id, playlist_id, song_id],
         )?;
         Ok(())
     }
@@ -767,10 +760,12 @@ impl Database {
         let conn = self.conn.lock();
         collect_mapped::<PlaylistTrackRow, PlaylistTrack, _>(
             &conn,
-            "SELECT pt.id, pt.playlist_id, pt.position, s.*, ar.name AS artist_name
+            "SELECT pt.id AS pt_id, pt.playlist_id, pt.position, s.*, ar.name AS artist_name,
+                    al.title AS album_title
              FROM playlist_tracks pt
              JOIN songs s ON s.id = pt.song_id
              LEFT JOIN artists ar ON s.artist_id = ar.id
+             LEFT JOIN albums al ON s.album_id = al.id
              WHERE pt.playlist_id = ?1
              ORDER BY pt.position ASC",
             params![playlist_id],
@@ -1017,6 +1012,41 @@ impl Database {
             )?
             .query_row(params![query], |row| row.get(0))?;
         Ok(count)
+    }
+
+    pub fn get_playlists(
+        &self,
+        query: &str,
+        offset: i64,
+        limit: i64,
+    ) -> Result<Vec<PlaylistListItem>> {
+        let conn = self.conn.lock();
+        let query = query.trim();
+        if query.is_empty() {
+            return collect_mapped::<PlaylistListRow, PlaylistListItem, _>(
+                &conn,
+                "SELECT p.id, p.name, p.image_id, COUNT(pt.id) AS song_count
+                 FROM playlists p
+                 LEFT JOIN playlist_tracks pt ON pt.playlist_id = p.id
+                 GROUP BY p.id, p.name, p.image_id
+                 ORDER BY p.name COLLATE NOCASE ASC
+                 LIMIT ?1 OFFSET ?2",
+                params![limit, offset],
+                PlaylistListRow::from_row,
+            );
+        }
+        collect_mapped::<PlaylistListRow, PlaylistListItem, _>(
+            &conn,
+            "SELECT p.id, p.name, p.image_id, COUNT(pt.id) AS song_count
+             FROM playlists p
+             LEFT JOIN playlist_tracks pt ON pt.playlist_id = p.id
+             WHERE p.name LIKE '%' || ?1 || '%' COLLATE NOCASE
+             GROUP BY p.id, p.name, p.image_id
+             ORDER BY p.name COLLATE NOCASE ASC
+             LIMIT ?2 OFFSET ?3",
+            params![query, limit, offset],
+            PlaylistListRow::from_row,
+        )
     }
 
     pub fn upsert_image(&self, id: &str, data: &[u8]) -> Result<()> {

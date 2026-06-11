@@ -154,6 +154,25 @@ impl AlbumRow {
 }
 
 #[derive(Debug, Clone)]
+pub struct PlaylistListRow {
+    pub id: Cuid,
+    pub name: String,
+    pub image_id: Option<String>,
+    pub song_count: i64,
+}
+
+impl PlaylistListRow {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("id")?,
+            name: row.get("name")?,
+            image_id: row.get("image_id")?,
+            song_count: row.get("song_count")?,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct AlbumListRow {
     pub id: Cuid,
     pub title: String,
@@ -205,15 +224,17 @@ pub struct PlaylistTrackRow {
     pub playlist_id: Cuid,
     pub position: i32,
     pub song: SongRow,
+    pub album_title: Option<String>,
 }
 
 impl PlaylistTrackRow {
     pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
         Ok(Self {
-            id: row.get("id")?,
+            id: row.get("pt_id")?,
             playlist_id: row.get("playlist_id")?,
             position: row.get("position")?,
             song: SongRow::from_row(row)?,
+            album_title: row.get("album_title")?,
         })
     }
 }
