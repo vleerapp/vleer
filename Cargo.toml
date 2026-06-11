@@ -10,9 +10,9 @@ license = "AGPL-3.0"
 categories = ["multimedia::audio"]
 
 [dependencies]
-gpui = { git = "https://github.com/vleerapp/zed", rev = "39ded151f16e2c1d78cd8ccc0e6f7650f201f0c9" }
-gpui_macros = { git = "https://github.com/vleerapp/zed", rev = "39ded151f16e2c1d78cd8ccc0e6f7650f201f0c9" }
-gpui_platform = { git = "https://github.com/vleerapp/zed", rev = "39ded151f16e2c1d78cd8ccc0e6f7650f201f0c9", features = [
+gpui = { git = "https://github.com/vleerapp/zed", rev = "93c0d2b36fc6d805535278efec7b610263af3de5" }
+gpui_macros = { git = "https://github.com/vleerapp/zed", rev = "93c0d2b36fc6d805535278efec7b610263af3de5" }
+gpui_platform = { git = "https://github.com/vleerapp/zed", rev = "93c0d2b36fc6d805535278efec7b610263af3de5", features = [
   "font-kit",
   "x11",
   "wayland",
@@ -24,12 +24,12 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tokio = { version = "1.52.3", features = ["sync"] }
 futures = "0.3.32"
-rusqlite = { version = "0.40.0", features = ["bundled", "chrono"] }
+rusqlite = { version = "0.40.1", features = ["bundled", "chrono"] }
 rusqlite_migration = { version = "2.6.0", features = ["from-directory"] }
 parking_lot = "0.12.5"
 serde = { version = "1.0.228", features = ["derive"] }
 toml = "1.1.2"
-rodio = { git = "https://github.com/vleerapp/rodio", rev = "c0c38bd22789a22f0fe871a1b1cb9af01f72b4e5", features = [
+rodio = { git = "https://github.com/vleerapp/rodio", rev = "a1c1aae476be53f0e0a9f2d31e234d9074745a6d", features = [
   "symphonia",
   "symphonia-all",
 ] }
@@ -52,11 +52,11 @@ lru = "0.18.0"
 lazy_static = "1.5.0"
 dashmap = "6.2.1"
 ureq = { version = "3.3.0", features = ["json"] }
-uuid = { version = "1.23.2", features = ["serde", "v4"] }
+uuid = { version = "1.23.3", features = ["serde", "v4"] }
 souvlaki = "0.8.3"
 spectrum-analyzer = "1.7.0"
 discord-rich-presence = "1.1.0"
-chrono = "0.4.44"
+chrono = "0.4.45"
 base64 = "0.22.1"
 itertools = "0.14.0"
 rand = "0.10.1"
