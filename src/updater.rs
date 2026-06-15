@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 use ureq::Agent;
 
+const URL: &str = "https://api.vleer.app/update/v1/check";
 const PUBLIC_KEY: &str = "RWQc0Dzx5Dhao5YtQGj79Y4AN7U1pjJFctj3dCLr4tQqkjewjl5xnSqe";
 
 #[derive(Debug, Clone, Default)]
@@ -265,13 +266,17 @@ pub fn is_managed_externally() -> bool {
     }
 }
 
-pub fn run_check_in_background(updater: Updater, url: String) {
-    std::thread::spawn(move || match updater.check(&url) {
-        Ok(Some(info)) => info!("update {} available", info.version),
-        Ok(None) => debug!("no update available"),
-        Err(e) => {
-            warn!("update check failed: {e}");
-            updater.set_status(UpdateStatus::Failed(e.to_string()));
-        }
-    });
+pub fn run_check_in_background(updater: Updater, executor: &gpui::BackgroundExecutor) {
+    executor
+        .spawn(async move {
+            match updater.check(URL) {
+                Ok(Some(info)) => info!("update {} available", info.version),
+                Ok(None) => debug!("no update available"),
+                Err(e) => {
+                    warn!("update check failed: {e}");
+                    updater.set_status(UpdateStatus::Failed(e.to_string()));
+                }
+            }
+        })
+        .detach();
 }

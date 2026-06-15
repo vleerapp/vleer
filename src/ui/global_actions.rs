@@ -95,9 +95,8 @@ fn scan(_: &Scan, cx: &mut App) {
 }
 
 fn check_for_updates(_: &CheckForUpdates, cx: &mut App) {
-    let url = cx.global::<Config>().get().updater.feed_url.clone();
     let updater = cx.global::<Updater>().clone();
-    run_check_in_background(updater, url);
+    run_check_in_background(updater, cx.background_executor());
 }
 
 fn force_scan(_: &ForceScan, cx: &mut App) {

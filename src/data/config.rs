@@ -59,15 +59,11 @@ impl Default for AudioSettings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdaterSettings {
     pub auto_check: bool,
-    pub feed_url: String,
 }
 
 impl Default for UpdaterSettings {
     fn default() -> Self {
-        Self {
-            auto_check: true,
-            feed_url: "https://api.vleer.app/updates/latest".to_string(),
-        }
+        Self { auto_check: true }
     }
 }
 

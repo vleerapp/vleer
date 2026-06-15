@@ -622,10 +622,12 @@ impl RenderOnce for UpdatesSection {
                                 .hover(|s| s.bg(variables.element_hover))
                                 .child("Check now")
                                 .on_click({
-                                    let url = cfg.feed_url.clone();
                                     let updater = updater.clone();
-                                    move |_event, _window, _cx| {
-                                        run_check_in_background(updater.clone(), url.clone());
+                                    move |_event, _window, cx| {
+                                        run_check_in_background(
+                                            updater.clone(),
+                                            cx.background_executor(),
+                                        );
                                     }
                                 }),
                         )
