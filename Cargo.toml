@@ -54,6 +54,7 @@ dashmap = "6.2.1"
 ureq = { version = "3.3.0", features = ["json"] }
 uuid = { version = "1.23.3", features = ["serde", "v4"] }
 semver = "1.0"
+minisign-verify = "0.2"
 souvlaki = "0.8.3"
 spectrum-analyzer = "1.7.0"
 discord-rich-presence = "1.1.0"

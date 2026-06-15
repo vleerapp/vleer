@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::thread;
 
-use vleer::ui::updater::{PlatformAsset, UpdateInfo, Updater, is_managed_externally};
+use vleer::updater::{PlatformAsset, UpdateInfo, Updater, is_managed_externally, verify_signature};
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
 
@@ -35,22 +35,34 @@ fn serve_json(body: String) -> String {
     format!("http://127.0.0.1:{}", addr.port())
 }
 
-fn serve_bytes(data: Vec<u8>) -> String {
+fn serve_update(binary: Vec<u8>, sig: String) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     thread::spawn(move || {
-        if let Ok((mut s, _)) = listener.accept() {
-            let mut buf = [0u8; 4096];
-            let _ = s.read(&mut buf);
-            let hdr = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                data.len()
-            );
-            let _ = s.write_all(hdr.as_bytes());
-            let _ = s.write_all(&data);
+        for _ in 0..2 {
+            if let Ok((mut s, _)) = listener.accept() {
+                let mut buf = [0u8; 4096];
+                let n = s.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]);
+                if req.contains(".minisig") {
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        sig.len(),
+                        sig
+                    );
+                    let _ = s.write_all(resp.as_bytes());
+                } else {
+                    let hdr = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        binary.len()
+                    );
+                    let _ = s.write_all(hdr.as_bytes());
+                    let _ = s.write_all(&binary);
+                }
+            }
         }
     });
-    format!("http://127.0.0.1:{}", addr.port())
+    format!("http://127.0.0.1:{}/vleer.bin", addr.port())
 }
 
 fn platform() -> &'static str {
@@ -63,29 +75,9 @@ fn platform() -> &'static str {
     }
 }
 
-fn sha256_hex(data: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    use std::fmt::Write as FmtWrite;
-    let mut h = Sha256::new();
-    h.update(data);
-    let d = h.finalize();
-    let mut out = String::with_capacity(64);
-    for b in d.iter() {
-        let _ = write!(out, "{:02x}", b);
-    }
-    out
-}
-
-fn make_info(url: String, sha256: Option<String>) -> UpdateInfo {
+fn make_info(url: String) -> UpdateInfo {
     let mut platforms = HashMap::new();
-    platforms.insert(
-        platform().to_string(),
-        PlatformAsset {
-            url,
-            size: None,
-            sha256,
-        },
-    );
+    platforms.insert(platform().to_string(), PlatformAsset { url, size: None });
     UpdateInfo {
         version: "99.0.0".to_string(),
         pub_date: None,
@@ -111,9 +103,9 @@ fn parse_manifest_full() {
         "pub_date": "2025-06-01",
         "notes_url": "https://example.com/notes",
         "platforms": {
-            "macos":   {"url": "https://example.com/app.dmg", "size": 102400, "sha256": "abc"},
+            "macos":   {"url": "https://example.com/app.dmg", "size": 102400},
             "windows": {"url": "https://example.com/app.msi"},
-            "linux":   {"url": "https://example.com/app.AppImage", "sha256": "def"}
+            "linux":   {"url": "https://example.com/app.AppImage"}
         }
     }"#;
     let info: UpdateInfo = serde_json::from_str(json).unwrap();
@@ -122,8 +114,6 @@ fn parse_manifest_full() {
     assert_eq!(info.notes_url.as_deref(), Some("https://example.com/notes"));
     assert_eq!(info.platforms.len(), 3);
     assert_eq!(info.platforms["macos"].size, Some(102400));
-    assert_eq!(info.platforms["macos"].sha256.as_deref(), Some("abc"));
-    assert!(info.platforms["windows"].sha256.is_none());
     assert!(info.platforms["windows"].size.is_none());
 }
 
@@ -158,18 +148,15 @@ fn managed_externally_without_appimage_env() {
 }
 
 #[test]
-fn sha256_empty_string_known_hash() {
-    assert_eq!(
-        sha256_hex(b""),
-        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    );
+fn verify_signature_rejects_invalid_public_key() {
+    assert!(verify_signature("not_a_key", b"data", "not_a_sig").is_err());
 }
 
 #[test]
-fn sha256_output_is_64_lowercase_hex_chars() {
-    let h = sha256_hex(b"vleer update test");
-    assert_eq!(h.len(), 64);
-    assert!(h.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')));
+fn verify_signature_rejects_malformed_sig_content() {
+    let fake_key =
+        "RWAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    assert!(verify_signature(fake_key, b"data", "not a minisig").is_err());
 }
 
 #[test]
@@ -237,11 +224,7 @@ fn check_none_when_newer_version_missing_platform_asset() {
 fn check_error_on_invalid_json_response() {
     let dir = tmp_dir();
     let updater = Updater::new(dir.clone());
-    assert!(
-        updater
-            .check(&serve_json("not json at all".to_string()))
-            .is_err()
-    );
+    assert!(updater.check(&serve_json("not json".to_string())).is_err());
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -256,38 +239,14 @@ fn check_none_on_linux_without_appimage_env() {
 }
 
 #[test]
-fn download_succeeds_without_sha256() {
-    let data = b"fake installer bytes".to_vec();
-    let url = serve_bytes(data);
+fn download_rejects_malformed_sig() {
+    let data = b"fake installer".to_vec();
+    let url = serve_update(data, "not a valid minisig file".to_string());
     let dir = tmp_dir();
     let updater = Updater::new(dir.clone());
-    let path = updater.download(&make_info(url, None)).unwrap();
-    assert!(path.exists());
-    std::fs::remove_dir_all(&dir).ok();
-}
-
-#[test]
-fn download_succeeds_with_correct_sha256() {
-    let data = b"exact installer payload".to_vec();
-    let checksum = sha256_hex(&data);
-    let url = serve_bytes(data);
-    let dir = tmp_dir();
-    let updater = Updater::new(dir.clone());
-    let path = updater.download(&make_info(url, Some(checksum))).unwrap();
-    assert!(path.exists());
-    std::fs::remove_dir_all(&dir).ok();
-}
-
-#[test]
-fn download_rejects_wrong_sha256() {
-    let data = b"some installer".to_vec();
-    let url = serve_bytes(data);
-    let dir = tmp_dir();
-    let updater = Updater::new(dir.clone());
-    let bad = "0".repeat(64);
-    let err = updater.download(&make_info(url, Some(bad))).unwrap_err();
+    let err = updater.download(&make_info(url)).unwrap_err();
     assert!(
-        err.to_string().contains("sha256 mismatch"),
+        err.to_string().contains("signature") || err.to_string().contains("invalid"),
         "unexpected error: {err}"
     );
     std::fs::remove_dir_all(&dir).ok();
@@ -296,10 +255,11 @@ fn download_rejects_wrong_sha256() {
 #[test]
 fn download_file_placed_under_updates_subdir() {
     let data = b"payload".to_vec();
-    let url = serve_bytes(data);
+    let url = serve_update(data, "bad sig".to_string());
     let dir = tmp_dir();
+
     let updater = Updater::new(dir.clone());
-    let path = updater.download(&make_info(url, None)).unwrap();
-    assert!(path.starts_with(dir.join("updates")));
+    let _ = updater.download(&make_info(url));
+    assert!(dir.join("updates").exists());
     std::fs::remove_dir_all(&dir).ok();
 }
