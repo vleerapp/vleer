@@ -8,8 +8,8 @@ use crate::ui::components::input::{InputEvent, TextInput};
 use crate::ui::components::scrollbar::ScrollableElement;
 use crate::ui::components::slider::slider;
 use crate::ui::components::switch::Switch;
-use crate::ui::updater::{UpdateStatus, Updater, is_managed_externally, run_check_in_background};
 use crate::ui::variables::Variables;
+use crate::updater::{UpdateStatus, Updater, is_managed_externally, run_check_in_background};
 
 #[derive(IntoElement)]
 struct ScanPathsSection;

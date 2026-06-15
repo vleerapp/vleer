@@ -28,10 +28,10 @@ use crate::{
             player::Player,
             queue::{QueuePane, QueueVisible},
         },
-        updater::Updater,
         variables::Variables,
         views::{ActiveView, AppView, SelectedAlbum, SelectedPlaylist, ViewRegistry},
     },
+    updater::Updater,
 };
 
 pub(crate) struct MainWindow {
@@ -305,9 +305,9 @@ pub async fn run() -> anyhow::Result<()> {
 
             {
                 let cfg = cx.global::<Config>().get().updater.clone();
-                if cfg.auto_check && !crate::ui::updater::is_managed_externally() {
+                if cfg.auto_check && !crate::updater::is_managed_externally() {
                     let updater = cx.global::<Updater>().clone();
-                    crate::ui::updater::run_check_in_background(updater, cfg.feed_url);
+                    crate::updater::run_check_in_background(updater, cfg.feed_url);
                 }
             }
 

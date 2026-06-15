@@ -4,7 +4,7 @@ use tracing::{debug, error, info};
 use crate::{
     data::{config::Config, db::repo::Database, scanner::Scanner},
     media::playback::Playback,
-    ui::updater::{Updater, run_check_in_background},
+    updater::{Updater, run_check_in_background},
 };
 
 actions!(

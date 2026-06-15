@@ -5,12 +5,14 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use gpui::{App, Global};
+use minisign_verify::{PublicKey, Signature};
 use parking_lot::RwLock;
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use tracing::{debug, info, warn};
 use ureq::Agent;
+
+const PUBLIC_KEY: &str = "RWQc0Dzx5Dhao5YtQGj79Y4AN7U1pjJFctj3dCLr4tQqkjewjl5xnSqe";
 
 #[derive(Debug, Clone, Default)]
 pub enum UpdateStatus {
@@ -39,8 +41,6 @@ pub struct PlatformAsset {
     pub url: String,
     #[serde(default)]
     pub size: Option<u64>,
-    #[serde(default)]
-    pub sha256: Option<String>,
 }
 
 #[derive(Clone)]
@@ -166,23 +166,16 @@ impl Updater {
             .read_to_vec()
             .context("reading download body")?;
 
-        if let Some(expected) = asset.sha256.as_deref() {
-            let mut hasher = Sha256::new();
-            hasher.update(&bytes);
-            let digest = hasher.finalize();
-            let mut actual = String::with_capacity(digest.len() * 2);
-            for b in digest.iter() {
-                use std::fmt::Write as _;
-                let _ = write!(actual, "{:02x}", b);
-            }
-            if !actual.eq_ignore_ascii_case(expected) {
-                return Err(anyhow!(
-                    "sha256 mismatch: expected {expected}, got {actual}"
-                ));
-            }
-        } else {
-            warn!("no sha256 in manifest; skipping integrity check");
-        }
+        let sig_url = format!("{}.minisig", asset.url);
+        let sig_content = agent
+            .get(&sig_url)
+            .call()
+            .context("downloading signature")?
+            .body_mut()
+            .read_to_string()
+            .context("reading signature")?;
+
+        verify_signature(PUBLIC_KEY, &bytes, &sig_content)?;
 
         std::fs::write(&target, &bytes)?;
         Ok(target)
@@ -223,6 +216,14 @@ impl Updater {
         #[allow(unreachable_code)]
         Ok(())
     }
+}
+
+pub fn verify_signature(public_key: &str, data: &[u8], sig_content: &str) -> Result<()> {
+    let pk = PublicKey::decode(public_key).context("invalid public key")?;
+    let sig = Signature::decode(sig_content).context("invalid signature format")?;
+    pk.verify(data, &sig, false)
+        .context("signature verification failed")?;
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]

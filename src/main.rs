@@ -11,6 +11,7 @@ mod data;
 mod media;
 mod single_instance;
 mod ui;
+mod updater;
 
 fn main() -> anyhow::Result<()> {
     let data_dir = dirs::data_dir()
