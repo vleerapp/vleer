@@ -28,6 +28,7 @@ use crate::{
             player::Player,
             queue::{QueuePane, QueueVisible},
         },
+        updater::Updater,
         variables::Variables,
         views::{ActiveView, AppView, SelectedAlbum, SelectedPlaylist, ViewRegistry},
     },
@@ -299,7 +300,16 @@ pub async fn run() -> anyhow::Result<()> {
             Queue::init(cx);
             Variables::init(cx);
             Telemetry::init(cx, data_dir.clone());
+            Updater::init(cx, data_dir.clone());
             MediaController::init(cx);
+
+            {
+                let cfg = cx.global::<Config>().get().updater.clone();
+                if cfg.auto_check && !crate::ui::updater::is_managed_externally() {
+                    let updater = cx.global::<Updater>().clone();
+                    crate::ui::updater::run_check_in_background(updater, cfg.feed_url);
+                }
+            }
 
             find_fonts(cx)
                 .inspect_err(|e| error!(?e, "Failed to load fonts"))

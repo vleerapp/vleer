@@ -53,6 +53,7 @@ lazy_static = "1.5.0"
 dashmap = "6.2.1"
 ureq = { version = "3.3.0", features = ["json"] }
 uuid = { version = "1.23.3", features = ["serde", "v4"] }
+semver = "1.0"
 souvlaki = "0.8.3"
 spectrum-analyzer = "1.7.0"
 discord-rich-presence = "1.1.0"
@@ -63,6 +64,9 @@ rand = "0.10.1"
 async-trait = "0.1.89"
 raw-window-handle = "0.6.2"
 interprocess = "2.4.2"
+
+[dev-dependencies]
+serde_json = "1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 mpris-server = "0.10.0"

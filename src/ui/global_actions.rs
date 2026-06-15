@@ -4,9 +4,13 @@ use tracing::{debug, error, info};
 use crate::{
     data::{config::Config, db::repo::Database, scanner::Scanner},
     media::playback::Playback,
+    ui::updater::{Updater, run_check_in_background},
 };
 
-actions!(vleer, [Quit, ReloadConfig, Scan, ForceScan]);
+actions!(
+    vleer,
+    [Quit, ReloadConfig, Scan, ForceScan, CheckForUpdates]
+);
 actions!(player, [PlayPause, Next, Previous]);
 
 pub fn register_actions(cx: &mut App) {
@@ -14,6 +18,7 @@ pub fn register_actions(cx: &mut App) {
     cx.on_action(reload_config);
     cx.on_action(scan);
     cx.on_action(force_scan);
+    cx.on_action(check_for_updates);
 
     cx.on_action(play_pause);
     cx.on_action(next);
@@ -24,6 +29,7 @@ pub fn register_actions(cx: &mut App) {
     cx.bind_keys([KeyBinding::new("secondary-q", Quit, None)]);
     cx.bind_keys([KeyBinding::new("secondary-r", Scan, None)]);
     cx.bind_keys([KeyBinding::new("secondary-shift-r", ForceScan, None)]);
+    cx.bind_keys([KeyBinding::new("secondary-u", CheckForUpdates, None)]);
 
     cx.bind_keys([KeyBinding::new("alt-right", Next, None)]);
     cx.bind_keys([KeyBinding::new("alt-left", Previous, None)]);
@@ -86,6 +92,12 @@ fn scan(_: &Scan, cx: &mut App) {
         }
     })
     .detach();
+}
+
+fn check_for_updates(_: &CheckForUpdates, cx: &mut App) {
+    let url = cx.global::<Config>().get().updater.feed_url.clone();
+    let updater = cx.global::<Updater>().clone();
+    run_check_in_background(updater, url);
 }
 
 fn force_scan(_: &ForceScan, cx: &mut App) {

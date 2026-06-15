@@ -57,6 +57,21 @@ impl Default for AudioSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdaterSettings {
+    pub auto_check: bool,
+    pub feed_url: String,
+}
+
+impl Default for UpdaterSettings {
+    fn default() -> Self {
+        Self {
+            auto_check: true,
+            feed_url: "https://api.vleer.app/updates/latest".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsConfig {
     #[serde(default = "default_version")]
     pub version: u32,
@@ -65,6 +80,8 @@ pub struct SettingsConfig {
     pub equalizer: EqualizerSettings,
     pub scan: ScanSettings,
     pub audio: AudioSettings,
+    #[serde(default)]
+    pub updater: UpdaterSettings,
 }
 
 fn default_version() -> u32 {
@@ -80,6 +97,7 @@ impl Default for SettingsConfig {
             equalizer: EqualizerSettings::default(),
             scan: ScanSettings::default(),
             audio: AudioSettings::default(),
+            updater: UpdaterSettings::default(),
         }
     }
 }
