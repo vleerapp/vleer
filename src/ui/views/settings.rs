@@ -651,7 +651,7 @@ impl RenderOnce for UpdatesSection {
                                             let path = match updater.download(&info) {
                                                 Ok(p) => p,
                                                 Err(e) => {
-                                                    tracing::error!("download failed: {e}");
+                                                    tracing::error!("download failed: {e:#}");
                                                     return;
                                                 }
                                             };

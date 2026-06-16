@@ -13,7 +13,7 @@ use tracing::{debug, info, warn};
 use ureq::Agent;
 
 const URL: &str = "https://api.vleer.app/update/v1/check";
-const PUBLIC_KEY: &str = "RWQc0Dzx5Dhao5YtQGj79Y4AN7U1pjJFctj3dCLr4tQqkjewjl5xnSqe";
+const PUBLIC_KEY: &str = "untrusted comment: minisign public key A35A38E4F13CD01C\nRWQc0Dzx5Dhao5YtQGj79Y4AN7U1pjJFctj3dCLr4tQqkjewjl5xnSqe";
 
 #[derive(Debug, Clone, Default)]
 pub enum UpdateStatus {
@@ -60,7 +60,10 @@ impl Global for Updater {}
 impl Updater {
     pub fn new(data_dir: PathBuf) -> Self {
         let agent: Agent = Agent::config_builder()
-            .timeout_global(Some(Duration::from_secs(30)))
+            .timeout_connect(Some(Duration::from_secs(10)))
+            .timeout_send_request(Some(Duration::from_secs(10)))
+            .timeout_recv_response(Some(Duration::from_secs(10)))
+            .timeout_recv_body(None)
             .build()
             .into();
         Self {
@@ -134,7 +137,6 @@ impl Updater {
             return Ok(None);
         }
 
-        info!("update available: {}", info.version);
         self.set_status(UpdateStatus::Available(info.clone()));
         Ok(Some(info))
     }
@@ -159,13 +161,18 @@ impl Updater {
         let target = dir.join(&file_name);
 
         let agent = self.inner.read().agent.clone();
-        let bytes = agent
+        let response = agent
             .get(&asset.url)
+            .header("Accept-Encoding", "identity")
             .call()
-            .context("downloading update")?
-            .body_mut()
-            .read_to_vec()
-            .context("reading download body")?;
+            .context("downloading update")?;
+
+        let mut file = std::fs::File::create(&target).context("creating update file")?;
+        let mut reader = response.into_body().into_reader();
+        std::io::copy(&mut reader, &mut file).context("writing download body")?;
+        drop(file);
+
+        let bytes = std::fs::read(&target).context("reading update file for verification")?;
 
         let sig_url = format!("{}.minisig", asset.url);
         let sig_content = agent
@@ -176,9 +183,11 @@ impl Updater {
             .read_to_string()
             .context("reading signature")?;
 
-        verify_signature(PUBLIC_KEY, &bytes, &sig_content)?;
+        if let Err(e) = verify_signature(PUBLIC_KEY, &bytes, &sig_content) {
+            let _ = std::fs::remove_file(&target);
+            return Err(e);
+        }
 
-        std::fs::write(&target, &bytes)?;
         Ok(target)
     }
 
@@ -191,7 +200,7 @@ impl Updater {
                 .args([
                     "/i",
                     path.to_str().context("non-utf8 path")?,
-                    "/qb",
+                    "/qn",
                     "/norestart",
                 ])
                 .spawn()
@@ -201,10 +210,7 @@ impl Updater {
 
         #[cfg(target_os = "macos")]
         {
-            std::process::Command::new("open")
-                .arg(path)
-                .spawn()
-                .context("launching open")?;
+            replace_macos_app(path)?;
             std::process::exit(0);
         }
 
@@ -252,6 +258,76 @@ fn replace_appimage(new_file: &Path) -> Result<()> {
     std::process::Command::new(&current)
         .arg("--skip-single-instance")
         .spawn()?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn replace_macos_app(dmg_path: &Path) -> Result<()> {
+    use std::process::Command;
+
+    let output = Command::new("hdiutil")
+        .args([
+            "attach",
+            "-nobrowse",
+            "-noautoopen",
+            dmg_path.to_str().context("non-utf8 dmg path")?,
+        ])
+        .output()
+        .context("mounting DMG")?;
+
+    if !output.status.success() {
+        return Err(anyhow!(
+            "hdiutil attach failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mount_point = stdout
+        .lines()
+        .filter_map(|line| line.split('\t').last())
+        .find(|s| s.trim().starts_with("/Volumes/"))
+        .map(|s| PathBuf::from(s.trim()))
+        .ok_or_else(|| anyhow!("could not find mount point in hdiutil output"))?;
+
+    let app_in_dmg = std::fs::read_dir(&mount_point)
+        .context("reading mounted DMG")?
+        .filter_map(|e| e.ok())
+        .find(|e| e.path().extension().map_or(false, |ext| ext == "app"))
+        .map(|e| e.path())
+        .ok_or_else(|| anyhow!("no .app found in DMG"))?;
+
+    let current_exe = std::env::current_exe().context("getting current exe")?;
+    let install_dir = current_exe
+        .ancestors()
+        .find(|p| p.extension().map_or(false, |e| e == "app"))
+        .and_then(|bundle| bundle.parent())
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("/Applications"));
+    let dest = install_dir.join(app_in_dmg.file_name().unwrap());
+
+    let staged = install_dir.join(".vleer-new.app");
+    let _ = std::fs::remove_dir_all(&staged);
+    let status = Command::new("ditto")
+        .args([app_in_dmg.to_str().unwrap(), staged.to_str().unwrap()])
+        .status()
+        .context("copying .app with ditto")?;
+    if !status.success() {
+        return Err(anyhow!("ditto failed"));
+    }
+
+    let _ = Command::new("hdiutil")
+        .args(["detach", mount_point.to_str().unwrap()])
+        .status();
+
+    let _ = std::fs::remove_dir_all(&dest);
+    std::fs::rename(&staged, &dest).context("swapping .app into place")?;
+
+    Command::new("open")
+        .arg(&dest)
+        .spawn()
+        .context("launching new app")?;
+
     Ok(())
 }
 
