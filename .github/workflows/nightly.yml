@@ -134,7 +134,7 @@ jobs:
         run: |
           echo "${{ secrets.MINISIGN_SECRET_KEY }}" > minisign.key
           for f in target/release/bundles/*; do
-            [ -f "$f" ] && echo "${{ secrets.MINISIGN_PASSWORD }}" | minisign -Sm "$f" -s minisign.key
+            [ -f "$f" ] && echo "${{ secrets.MINISIGN_PASSWORD }}" | minisign -SHm "$f" -s minisign.key
           done
           rm -f minisign.key
 

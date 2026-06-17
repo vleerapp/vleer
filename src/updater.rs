@@ -196,15 +196,53 @@ impl Updater {
 
         #[cfg(target_os = "windows")]
         {
-            std::process::Command::new("msiexec")
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+            let msi_path = path.to_str().context("non-utf8 path")?;
+            let current_exe = std::env::current_exe().context("getting current exe")?;
+            let fallback_exe = current_exe.to_str().context("non-utf8 exe path")?;
+
+            let script = format!(
+                r#"Start-Sleep -Milliseconds 500
+Start-Process msiexec.exe -ArgumentList @('/i', '{msi}', '/passive', '/norestart') -Wait
+$exe = $null
+$roots = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
+         'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
+foreach ($root in $roots) {{
+    if ($exe) {{ break }}
+    Get-ChildItem $root -ErrorAction SilentlyContinue |
+        Get-ItemProperty |
+        Where-Object {{ $_.DisplayName -like '*leer*' }} |
+        ForEach-Object {{
+            if ($_.InstallLocation) {{
+                $c = Join-Path $_.InstallLocation 'vleer.exe'
+                if (Test-Path $c) {{ $exe = $c }}
+            }}
+        }}
+}}
+if ($exe) {{ Start-Process $exe }}
+elseif (Test-Path '{fallback}') {{ Start-Process '{fallback}' }}
+"#,
+                msi = msi_path.replace('\'', "''"),
+                fallback = fallback_exe.replace('\'', "''"),
+            );
+
+            let script_path = std::env::temp_dir().join("vleer_update.ps1");
+            std::fs::write(&script_path, &script).context("writing update script")?;
+
+            std::process::Command::new("powershell")
+                .creation_flags(CREATE_NO_WINDOW)
                 .args([
-                    "/i",
-                    path.to_str().context("non-utf8 path")?,
-                    "/qn",
-                    "/norestart",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    script_path.to_str().context("non-utf8 script path")?,
                 ])
                 .spawn()
-                .context("launching msiexec")?;
+                .context("launching update script")?;
+
             std::process::exit(0);
         }
 
@@ -228,7 +266,7 @@ impl Updater {
 pub fn verify_signature(public_key: &str, data: &[u8], sig_content: &str) -> Result<()> {
     let pk = PublicKey::decode(public_key).context("invalid public key")?;
     let sig = Signature::decode(sig_content).context("invalid signature format")?;
-    pk.verify(data, &sig, false)
+    pk.verify(data, &sig, true)
         .context("signature verification failed")?;
     Ok(())
 }
