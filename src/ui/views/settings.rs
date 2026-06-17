@@ -1,4 +1,4 @@
-use gpui::{Context, Entity, IntoElement, Render, *};
+use gpui::{Context, Entity, IntoElement, Render, prelude::FluentBuilder as _, *};
 
 use crate::data::config::Config;
 use crate::media::playback::Playback;
@@ -9,6 +9,7 @@ use crate::ui::components::scrollbar::ScrollableElement;
 use crate::ui::components::slider::slider;
 use crate::ui::components::switch::Switch;
 use crate::ui::variables::Variables;
+use crate::updater::{UpdateStatus, Updater, is_managed_externally, run_check_in_background};
 
 #[derive(IntoElement)]
 struct ScanPathsSection;
@@ -531,7 +532,137 @@ impl Render for SettingsView {
                                     .child("Scan Paths"),
                             )
                             .child(ScanPathsSection),
-                    ),
+                    )
+                    .child(UpdatesSection),
             )
+    }
+}
+
+#[derive(IntoElement)]
+struct UpdatesSection;
+
+impl RenderOnce for UpdatesSection {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let variables = cx.global::<Variables>();
+        let cfg = cx.global::<Config>().get().updater.clone();
+        let updater = cx.global::<Updater>().clone();
+        let managed_externally = is_managed_externally();
+        let status = updater.status();
+        let status_text = match &status {
+            UpdateStatus::Idle => "Idle".to_string(),
+            UpdateStatus::Checking => "Checking…".to_string(),
+            UpdateStatus::UpToDate => "Up to date".to_string(),
+            UpdateStatus::Available(info) => format!("Update available: {}", info.version),
+            UpdateStatus::Downloading => "Downloading…".to_string(),
+            UpdateStatus::Installing => "Installing…".to_string(),
+            UpdateStatus::Failed(e) => format!("Failed: {e}"),
+        };
+        let available = matches!(status, UpdateStatus::Available(_));
+        let available_info = match status {
+            UpdateStatus::Available(i) => Some(i),
+            _ => None,
+        };
+
+        flex_col()
+            .gap(px(variables.padding_16))
+            .child(
+                div()
+                    .text_color(variables.text)
+                    .text_xl()
+                    .font_weight(FontWeight::BOLD)
+                    .child("Updates"),
+            )
+            .child(
+                div()
+                    .text_color(variables.text_secondary)
+                    .child(format!("Current version: {}", env!("CARGO_PKG_VERSION"))),
+            )
+            .when(managed_externally, |col| {
+                col.child(
+                    div()
+                        .text_color(variables.text_secondary)
+                        .child("Updates are handled by your package manager."),
+                )
+            })
+            .when(!managed_externally, |col| {
+                col.child(
+                    flex_row()
+                        .gap(px(variables.padding_8))
+                        .child(Switch::new("auto-check-switch", cfg.auto_check).on_change(
+                            move |value, _window, cx| {
+                                cx.update_global::<Config, _>(|config, _cx| {
+                                    config.set(|s| s.updater.auto_check = value);
+                                });
+                            },
+                        ))
+                        .child(
+                            div()
+                                .text_color(variables.text_secondary)
+                                .child("Check for updates automatically"),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_color(variables.text_secondary)
+                        .child(status_text),
+                )
+            })
+            .when(!managed_externally, |col| {
+                col.child(
+                    flex_row()
+                        .gap(px(variables.padding_8))
+                        .child(
+                            div()
+                                .id("check-updates-btn")
+                                .cursor_pointer()
+                                .px(px(variables.padding_16))
+                                .py(px(variables.padding_8))
+                                .bg(variables.element)
+                                .text_color(variables.text)
+                                .hover(|s| s.bg(variables.element_hover))
+                                .child("Check now")
+                                .on_click({
+                                    let updater = updater.clone();
+                                    move |_event, _window, cx| {
+                                        run_check_in_background(
+                                            updater.clone(),
+                                            cx.background_executor(),
+                                        );
+                                    }
+                                }),
+                        )
+                        .when(available, |row| {
+                            let info = available_info.clone();
+                            let updater = updater.clone();
+                            row.child(
+                                div()
+                                    .id("install-update-btn")
+                                    .cursor_pointer()
+                                    .px(px(variables.padding_16))
+                                    .py(px(variables.padding_8))
+                                    .bg(variables.element)
+                                    .text_color(variables.text)
+                                    .hover(|s| s.bg(variables.element_hover))
+                                    .child("Install & restart")
+                                    .on_click(move |_event, _window, _cx| {
+                                        let Some(info) = info.clone() else { return };
+                                        let updater = updater.clone();
+                                        std::thread::spawn(move || {
+                                            let path = match updater.download(&info) {
+                                                Ok(p) => p,
+                                                Err(e) => {
+                                                    tracing::error!("download failed: {e:#}");
+                                                    return;
+                                                }
+                                            };
+                                            if let Err(e) = updater.install_and_exit(&path) {
+                                                tracing::error!("install failed: {e}");
+                                            }
+                                        });
+                                    }),
+                            )
+                        }),
+                )
+            })
     }
 }

@@ -31,6 +31,7 @@ use crate::{
         variables::Variables,
         views::{ActiveView, AppView, SelectedAlbum, SelectedPlaylist, ViewRegistry},
     },
+    updater::Updater,
 };
 
 pub(crate) struct MainWindow {
@@ -299,7 +300,16 @@ pub async fn run() -> anyhow::Result<()> {
             Queue::init(cx);
             Variables::init(cx);
             Telemetry::init(cx, data_dir.clone());
+            Updater::init(cx, data_dir.clone());
             MediaController::init(cx);
+
+            {
+                let cfg = cx.global::<Config>().get().updater.clone();
+                if cfg.auto_check && !crate::updater::is_managed_externally() {
+                    let updater = cx.global::<Updater>().clone();
+                    crate::updater::run_check_in_background(updater, cx.background_executor());
+                }
+            }
 
             find_fonts(cx)
                 .inspect_err(|e| error!(?e, "Failed to load fonts"))
