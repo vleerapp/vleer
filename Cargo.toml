@@ -10,9 +10,9 @@ license = "AGPL-3.0"
 categories = ["multimedia::audio"]
 
 [dependencies]
-gpui = { git = "https://github.com/vleerapp/zed", rev = "93c0d2b36fc6d805535278efec7b610263af3de5" }
-gpui_macros = { git = "https://github.com/vleerapp/zed", rev = "93c0d2b36fc6d805535278efec7b610263af3de5" }
-gpui_platform = { git = "https://github.com/vleerapp/zed", rev = "93c0d2b36fc6d805535278efec7b610263af3de5", features = [
+gpui = { git = "https://github.com/vleerapp/zed", rev = "eb6bfff642ec26797761843115b698e069f2b922" }
+gpui_macros = { git = "https://github.com/vleerapp/zed", rev = "eb6bfff642ec26797761843115b698e069f2b922" }
+gpui_platform = { git = "https://github.com/vleerapp/zed", rev = "eb6bfff642ec26797761843115b698e069f2b922", features = [
   "font-kit",
   "x11",
   "wayland",
@@ -29,7 +29,7 @@ rusqlite_migration = { version = "2.6.0", features = ["from-directory"] }
 parking_lot = "0.12.5"
 serde = { version = "1.0.228", features = ["derive"] }
 toml = "1.1.2"
-rodio = { git = "https://github.com/vleerapp/rodio", rev = "a1c1aae476be53f0e0a9f2d31e234d9074745a6d", features = [
+rodio = { git = "https://github.com/vleerapp/rodio", rev = "bc15e3456c2ca6d419c335590bee2e190c1a0fba", features = [
   "symphonia",
   "symphonia-all",
 ] }
@@ -38,7 +38,7 @@ symphonia-format-isomp4 = "0.6.0"
 symphonia = "0.6.0"
 cuid2 = "0.1.6"
 url = "2.5.8"
-rust-embed = "8.11.0"
+rust-embed = { version = "8.11.0", features = ["include-exclude"] }
 lofty = "0.24.0"
 walkdir = "2.5.0"
 notify = "8.2.0"
