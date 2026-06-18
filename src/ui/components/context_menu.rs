@@ -5,10 +5,11 @@ use crate::media::playback::{
 };
 use crate::media::queue::Queue;
 use crate::ui::app::MainWindow;
+use crate::ui::assets::image_cache::vleer_cache;
 use crate::ui::components::div::{flex_col, flex_row};
 use crate::ui::components::icons::{self, icon};
 use crate::ui::variables::Variables;
-use crate::ui::views::{AppView, SelectedAlbum};
+use crate::ui::views::{AppView, SelectedAlbum, SelectedPlaylist};
 use futures::channel::mpsc;
 use gpui::{prelude::*, *};
 use std::rc::Rc;
@@ -326,9 +327,14 @@ impl Render for ContextMenu {
                             let entity_close = entity.clone();
 
                             let cover: AnyElement = if let Some(image_id) = &pl.image_id {
-                                img(format!("!image://{}", image_id))
+                                div()
                                     .size(px(32.0))
-                                    .object_fit(ObjectFit::Cover)
+                                    .flex_shrink_0()
+                                    .child(
+                                        img(format!("!image://{}", image_id))
+                                            .size_full()
+                                            .object_fit(ObjectFit::Cover),
+                                    )
                                     .into_any_element()
                             } else {
                                 div()
@@ -360,10 +366,50 @@ impl Render for ContextMenu {
                         })
                         .collect();
 
+                    let create_btn = {
+                        let entity_close = entity.clone();
+                        flex_row()
+                            .id("ctx-pl-create")
+                            .w_full()
+                            .p(px(variables.padding_8))
+                            .gap(px(variables.padding_8))
+                            .items_center()
+                            .cursor_pointer()
+                            .text_color(variables.text)
+                            .hover(|s| s.bg(variables.element_hover))
+                            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                                let new_id = Cuid::new();
+                                let db = cx.global::<Database>().clone();
+                                let _ = db.upsert_playlist(&new_id, "", None, None, false);
+                                cx.update_global::<SelectedPlaylist, _>(|sel, _| {
+                                    sel.id = Some(new_id);
+                                    sel.focus_title = true;
+                                });
+                                cx.set_global(LibraryDataChanged);
+                                if let Some(Some(root)) = window.root::<MainWindow>() {
+                                    root.update(cx, |view, cx| {
+                                        view.set_current_view(AppView::Playlist, window, cx);
+                                    });
+                                }
+                                entity_close
+                                    .update(cx, |this, cx| {
+                                        this.hide(cx);
+                                    })
+                                    .ok();
+                            })
+                            .child(
+                                icon(icons::PLUS)
+                                    .size(px(32.0))
+                                    .text_color(variables.text_secondary),
+                            )
+                            .child("Create Playlist")
+                    };
+
                     Some(
                         deferred(
                             anchored().position(sub_pos).child(
                                 div()
+                                    .image_cache(vleer_cache("ctx-submenu-image-cache", 50))
                                     .id("context-submenu-container")
                                     .occlude()
                                     .on_hover(move |is_hovering: &bool, _, cx| {
@@ -387,7 +433,12 @@ impl Render for ContextMenu {
                                     .bg(variables.element)
                                     .border_1()
                                     .border_color(variables.border)
-                                    .child(flex_col().w_full().children(playlist_items)),
+                                    .child(
+                                        flex_col()
+                                            .w_full()
+                                            .children(playlist_items)
+                                            .child(create_btn),
+                                    ),
                             ),
                         )
                         .with_priority(2),
@@ -492,6 +543,7 @@ pub fn song_context_menu_items(song_id: Cuid, cx: &App) -> Vec<ContextMenuItem> 
                 cx.set_global(LibraryDataChanged);
             }
         }),
+        ContextMenuItem::separator(),
         ContextMenuItem::entry(fav_label, fav_icon, {
             let id = song_id.clone();
             move |_, cx| {
@@ -736,7 +788,7 @@ pub fn playlist_context_menu_items(playlist_id: Cuid, cx: &App) -> Vec<ContextMe
         ContextMenuItem::entry("Properties", icons::PROPERTIES, move |_, _| {}),
         ContextMenuItem::separator(),
         ContextMenuItem::destructive("Delete playlist", icons::TRASH, {
-            move |_, cx| {
+            move |window, cx| {
                 write_and_notify(cx, {
                     let id = playlist_id.clone();
                     move |db| {
@@ -745,6 +797,15 @@ pub fn playlist_context_menu_items(playlist_id: Cuid, cx: &App) -> Vec<ContextMe
                         }
                     }
                 });
+                let is_viewing = cx.global::<SelectedPlaylist>().id.as_ref() == Some(&playlist_id);
+                if is_viewing {
+                    cx.update_global::<SelectedPlaylist, _>(|sel, _| sel.id = None);
+                    if let Some(Some(root)) = window.root::<MainWindow>() {
+                        root.update(cx, |view, cx| {
+                            view.set_current_view(AppView::Playlists, window, cx);
+                        });
+                    }
+                }
             }
         }),
     ]
