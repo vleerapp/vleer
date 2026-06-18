@@ -338,7 +338,7 @@ impl Scanner {
                                         stats.scanned, stats.added, stats.updated, stats.removed
                                     );
 
-                                    if stats.scanned > 0 {
+                                    if stats.scanned > 0 || stats.removed > 0 {
                                         telemetry_clone.submit(&db_clone, &config_clone);
                                     }
 
@@ -358,20 +358,10 @@ impl Scanner {
                         let background_ui_clone = background_ui.clone();
 
                         exec.spawn(async move {
-                            let existing_song_count =
-                                db_clone.get_songs_count(None).unwrap_or(0);
-                            info!(
-                                "Starting initial library scan (existing songs: {})...",
-                                existing_song_count
-                            );
-                            match scanner.scan(&db_clone).await {
+                                match scanner.scan(&db_clone).await {
                                 Ok(stats) => {
-                                    info!(
-                                        "Initial scan complete - Scanned: {}, Added: {}, Updated: {}, Removed: {}",
-                                        stats.scanned, stats.added, stats.updated, stats.removed
-                                    );
 
-                                    if stats.scanned > 0 {
+                                    if stats.scanned > 0 || stats.removed > 0 {
                                         telemetry_clone.submit(&db_clone, &config_clone);
                                     }
 
@@ -503,7 +493,6 @@ impl Scanner {
             }
         };
 
-        info!("Removed {} stale tracks", removed);
         Ok(removed)
     }
 
@@ -537,12 +526,6 @@ impl Scanner {
             total: total_files.max(1),
             phase: ScanPhase::Scanning,
         });
-
-        info!("Found {} audio files to scan", total_files);
-        info!(
-            "Loaded {} existing tracks from database",
-            existing_track_state.len()
-        );
 
         let force = options.force;
 

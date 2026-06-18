@@ -81,12 +81,7 @@ fn scan(_: &Scan, cx: &mut App) {
     let scanner = cx.global::<Scanner>().clone();
 
     cx.spawn(async move |_cx| match scanner.scan(&db).await {
-        Ok(stats) => {
-            info!(
-                "Manual scan complete - Scanned: {}, Added: {}, Updated: {}",
-                stats.scanned, stats.added, stats.updated
-            );
-        }
+        Ok(_) => {}
         Err(e) => {
             error!("Manual scan failed: {}", e);
         }
