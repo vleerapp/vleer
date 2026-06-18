@@ -1,7 +1,11 @@
 use anyhow::Result;
-use gpui::{App, Global};
+use gpui::{App, BackgroundExecutor, Global};
 use serde::{Deserialize, Serialize};
-use std::{fs, path::PathBuf, time::Duration};
+use std::{
+    fs,
+    path::PathBuf,
+    time::Duration,
+};
 use tracing::{debug, error, info};
 use ureq::Agent;
 use uuid::Uuid;
@@ -29,6 +33,7 @@ pub struct TelemetrySubmission {
 pub struct Telemetry {
     agent: Agent,
     data_dir: PathBuf,
+    executor: BackgroundExecutor,
 }
 
 impl Global for Telemetry {}
@@ -40,7 +45,11 @@ impl Telemetry {
             .build()
             .into();
 
-        cx.set_global(Self { agent, data_dir });
+        cx.set_global(Self {
+            agent,
+            data_dir,
+            executor: cx.background_executor().clone(),
+        });
     }
 
     pub fn submit(&self, db: &Database, config: &Config) {
@@ -70,12 +79,17 @@ impl Telemetry {
             song_count: db.get_songs_count(None).unwrap_or(0),
         };
 
-        match self.agent.post(url).send_json(&payload) {
-            Ok(res) if res.status().is_success() => info!("Telemetry sent"),
-            Ok(res) => error!("Telemetry status: {}", res.status()),
-            Err(e) if cfg!(debug_assertions) => debug!("Telemetry error (debug build): {e}"),
-            Err(e) => error!("Telemetry error: {e}"),
-        }
+        let agent = self.agent.clone();
+        self.executor
+            .spawn(async move {
+                match agent.post(url).send_json(&payload) {
+                    Ok(res) if res.status().is_success() => info!("Telemetry sent"),
+                    Ok(res) => error!("Telemetry status: {}", res.status()),
+                    Err(e) if cfg!(debug_assertions) => debug!("Telemetry error (debug build): {e}"),
+                    Err(e) => error!("Telemetry error: {e}"),
+                }
+            })
+            .detach();
     }
 
     fn current_os(&self) -> Os {
