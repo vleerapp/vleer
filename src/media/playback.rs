@@ -8,12 +8,13 @@ use crate::media::visualizer::{F32Converter, VisualizerSource, VisualizerState};
 use crate::ui::components::context_menu::{BackgroundUiEvent, BackgroundUiNotifier, QueueChanged};
 use anyhow::{Context, Result};
 use gpui::{App, AsyncWindowContext, BorrowAppContext, Global, Window};
+use parking_lot::Mutex;
 use rodio::decoder::{Decoder, DecoderBuilder};
 use rodio::source::Source;
 use rodio::{DeviceSinkBuilder, MixerDeviceSink, Player as Sink};
 use std::fs::File;
 use std::io::BufReader;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use symphonia_adapter_libopus::OpusDecoder;
 
@@ -109,7 +110,7 @@ impl Playback {
         let sink = Sink::connect_new(device.mixer());
 
         let sample_rate_u32: u32 = sample_rate.get();
-        *equalizer.lock().unwrap() = Equalizer::from_settings(sample_rate_u32, &eq_settings);
+        *equalizer.lock() = Equalizer::from_settings(sample_rate_u32, &eq_settings);
 
         let eq_source = EqualizerSource::new(source, equalizer.clone());
         let vis_source = VisualizerSource::new(eq_source, visualizer_state);
@@ -281,8 +282,12 @@ impl Playback {
     }
 
     fn start_command_processor(cx: &mut App) {
-        let mut rx =
-            cx.update_global::<Playback, _>(|playback, _cx| playback.command_rx.take().unwrap());
+        let mut rx = cx.update_global::<Playback, _>(|playback, _cx| {
+            playback
+                .command_rx
+                .take()
+                .expect("command_rx already taken; start_command_processor called twice")
+        });
 
         cx.spawn(async move |cx| {
             while let Some(cmd) = rx.recv().await {
@@ -433,11 +438,11 @@ impl Playback {
     }
 
     pub fn get_spectrum(&self) -> [f32; 4] {
-        *self.visualizer_state.bands.lock().unwrap()
+        *self.visualizer_state.bands.lock()
     }
 
     pub fn apply_eq_settings(&mut self, gains: &[f32], q_values: &[f32]) {
-        let mut eq = self.equalizer.lock().unwrap();
+        let mut eq = self.equalizer.lock();
         for i in 0..10.min(gains.len()).min(q_values.len()) {
             eq.set_gain(i, gains[i]);
             eq.set_q(i, q_values[i]);
@@ -447,7 +452,7 @@ impl Playback {
 
     pub fn set_eq_enabled(&mut self, enabled: bool) {
         if !enabled {
-            let mut eq = self.equalizer.lock().unwrap();
+            let mut eq = self.equalizer.lock();
             for i in 0..10 {
                 eq.set_gain(i, 0.0);
             }
@@ -468,7 +473,7 @@ impl Playback {
         self.volume = settings.audio.volume;
         self.set_normalization(settings.audio.normalization);
 
-        let mut eq = self.equalizer.lock().unwrap();
+        let mut eq = self.equalizer.lock();
         eq.apply_settings(&settings.equalizer);
 
         debug!("Applied config to playback");

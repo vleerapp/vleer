@@ -1,4 +1,6 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+
+use parking_lot::RwLock;
 
 use crate::data::config::EqualizerSettings;
 
@@ -72,7 +74,7 @@ impl Equalizer {
                 let effective_gain = if config.enabled { gain } else { 0.0 };
                 self.bands[i].gain_db = effective_gain;
 
-                let mut coeffs_guard = self.coeffs.write().unwrap();
+                let mut coeffs_guard = self.coeffs.write();
                 coeffs_guard[i] =
                     Coeffs::peaking(freq as f32, q, effective_gain, self.sample_rate as f32);
             }
@@ -84,7 +86,7 @@ impl Equalizer {
             return;
         }
         self.bands[band].gain_db = gain_db;
-        let mut coeffs_guard = self.coeffs.write().unwrap();
+        let mut coeffs_guard = self.coeffs.write();
         coeffs_guard[band] = Coeffs::peaking(
             self.bands[band].fc,
             self.bands[band].q,
@@ -98,7 +100,7 @@ impl Equalizer {
             return;
         }
         self.bands[band].q = q;
-        let mut coeffs_guard = self.coeffs.write().unwrap();
+        let mut coeffs_guard = self.coeffs.write();
         coeffs_guard[band] = Coeffs::peaking(
             self.bands[band].fc,
             q,
@@ -154,8 +156,8 @@ pub struct EqualizerSource<S> {
 }
 
 impl<S: rodio::Source<Item = f32>> EqualizerSource<S> {
-    pub fn new(inner: S, equalizer: Arc<std::sync::Mutex<Equalizer>>) -> Self {
-        let eq = equalizer.lock().unwrap();
+    pub fn new(inner: S, equalizer: Arc<parking_lot::Mutex<Equalizer>>) -> Self {
+        let eq = equalizer.lock();
         let channels = inner.channels().get() as usize;
         let states: Vec<Vec<(f32, f32)>> = (0..channels)
             .map(|_| (0..10).map(|_| (0.0, 0.0)).collect())
@@ -175,7 +177,7 @@ impl<S: rodio::Source<Item = f32>> Iterator for EqualizerSource<S> {
     fn next(&mut self) -> Option<Self::Item> {
         let input = self.inner.next()?;
         let ch = self.current_channel;
-        let coeffs_guard = self.coeffs.read().unwrap();
+        let coeffs_guard = self.coeffs.read();
         let mut s = input;
         let state = &mut self.states[ch];
         for (i, (z1, z2)) in state.iter_mut().enumerate() {

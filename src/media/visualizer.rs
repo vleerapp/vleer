@@ -1,7 +1,8 @@
+use parking_lot::Mutex;
 use rodio::Source;
 use spectrum_analyzer::scaling::divide_by_N_sqrt;
 use spectrum_analyzer::{FrequencyLimit, samples_fft_to_spectrum};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 pub trait ToF32 {
     fn to_f32_sample(&self) -> f32;
@@ -81,7 +82,7 @@ where
                 (b4 * gains[3] * base_mul).clamp(0.02, 1.0),
             ];
 
-            let mut bands_guard = self.state.bands.lock().unwrap();
+            let mut bands_guard = self.state.bands.lock();
             let prev = *bands_guard;
 
             let mut new_bands = [0.0_f32; 4];
