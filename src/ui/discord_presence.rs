@@ -5,7 +5,8 @@ use crate::media::playback::Playback;
 use crate::media::queue::Queue;
 use discord_rich_presence::{DiscordIpc, DiscordIpcClient, activity};
 use gpui::App;
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct DiscordPresence {}
@@ -35,13 +36,13 @@ impl DiscordPresence {
                     .timer(std::time::Duration::from_secs(2))
                     .await;
 
-                if !*connected.lock().unwrap() {
+                if !*connected.lock() {
                     let client = Arc::clone(&client);
                     let ok = cx
                         .background_executor()
-                        .spawn(async move { client.lock().unwrap().connect().is_ok() })
+                        .spawn(async move { client.lock().connect().is_ok() })
                         .await;
-                    *connected.lock().unwrap() = ok;
+                    *connected.lock() = ok;
                     if !ok {
                         continue;
                     }
@@ -54,9 +55,9 @@ impl DiscordPresence {
                 });
 
                 if !discord_enabled {
-                    let mut client = client.lock().unwrap();
+                    let mut client = client.lock();
                     if client.clear_activity().is_err() {
-                        *connected.lock().unwrap() = false;
+                        *connected.lock() = false;
                     }
                     continue;
                 }
@@ -96,17 +97,24 @@ impl DiscordPresence {
                         .unwrap_or((0.0f32, true))
                 });
 
-                let mut client = client.lock().unwrap();
+                let mut client = client.lock();
 
-                if cached_song_info.is_none() || is_paused {
+                let Some(song) = cached_song_info.as_ref() else {
                     if client.clear_activity().is_err() {
                         drop(client);
-                        *connected.lock().unwrap() = false;
+                        *connected.lock() = false;
+                    }
+                    continue;
+                };
+
+                if is_paused {
+                    if client.clear_activity().is_err() {
+                        drop(client);
+                        *connected.lock() = false;
                     }
                     continue;
                 }
 
-                let song = cached_song_info.as_ref().unwrap();
                 let total_secs = song.duration as f64;
                 let elapsed_secs = position as i64;
                 let remaining_secs = (total_secs as i64).saturating_sub(elapsed_secs);
@@ -125,7 +133,7 @@ impl DiscordPresence {
 
                 if client.set_activity(act).is_err() {
                     drop(client);
-                    *connected.lock().unwrap() = false;
+                    *connected.lock() = false;
                 }
             }
         })
@@ -136,6 +144,6 @@ impl DiscordPresence {
 fn unix_now_i64() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
