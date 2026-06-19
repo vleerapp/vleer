@@ -491,10 +491,8 @@ impl Render for SongTableItem {
                                         }
                                     })
                                     .child({
-                                        let mut highlights: Vec<(
-                                            Range<usize>,
-                                            HighlightStyle,
-                                        )> = Vec::new();
+                                        let mut highlights: Vec<(Range<usize>, HighlightStyle)> =
+                                            Vec::new();
                                         if let Some(idx) = self.hovered_artist
                                             && let Some(range) = data.artist_ranges.get(idx)
                                         {
@@ -515,8 +513,7 @@ impl Render for SongTableItem {
                                         let ranges = data.artist_ranges.clone();
                                         InteractiveText::new(
                                             ElementId::Name(
-                                                format!("song-{}-artist", self.row_index)
-                                                    .into(),
+                                                format!("song-{}-artist", self.row_index).into(),
                                             ),
                                             styled,
                                         )
@@ -544,24 +541,17 @@ impl Render for SongTableItem {
                             ))
                             .text_color(variables.text_secondary)
                             .when_some(album_id.clone(), |div, album_id| {
-                                div.cursor_pointer()
-                                    .hover(|s| s.underline())
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        move |_event, window, cx| {
-                                            cx.set_global(SelectedAlbum(Some(album_id.clone())));
-                                            if let Some(Some(root)) = window.root::<MainWindow>()
-                                            {
-                                                root.update(cx, |view, cx| {
-                                                    view.set_current_view(
-                                                        AppView::Album,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                });
-                                            }
-                                        },
-                                    )
+                                div.cursor_pointer().hover(|s| s.underline()).on_mouse_down(
+                                    MouseButton::Left,
+                                    move |_event, window, cx| {
+                                        cx.set_global(SelectedAlbum(Some(album_id.clone())));
+                                        if let Some(Some(root)) = window.root::<MainWindow>() {
+                                            root.update(cx, |view, cx| {
+                                                view.set_current_view(AppView::Album, window, cx);
+                                            });
+                                        }
+                                    },
+                                )
                             })
                             .child(
                                 div()

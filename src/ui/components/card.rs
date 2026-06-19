@@ -250,24 +250,20 @@ impl RenderOnce for Card {
                                     },
                                 ));
                             }
-                            let styled = StyledText::new(subtitle.clone())
-                                .with_highlights(highlights);
+                            let styled =
+                                StyledText::new(subtitle.clone()).with_highlights(highlights);
                             let on_hover = on_artist_hover.clone();
                             let on_leave = on_artist_hover.clone();
                             let ranges_for_cb = ranges.clone();
                             this.child(
                                 div()
-                                    .id(ElementId::Name(
-                                        format!("{tile_id}-subtitle").into(),
-                                    ))
+                                    .id(ElementId::Name(format!("{tile_id}-subtitle").into()))
                                     .text_ellipsis()
                                     .whitespace_nowrap()
                                     .max_w(px(image_size))
                                     .text_color(variables.text_secondary)
                                     .on_hover(move |hovered, window, cx| {
-                                        if !hovered
-                                            && let Some(on_leave) = on_leave.as_ref()
-                                        {
+                                        if !hovered && let Some(on_leave) = on_leave.as_ref() {
                                             on_leave(None, window, cx);
                                         }
                                     })

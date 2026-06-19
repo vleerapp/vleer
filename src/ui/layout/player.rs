@@ -127,7 +127,13 @@ impl Render for Player {
             Some((title, artist, cover, song.album_id.clone(), artist_ranges))
         } else {
             self.cached_song_data = None;
-            None::<(String, String, Option<String>, Option<Cuid>, Vec<Range<usize>>)>
+            None::<(
+                String,
+                String,
+                Option<String>,
+                Option<Cuid>,
+                Vec<Range<usize>>,
+            )>
         };
 
         let is_playing = cx.global::<Playback>().get_playing();
@@ -225,117 +231,116 @@ impl Render for Player {
             .child(next_button)
             .child(repeat_button);
 
-        let track_info = if let Some((title, artist, cover_uri, _album_id, artist_ranges)) =
-            current_song
-        {
-            let ctx_menu = self.context_menu.clone();
-            let song_id = cx.global::<Queue>().get_current_song_id();
+        let track_info =
+            if let Some((title, artist, cover_uri, _album_id, artist_ranges)) = current_song {
+                let ctx_menu = self.context_menu.clone();
+                let song_id = cx.global::<Queue>().get_current_song_id();
 
-            let mut highlights: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
-            if let Some(idx) = self.hovered_artist
-                && let Some(range) = artist_ranges.get(idx)
-            {
-                highlights.push((
-                    range.clone(),
-                    HighlightStyle {
-                        underline: Some(UnderlineStyle {
-                            thickness: px(1.),
+                let mut highlights: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
+                if let Some(idx) = self.hovered_artist
+                    && let Some(range) = artist_ranges.get(idx)
+                {
+                    highlights.push((
+                        range.clone(),
+                        HighlightStyle {
+                            underline: Some(UnderlineStyle {
+                                thickness: px(1.),
+                                ..Default::default()
+                            }),
                             ..Default::default()
-                        }),
-                        ..Default::default()
-                    },
-                ));
-            }
+                        },
+                    ));
+                }
 
-            let styled = StyledText::new(artist.clone()).with_highlights(highlights);
+                let styled = StyledText::new(artist.clone()).with_highlights(highlights);
 
-            let weak = cx.weak_entity();
-            let ranges = artist_ranges.clone();
-            let artist_line = InteractiveText::new("artist-line", styled)
-                .on_hover(move |hovered_ix, _event, _window, cx| {
-                    let new_hovered =
-                        hovered_ix.and_then(|ix| ranges.iter().position(|r| r.contains(&ix)));
-                    let _ = weak.update(cx, |this, cx| {
-                        if this.hovered_artist != new_hovered {
-                            this.hovered_artist = new_hovered;
-                            cx.notify();
-                        }
-                    });
-                })
-                .into_any_element();
-
-            let weak_for_leave = cx.weak_entity();
-            flex_row()
-                .gap(px(variables.padding_8))
-                .items_center()
-                .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
-                    if let Some(id) = &song_id {
-                        let items = song_context_menu_items(id.clone(), cx);
-                        ctx_menu.update(cx, |menu, cx| {
-                            menu.show(event.position, items, cx);
+                let weak = cx.weak_entity();
+                let ranges = artist_ranges.clone();
+                let artist_line = InteractiveText::new("artist-line", styled)
+                    .on_hover(move |hovered_ix, _event, _window, cx| {
+                        let new_hovered =
+                            hovered_ix.and_then(|ix| ranges.iter().position(|r| r.contains(&ix)));
+                        let _ = weak.update(cx, |this, cx| {
+                            if this.hovered_artist != new_hovered {
+                                this.hovered_artist = new_hovered;
+                                cx.notify();
+                            }
                         });
-                    }
-                })
-                .child(if let Some(uri) = cover_uri {
-                    img(format!("{}?size=50", uri))
-                        .size(px(36.0))
-                        .object_fit(ObjectFit::Cover)
-                        .flex_shrink_0()
-                        .into_any_element()
-                } else {
-                    div().size(px(36.0)).bg(variables.border).into_any_element()
-                })
-                .child(
-                    flex_col()
-                        .gap(px(2.0))
-                        .min_w_0()
-                        .child(
-                            div()
-                                .font_weight(FontWeight(500.0))
-                                .whitespace_nowrap()
-                                .text_ellipsis()
-                                .child(title),
-                        )
-                        .child(
-                            div()
-                                .id("player-artist-line")
-                                .w_full()
-                                .whitespace_nowrap()
-                                .text_ellipsis()
-                                .text_color(variables.text_secondary)
-                                .on_hover(move |hovered, _window, cx| {
-                                    if !hovered {
-                                        let _ = weak_for_leave.update(cx, |this, cx| {
-                                            if this.hovered_artist.is_some() {
-                                                this.hovered_artist = None;
-                                                cx.notify();
-                                            }
-                                        });
-                                    }
-                                })
-                                .child(artist_line),
-                        ),
-                )
-                .into_any_element()
-        } else {
-            flex_row()
-                .gap(px(variables.padding_8))
-                .items_center()
-                .child(div().size(px(36.0)).bg(variables.border).into_any_element())
-                .child(
-                    flex_col()
-                        .gap(px(2.0))
-                        .min_w_0()
-                        .child(
-                            div()
-                                .font_weight(FontWeight(500.0))
-                                .text_color(variables.text_secondary)
-                                .child("No Song Playing"),
-                        )
-                        .child(div().text_color(variables.text_muted).child("")),
-                )
-                .into_any_element()
-        };
+                    })
+                    .into_any_element();
+
+                let weak_for_leave = cx.weak_entity();
+                flex_row()
+                    .gap(px(variables.padding_8))
+                    .items_center()
+                    .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
+                        if let Some(id) = &song_id {
+                            let items = song_context_menu_items(id.clone(), cx);
+                            ctx_menu.update(cx, |menu, cx| {
+                                menu.show(event.position, items, cx);
+                            });
+                        }
+                    })
+                    .child(if let Some(uri) = cover_uri {
+                        img(format!("{}?size=50", uri))
+                            .size(px(36.0))
+                            .object_fit(ObjectFit::Cover)
+                            .flex_shrink_0()
+                            .into_any_element()
+                    } else {
+                        div().size(px(36.0)).bg(variables.border).into_any_element()
+                    })
+                    .child(
+                        flex_col()
+                            .gap(px(2.0))
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .font_weight(FontWeight(500.0))
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .child(title),
+                            )
+                            .child(
+                                div()
+                                    .id("player-artist-line")
+                                    .w_full()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .text_color(variables.text_secondary)
+                                    .on_hover(move |hovered, _window, cx| {
+                                        if !hovered {
+                                            let _ = weak_for_leave.update(cx, |this, cx| {
+                                                if this.hovered_artist.is_some() {
+                                                    this.hovered_artist = None;
+                                                    cx.notify();
+                                                }
+                                            });
+                                        }
+                                    })
+                                    .child(artist_line),
+                            ),
+                    )
+                    .into_any_element()
+            } else {
+                flex_row()
+                    .gap(px(variables.padding_8))
+                    .items_center()
+                    .child(div().size(px(36.0)).bg(variables.border).into_any_element())
+                    .child(
+                        flex_col()
+                            .gap(px(2.0))
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .font_weight(FontWeight(500.0))
+                                    .text_color(variables.text_secondary)
+                                    .child("No Song Playing"),
+                            )
+                            .child(div().text_color(variables.text_muted).child("")),
+                    )
+                    .into_any_element()
+            };
 
         let volume_icon = match volume {
             0.0 => icons::VOLUME_MUTE,

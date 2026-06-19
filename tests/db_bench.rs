@@ -27,7 +27,9 @@ fn bench_sqlite_operations() {
     let mut album_ids = Vec::with_capacity(ALBUMS);
     for i in 0..ALBUMS {
         let artist = &artist_names[i % ARTISTS];
-        let id = db.upsert_album(&format!("Album {i}"), &[artist.as_str()], None).unwrap();
+        let id = db
+            .upsert_album(&format!("Album {i}"), &[artist.as_str()], None)
+            .unwrap();
         album_ids.push(id);
     }
     println!("insert {ALBUMS} albums:         {:>10?}", t.elapsed());
@@ -62,13 +64,15 @@ fn bench_sqlite_operations() {
 
     let t = Instant::now();
     for i in 0..100 {
-        db.get_songs(None, SongSort::Default, true, i * 50, 50).unwrap();
+        db.get_songs(None, SongSort::Default, true, i * 50, 50)
+            .unwrap();
     }
     println!("get_songs paginated   x100:  {:>10?}", t.elapsed());
 
     let t = Instant::now();
     for _ in 0..50 {
-        db.get_songs(Some("Song"), SongSort::Default, true, 0, 20).unwrap();
+        db.get_songs(Some("Song"), SongSort::Default, true, 0, 20)
+            .unwrap();
     }
     println!("get_songs FTS search   x50:  {:>10?}", t.elapsed());
 

@@ -4,7 +4,7 @@ use crate::{
     ui::{
         app::MainWindow,
         components::{
-            card::{CARD_GRID_GAP, Card, calculate_card_layout, ArtistHoverHandler},
+            card::{ArtistHoverHandler, CARD_GRID_GAP, Card, calculate_card_layout},
             context_menu::{
                 ContextMenu, HomeDataChanged, LibraryDataChanged, album_context_menu_items,
                 song_context_menu_items,

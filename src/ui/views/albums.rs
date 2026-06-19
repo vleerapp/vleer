@@ -8,7 +8,7 @@ use crate::{
     ui::{
         app::MainWindow,
         components::{
-            card::{CARD_GRID_GAP, Card, calculate_card_layout, ArtistHoverHandler},
+            card::{ArtistHoverHandler, CARD_GRID_GAP, Card, calculate_card_layout},
             context_menu::{ContextMenu, LibraryDataChanged, album_context_menu_items},
             div::{flex_col, flex_row},
             scrollbar::{Scrollbar, ScrollbarAxis, ScrollbarHandle},
@@ -385,11 +385,13 @@ impl Render for AlbumsView {
 
                                         if let Some(album) = album_opt {
                                             let card_id = format!("album-item-{}", item_idx);
-                                            let hovered_artist_idx =
-                                                view_handle.read(cx).hovered_artist.as_ref()
-                                                    .and_then(|(id, idx)| {
-                                                        if id == &card_id { Some(*idx) } else { None }
-                                                    });
+                                            let hovered_artist_idx = view_handle
+                                                .read(cx)
+                                                .hovered_artist
+                                                .as_ref()
+                                                .and_then(|(id, idx)| {
+                                                    if id == &card_id { Some(*idx) } else { None }
+                                                });
                                             let weak = view_handle.downgrade();
                                             let id_for_hover = card_id.clone();
                                             let on_artist_hover: ArtistHoverHandler =

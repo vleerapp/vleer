@@ -231,7 +231,10 @@ impl AlbumView {
                         .map(|a| a.artists.clone())
                         .filter(|a| !a.is_empty())
                         .or_else(|| {
-                            songs.first().map(|s| s.artists.clone()).filter(|a| !a.is_empty())
+                            songs
+                                .first()
+                                .map(|s| s.artists.clone())
+                                .filter(|a| !a.is_empty())
                         })
                         .unwrap_or_default();
                     let mut artists_data: Vec<ArtistInfo> = Vec::new();
@@ -248,7 +251,15 @@ impl AlbumView {
                         .find_map(|s| s.date.clone())
                         .map(|d| d.chars().take(4).collect::<String>())
                         .filter(|y| !y.is_empty());
-                    (album, artist_id, artist_name, artist_image_id, year, songs, artists_data)
+                    (
+                        album,
+                        artist_id,
+                        artist_name,
+                        artist_image_id,
+                        year,
+                        songs,
+                        artists_data,
+                    )
                 })
                 .await;
 
@@ -418,54 +429,53 @@ impl Render for AlbumView {
 
             let artists_data = self.artists_data.clone();
 
-            let sidebar = flex_col()
-                .w(px(cover_size))
-                .flex_shrink_0()
-                .gap(px(variables.padding_16))
-                .child(image)
-                .children(artists_data.into_iter().enumerate().map(|(i, (name, image_uri))| {
-                    let tile_id = format!("album-artist-{}", i);
-                    flex_row()
-                        .id(ElementId::Name(tile_id.clone().into()))
-                        .gap(px(variables.padding_8))
-                        .items_center()
-                        .child(
-                            div()
-                                .id(ElementId::Name(
-                                    format!("{}-avatar", tile_id).into(),
-                                ))
-                                .size(px(36.0))
-                                .rounded_full()
-                                .relative()
-                                .overflow_hidden()
-                                .child(match image_uri {
-                                    Some(uri) => img(format!("!image://{}", uri))
-                                        .size_full()
+            let sidebar =
+                flex_col()
+                    .w(px(cover_size))
+                    .flex_shrink_0()
+                    .gap(px(variables.padding_16))
+                    .child(image)
+                    .children(artists_data.into_iter().enumerate().map(
+                        |(i, (name, image_uri))| {
+                            let tile_id = format!("album-artist-{}", i);
+                            flex_row()
+                                .id(ElementId::Name(tile_id.clone().into()))
+                                .gap(px(variables.padding_8))
+                                .items_center()
+                                .child(
+                                    div()
+                                        .id(ElementId::Name(format!("{}-avatar", tile_id).into()))
+                                        .size(px(36.0))
                                         .rounded_full()
-                                        .object_fit(ObjectFit::Cover)
-                                        .into_any_element(),
-                                    None => div()
-                                        .size_full()
-                                        .rounded_full()
-                                        .bg(variables.border)
-                                        .into_any_element(),
-                                }),
-                        )
-                        .child(
-                            div()
-                                .id(ElementId::Name(
-                                    format!("{}-name", tile_id).into(),
-                                ))
-                                .flex_1()
-                                .min_w_0()
-                                .overflow_hidden()
-                                .text_ellipsis()
-                                .hover(|s| s.underline())
-                                .cursor_pointer()
-                                .child(name),
-                        )
-                        .into_any_element()
-                }));
+                                        .relative()
+                                        .overflow_hidden()
+                                        .child(match image_uri {
+                                            Some(uri) => img(format!("!image://{}", uri))
+                                                .size_full()
+                                                .rounded_full()
+                                                .object_fit(ObjectFit::Cover)
+                                                .into_any_element(),
+                                            None => div()
+                                                .size_full()
+                                                .rounded_full()
+                                                .bg(variables.border)
+                                                .into_any_element(),
+                                        }),
+                                )
+                                .child(
+                                    div()
+                                        .id(ElementId::Name(format!("{}-name", tile_id).into()))
+                                        .flex_1()
+                                        .min_w_0()
+                                        .overflow_hidden()
+                                        .text_ellipsis()
+                                        .hover(|s| s.underline())
+                                        .cursor_pointer()
+                                        .child(name),
+                                )
+                                .into_any_element()
+                        },
+                    ));
 
             flex_row()
                 .size_full()
