@@ -897,15 +897,16 @@ impl Element for TextElement {
                     bounds.left() - prepaint.scroll_offset + prepaint.x_offset,
                     bounds.top() + prepaint.y_offset,
                 );
-                line.paint(
+                if let Err(e) = line.paint(
                     origin,
                     window.line_height(),
                     gpui::TextAlign::Left,
                     None,
                     window,
                     cx,
-                )
-                .unwrap();
+                ) {
+                    tracing::error!("Failed to paint input line: {}", e);
+                }
             }
 
             if focus_handle.is_focused(window) {

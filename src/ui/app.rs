@@ -294,8 +294,8 @@ pub async fn run() -> anyhow::Result<()> {
             cx.set_global(QueueVisible::default());
             cx.set_global(QueueChanged);
 
-            Config::init(cx, &config_dir).expect("unable to initizalize settings");
-            Playback::init(cx).expect("unable to initizalize playback context");
+            Config::init(cx, &config_dir).expect("failed to initialize settings");
+            Playback::init(cx).expect("failed to initialize playback context");
             DiscordPresence::init(cx);
             Queue::init(cx);
             Variables::init(cx);
@@ -375,7 +375,7 @@ pub async fn run() -> anyhow::Result<()> {
                     })
                 },
             )
-            .unwrap();
+            .expect("failed to open main window");
 
             Scanner::init(cx);
         });
