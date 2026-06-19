@@ -1,11 +1,7 @@
 use anyhow::Result;
 use gpui::{App, BackgroundExecutor, Global};
 use serde::{Deserialize, Serialize};
-use std::{
-    fs,
-    path::PathBuf,
-    time::Duration,
-};
+use std::{fs, path::PathBuf, time::Duration};
 use tracing::{debug, error, info};
 use ureq::Agent;
 use uuid::Uuid;
@@ -85,7 +81,9 @@ impl Telemetry {
                 match agent.post(url).send_json(&payload) {
                     Ok(res) if res.status().is_success() => info!("Telemetry sent"),
                     Ok(res) => error!("Telemetry status: {}", res.status()),
-                    Err(e) if cfg!(debug_assertions) => debug!("Telemetry error (debug build): {e}"),
+                    Err(e) if cfg!(debug_assertions) => {
+                        debug!("Telemetry error (debug build): {e}")
+                    }
                     Err(e) => error!("Telemetry error: {e}"),
                 }
             })
