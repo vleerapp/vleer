@@ -113,7 +113,7 @@ impl AssetSource for VleerAssetSource {
         match url.scheme() {
             "bundled" => BundledAssets::load(url),
             "image" => Ok(None),
-            _ => panic!("invalid url scheme for resource"),
+            scheme => Err(anyhow::anyhow!("invalid url scheme for resource: {scheme}")),
         }
     }
 

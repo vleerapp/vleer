@@ -277,7 +277,10 @@ impl EventRow {
                 "STOP" => EventType::Stop,
                 "PAUSE" => EventType::Pause,
                 "RESUME" => EventType::Resume,
-                _ => panic!("Unknown event type"),
+                other => {
+                    tracing::error!("Unknown event type in DB: {}; defaulting to PLAY", other);
+                    EventType::Play
+                }
             },
             context_id: self.context_id,
             timestamp: self.timestamp,

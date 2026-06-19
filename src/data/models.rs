@@ -345,7 +345,10 @@ impl From<EventRow> for Event {
                 "STOP" => EventType::Stop,
                 "PAUSE" => EventType::Pause,
                 "RESUME" => EventType::Resume,
-                _ => panic!("Unknown event type: {}", row.event_type),
+                other => {
+                    tracing::error!("Unknown event type in DB: {}; defaulting to PLAY", other);
+                    EventType::Play
+                }
             },
             context_id: row.context_id,
             timestamp: row.timestamp,
