@@ -342,21 +342,26 @@ fn replace_macos_app(dmg_path: &Path) -> Result<()> {
         .and_then(|bundle| bundle.parent())
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("/Applications"));
-    let dest = install_dir.join(app_in_dmg.file_name().unwrap());
+    let app_in_dmg_name = app_in_dmg
+        .file_name()
+        .ok_or_else(|| anyhow!(".app in DMG has no file name"))?;
+    let dest = install_dir.join(app_in_dmg_name);
 
     let staged = install_dir.join(".vleer-new.app");
     let _ = std::fs::remove_dir_all(&staged);
+    let app_src = app_in_dmg.to_str().context("non-utf8 .app source path")?;
+    let staged_dst = staged.to_str().context("non-utf8 staged dest path")?;
     let status = Command::new("ditto")
-        .args([app_in_dmg.to_str().unwrap(), staged.to_str().unwrap()])
+        .args([app_src, staged_dst])
         .status()
         .context("copying .app with ditto")?;
     if !status.success() {
         return Err(anyhow!("ditto failed"));
     }
 
-    let _ = Command::new("hdiutil")
-        .args(["detach", mount_point.to_str().unwrap()])
-        .status();
+    if let Some(mount_str) = mount_point.to_str() {
+        let _ = Command::new("hdiutil").args(["detach", mount_str]).status();
+    }
 
     let _ = std::fs::remove_dir_all(&dest);
     std::fs::rename(&staged, &dest).context("swapping .app into place")?;
