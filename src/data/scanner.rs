@@ -124,12 +124,17 @@ pub struct Scanner {
     incremental_worker_running: Arc<AtomicBool>,
     scan_progress: Arc<std::sync::Mutex<ScanProgress>>,
     executor: BackgroundExecutor,
+    background_ui: Option<BackgroundUiNotifier>,
 }
 
 impl Global for Scanner {}
 
 impl Scanner {
-    pub fn new(scan_paths: Vec<PathBuf>, executor: BackgroundExecutor) -> Self {
+    pub fn new(
+        scan_paths: Vec<PathBuf>,
+        executor: BackgroundExecutor,
+        background_ui: Option<BackgroundUiNotifier>,
+    ) -> Self {
         Self {
             scan_paths: Arc::new(std::sync::RwLock::new(scan_paths)),
             watcher: Arc::new(std::sync::Mutex::new(None)),
@@ -140,6 +145,7 @@ impl Scanner {
             incremental_worker_running: Arc::new(AtomicBool::new(false)),
             scan_progress: Arc::new(std::sync::Mutex::new(ScanProgress::default())),
             executor,
+            background_ui,
         }
     }
 
@@ -225,7 +231,7 @@ impl Scanner {
         let executor = cx.background_executor().clone();
 
         let scan_paths = expand_scan_paths(&config.get().scan.paths);
-        let scanner = Scanner::new(scan_paths, executor.clone());
+        let scanner = Scanner::new(scan_paths, executor.clone(), background_ui.clone());
 
         cx.set_global(scanner.clone());
 
@@ -469,7 +475,7 @@ impl Scanner {
             .collect())
     }
 
-    fn remove_missing_tracks(
+    fn remove_missing_songs(
         &self,
         db: &Database,
         scanned_files: &HashSet<String>,
@@ -488,7 +494,7 @@ impl Scanner {
         let removed = match db.delete_songs_by_paths(&stale_paths) {
             Ok(n) => n,
             Err(e) => {
-                error!("Failed to remove {} stale tracks: {}", stale_paths.len(), e);
+                error!("Failed to remove {} stale songs: {}", stale_paths.len(), e);
                 0
             }
         };
@@ -529,7 +535,7 @@ impl Scanner {
 
         let force = options.force;
 
-        let tracks_stream = stream::iter(audio_files)
+        let songs_stream = stream::iter(audio_files)
             .map({
                 let existing_track_state = existing_track_state.clone();
                 move |path: PathBuf| {
@@ -544,13 +550,13 @@ impl Scanner {
             .buffer_unordered(MAX_CONCURRENT_SCANS)
             .filter_map(|item| async move { item });
 
-        futures::pin_mut!(tracks_stream);
+        futures::pin_mut!(songs_stream);
         let mut seen_image_ids = HashSet::new();
         let mut artist_cache: HashMap<String, Cuid> = HashMap::new();
-        let mut album_cache: HashMap<(String, Option<Cuid>), (Cuid, bool)> = HashMap::new();
+        let mut album_cache: HashMap<String, (Cuid, bool)> = HashMap::new();
 
         let mut cancelled = false;
-        while let Some((track_opt, is_new, is_failed)) = tracks_stream.next().await {
+        while let Some((track_opt, is_new, is_failed)) = songs_stream.next().await {
             if self.is_cancelled() {
                 cancelled = true;
                 break;
@@ -594,6 +600,12 @@ impl Scanner {
                 );
             }
 
+            if (added + updated) % 25 == 0 && (added + updated) > 0 {
+                if let Some(ref ui) = self.background_ui {
+                    ui.notify(BackgroundUiEvent::LibraryDataChanged);
+                }
+            }
+
             self.update_scan_progress(ScanProgress {
                 current,
                 total: total_files.max(1),
@@ -615,7 +627,7 @@ impl Scanner {
             });
         }
 
-        let removed = self.remove_missing_tracks(db, &scanned_files)?;
+        let removed = self.remove_missing_songs(db, &scanned_files)?;
 
         info!(
             "Scan complete: {} scanned, {} added, {} updated, {} skipped, {} failed, {} removed",
@@ -682,7 +694,7 @@ impl Scanner {
         let mut updated = 0;
         let mut seen_image_ids = HashSet::new();
         let mut artist_cache: HashMap<String, Cuid> = HashMap::new();
-        let mut album_cache: HashMap<(String, Option<Cuid>), (Cuid, bool)> = HashMap::new();
+        let mut album_cache: HashMap<String, (Cuid, bool)> = HashMap::new();
 
         for path in changed_paths {
             let path_clone = path.clone();
@@ -848,8 +860,8 @@ impl Scanner {
         db: &Database,
         track: &ScannedTrack,
         seen_image_ids: &mut HashSet<String>,
-        artist_cache: &mut HashMap<String, Cuid>,
-        album_cache: &mut HashMap<(String, Option<Cuid>), (Cuid, bool)>,
+        _artist_cache: &mut HashMap<String, Cuid>,
+        album_cache: &mut HashMap<String, (Cuid, bool)>,
     ) -> Result<()> {
         let path_str = track.path.to_string_lossy().to_string();
         let meta = &track.metadata;
@@ -863,29 +875,18 @@ impl Scanner {
             None
         };
 
-        let artist_id = if let Some(artist_name) = &meta.artist {
-            if let Some(artist_id) = artist_cache.get(artist_name) {
-                Some(artist_id.clone())
-            } else {
-                let artist_id = db.upsert_artist(artist_name)?;
-                artist_cache.insert(artist_name.clone(), artist_id.clone());
-                Some(artist_id)
-            }
-        } else {
-            None
-        };
+        let artist_names: Vec<&str> = meta.artists.iter().map(|s| s.as_str()).collect();
 
         let album_id = if let Some(album_name) = &meta.album {
-            let key = (album_name.clone(), artist_id.clone());
+            let key = album_name.clone();
             if let Some((cached_album_id, has_image)) = album_cache.get_mut(&key) {
                 if !*has_image && image_id.is_some() {
-                    db.upsert_album(album_name, artist_id.as_ref(), image_id.as_deref())?;
+                    db.upsert_album(album_name, &artist_names, image_id.as_deref())?;
                     *has_image = true;
                 }
                 Some(cached_album_id.clone())
             } else {
-                let album_id =
-                    db.upsert_album(album_name, artist_id.as_ref(), image_id.as_deref())?;
+                let album_id = db.upsert_album(album_name, &artist_names, image_id.as_deref())?;
                 album_cache.insert(key, (album_id.clone(), image_id.is_some()));
                 Some(album_id)
             }
@@ -899,13 +900,13 @@ impl Scanner {
 
         db.upsert_song(
             title,
-            artist_id.as_ref(),
+            &artist_names,
             album_id.as_ref(),
             &path_str,
             duration,
             track_number,
             meta.year,
-            meta.genre.as_deref(),
+            &meta.genres.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
             image_id.as_deref(),
             track.file_size,
             track.file_modified,

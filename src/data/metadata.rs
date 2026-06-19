@@ -19,12 +19,12 @@ const JPEG_QUALITY: u8 = 70;
 #[derive(Debug, Clone, Default)]
 pub struct AudioMetadata {
     pub title: Option<String>,
-    pub artist: Option<String>,
+    pub artists: Vec<String>,
     pub album: Option<String>,
     pub track_number: Option<u32>,
     pub year: Option<i32>,
     pub duration: Duration,
-    pub genre: Option<String>,
+    pub genres: Vec<String>,
     pub lufs: Option<f32>,
 }
 
@@ -35,11 +35,27 @@ pub struct ImageData {
 }
 
 fn extract_metadata_from_tag(tag: Option<&Tag>, duration: Duration) -> AudioMetadata {
-    let (title, artist, album, genre, year, track_number, lufs) = if let Some(tag) = tag {
+    let (title, artists, album, genres, year, track_number, lufs) = if let Some(tag) = tag {
         let title = tag.title().map(|s| s.to_string());
-        let artist = tag.artist().map(|s| s.to_string());
+        let artists = tag
+            .artist()
+            .map(|s| {
+                s.split([',', ';', '/', '&'])
+                    .map(|a| a.trim().to_string())
+                    .filter(|a| !a.is_empty())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         let album = tag.album().map(|s| s.to_string());
-        let genre = tag.genre().map(|s| s.to_string());
+        let genres = tag
+            .genre()
+            .map(|s| {
+                s.split([',', ';', '/'])
+                    .map(|g| g.trim().to_string())
+                    .filter(|g| !g.is_empty())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         let year = tag.date().map(|d| d.year as i32);
         let track_number = tag.track();
 
@@ -50,16 +66,16 @@ fn extract_metadata_from_tag(tag: Option<&Tag>, duration: Duration) -> AudioMeta
                 .map(|gain| -18.0 - (gain))
         });
 
-        (title, artist, album, genre, year, track_number, lufs)
+        (title, artists, album, genres, year, track_number, lufs)
     } else {
-        (None, None, None, None, None, None, None)
+        (None, vec![], None, vec![], None, None, None)
     };
 
     AudioMetadata {
         title,
-        artist,
+        artists,
         album,
-        genre,
+        genres,
         year,
         track_number,
         duration,

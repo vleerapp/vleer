@@ -1,12 +1,10 @@
 CREATE TABLE IF NOT EXISTS songs (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
-    artist_id TEXT,
     album_id TEXT,
     file_path TEXT NOT NULL,
     file_size INTEGER NOT NULL DEFAULT 0,
     file_modified INTEGER NOT NULL DEFAULT 0,
-    genre TEXT,
     date TEXT,
     duration INTEGER NOT NULL,
     image_id TEXT,
@@ -16,8 +14,8 @@ CREATE TABLE IF NOT EXISTS songs (
     pinned BOOLEAN DEFAULT FALSE,
     date_added TEXT DEFAULT (DATETIME('now')),
     date_updated TEXT DEFAULT (DATETIME('now')),
-    FOREIGN KEY (artist_id) REFERENCES artists(id) ON DELETE CASCADE,
-    FOREIGN KEY (album_id) REFERENCES albums(id) ON DELETE CASCADE FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE CASCADE
+    FOREIGN KEY (album_id) REFERENCES albums(id) ON DELETE CASCADE,
+    FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE CASCADE
 );
 CREATE TABLE IF NOT EXISTS artists (
     id TEXT PRIMARY KEY,
@@ -30,12 +28,18 @@ CREATE TABLE IF NOT EXISTS artists (
 CREATE TABLE IF NOT EXISTS albums (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
-    artist_id TEXT,
     image_id TEXT,
     favorite BOOLEAN DEFAULT FALSE,
     pinned BOOLEAN DEFAULT FALSE,
-    FOREIGN KEY (artist_id) REFERENCES artists(id) ON DELETE CASCADE,
     FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS albums_artists (
+    album_id TEXT NOT NULL,
+    artist_id TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (album_id, artist_id),
+    FOREIGN KEY (album_id) REFERENCES albums(id) ON DELETE CASCADE,
+    FOREIGN KEY (artist_id) REFERENCES artists(id) ON DELETE CASCADE
 );
 CREATE TABLE IF NOT EXISTS playlists (
     id TEXT PRIMARY KEY,
@@ -47,7 +51,7 @@ CREATE TABLE IF NOT EXISTS playlists (
     date_created TEXT DEFAULT (DATETIME('now')),
     FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE CASCADE
 );
-CREATE TABLE IF NOT EXISTS playlist_tracks (
+CREATE TABLE IF NOT EXISTS playlist_songs (
     id TEXT PRIMARY KEY,
     playlist_id TEXT NOT NULL,
     song_id TEXT NOT NULL,
@@ -79,10 +83,33 @@ CREATE TABLE IF NOT EXISTS images (
     date_created TEXT NOT NULL DEFAULT (DATETIME('now')),
     date_updated TEXT NOT NULL DEFAULT (DATETIME('now'))
 );
-CREATE INDEX IF NOT EXISTS idx_songs_artist ON songs(artist_id);
+CREATE TABLE IF NOT EXISTS genres (
+    id TEXT PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL
+);
+CREATE TABLE IF NOT EXISTS songs_genres (
+    song_id TEXT NOT NULL,
+    genre_id TEXT NOT NULL,
+    PRIMARY KEY (song_id, genre_id),
+    FOREIGN KEY (song_id) REFERENCES songs(id) ON DELETE CASCADE,
+    FOREIGN KEY (genre_id) REFERENCES genres(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS songs_artists (
+    song_id TEXT NOT NULL,
+    artist_id TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (song_id, artist_id),
+    FOREIGN KEY (song_id) REFERENCES songs(id) ON DELETE CASCADE,
+    FOREIGN KEY (artist_id) REFERENCES artists(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_songs_genres_song ON songs_genres(song_id);
+CREATE INDEX IF NOT EXISTS idx_songs_genres_genre ON songs_genres(genre_id);
+CREATE INDEX IF NOT EXISTS idx_songs_artists_song ON songs_artists(song_id);
+CREATE INDEX IF NOT EXISTS idx_songs_artists_artist ON songs_artists(artist_id);
 CREATE INDEX IF NOT EXISTS idx_songs_album ON songs(album_id);
 CREATE INDEX IF NOT EXISTS idx_songs_file_path ON songs(file_path);
-CREATE INDEX IF NOT EXISTS idx_albums_artist ON albums(artist_id);
+CREATE INDEX IF NOT EXISTS idx_albums_artists_album ON albums_artists(album_id);
+CREATE INDEX IF NOT EXISTS idx_albums_artists_artist ON albums_artists(artist_id);
 CREATE INDEX IF NOT EXISTS idx_events_type ON EVENTS(event_type);
 CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
 CREATE INDEX IF NOT EXISTS idx_events_context ON events(context_id);
@@ -91,20 +118,20 @@ CREATE INDEX IF NOT EXISTS idx_event_contexts_playlist ON event_contexts(playlis
 CREATE INDEX IF NOT EXISTS idx_songs_favorite ON songs(favorite);
 CREATE INDEX IF NOT EXISTS idx_albums_favorite ON albums(favorite);
 CREATE INDEX IF NOT EXISTS idx_artists_favorite ON artists(favorite);
-CREATE INDEX IF NOT EXISTS idx_playlist_tracks_playlist ON playlist_tracks(playlist_id);
-CREATE INDEX IF NOT EXISTS idx_playlist_tracks_song ON playlist_tracks(song_id);
+CREATE INDEX IF NOT EXISTS idx_playlist_songs_playlist ON playlist_songs(playlist_id);
+CREATE INDEX IF NOT EXISTS idx_playlist_songs_song ON playlist_songs(song_id);
 CREATE INDEX IF NOT EXISTS idx_images_date_created ON images(date_created);
 CREATE INDEX IF NOT EXISTS idx_songs_image_id ON songs(image_id);
 CREATE INDEX IF NOT EXISTS idx_albums_image_id ON albums(image_id);
 CREATE INDEX IF NOT EXISTS idx_artists_image_id ON artists(image_id);
 CREATE INDEX IF NOT EXISTS idx_playlists_image_id ON playlists(image_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_albums_title_artist ON albums(title, artist_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_albums_title ON albums(title);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_songs_file_path_unique ON songs(file_path);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_playlist_tracks_unique ON playlist_tracks(playlist_id, song_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_playlist_songs_unique ON playlist_songs(playlist_id, song_id);
 CREATE INDEX IF NOT EXISTS idx_artists_name ON artists(name);
 CREATE INDEX IF NOT EXISTS idx_albums_title ON albums(title);
 CREATE INDEX IF NOT EXISTS idx_songs_title ON songs(title);
-CREATE INDEX IF NOT EXISTS idx_songs_artist_album ON songs(artist_id, album_id);
+CREATE INDEX IF NOT EXISTS idx_songs_album_id ON songs(album_id, id);
 CREATE INDEX IF NOT EXISTS idx_playlists_name ON playlists(name);
 CREATE INDEX IF NOT EXISTS idx_songs_date_added ON songs(date_added DESC, id ASC);
 CREATE TRIGGER IF NOT EXISTS delete_album_trigger
@@ -117,14 +144,26 @@ WHERE albums.id = OLD.album_id
         WHERE songs.album_id = OLD.album_id
     );
 END;
-CREATE TRIGGER IF NOT EXISTS delete_artist_trigger
-AFTER DELETE ON albums BEGIN
+CREATE TRIGGER IF NOT EXISTS albums_artists_ad
+AFTER DELETE ON albums_artists BEGIN
 DELETE FROM artists
 WHERE artists.id = OLD.artist_id
     AND NOT EXISTS (
-        SELECT 1
-        FROM albums
-        WHERE albums.artist_id = OLD.artist_id
+        SELECT 1 FROM albums_artists WHERE artist_id = OLD.artist_id
+    )
+    AND NOT EXISTS (
+        SELECT 1 FROM songs_artists WHERE artist_id = OLD.artist_id
+    );
+END;
+CREATE TRIGGER IF NOT EXISTS songs_artists_ad
+AFTER DELETE ON songs_artists BEGIN
+DELETE FROM artists
+WHERE artists.id = OLD.artist_id
+    AND NOT EXISTS (
+        SELECT 1 FROM songs_artists WHERE artist_id = OLD.artist_id
+    )
+    AND NOT EXISTS (
+        SELECT 1 FROM albums_artists WHERE artist_id = OLD.artist_id
     );
 END;
 CREATE TRIGGER IF NOT EXISTS delete_unused_artist_image
@@ -237,33 +276,22 @@ DELETE FROM songs_fts;
 INSERT INTO songs_fts(song_id, title, artist_name, album_title)
 SELECT s.id,
     s.title,
-    COALESCE(ar.name, ''),
+    COALESCE((
+        SELECT GROUP_CONCAT(name, ', ')
+        FROM (SELECT ar.name FROM songs_artists sa JOIN artists ar ON sa.artist_id = ar.id WHERE sa.song_id = s.id ORDER BY sa.position)
+    ), ''),
     COALESCE(al.title, '')
 FROM songs s
-    LEFT JOIN artists ar ON s.artist_id = ar.id
     LEFT JOIN albums al ON s.album_id = al.id;
 CREATE TRIGGER IF NOT EXISTS songs_ai
-AFTER
-INSERT ON songs BEGIN
+AFTER INSERT ON songs BEGIN
 INSERT INTO songs_fts(song_id, title, artist_name, album_title)
-SELECT NEW.id,
+VALUES (
+    NEW.id,
     NEW.title,
-    COALESCE(
-        (
-            SELECT name
-            FROM artists
-            WHERE id = NEW.artist_id
-        ),
-        ''
-    ),
-    COALESCE(
-        (
-            SELECT title
-            FROM albums
-            WHERE id = NEW.album_id
-        ),
-        ''
-    );
+    '',
+    COALESCE((SELECT title FROM albums WHERE id = NEW.album_id), '')
+);
 END;
 CREATE TRIGGER IF NOT EXISTS songs_ad
 AFTER DELETE ON songs BEGIN
@@ -271,48 +299,38 @@ DELETE FROM songs_fts
 WHERE song_id = OLD.id;
 END;
 CREATE TRIGGER IF NOT EXISTS songs_au
-AFTER
-UPDATE ON songs BEGIN
+AFTER UPDATE ON songs BEGIN
 UPDATE songs_fts
 SET title = NEW.title,
-    artist_name = COALESCE(
-        (
-            SELECT name
-            FROM artists
-            WHERE id = NEW.artist_id
-        ),
-        ''
-    ),
-    album_title = COALESCE(
-        (
-            SELECT title
-            FROM albums
-            WHERE id = NEW.album_id
-        ),
-        ''
-    )
+    album_title = COALESCE((SELECT title FROM albums WHERE id = NEW.album_id), '')
 WHERE song_id = NEW.id;
 END;
-CREATE TRIGGER IF NOT EXISTS artists_au
-AFTER
-UPDATE ON artists BEGIN
+CREATE TRIGGER IF NOT EXISTS songs_artists_ai
+AFTER INSERT ON songs_artists BEGIN
 UPDATE songs_fts
-SET artist_name = NEW.name
-WHERE song_id IN (
-        SELECT id
-        FROM songs
-        WHERE artist_id = NEW.id
-    );
+SET artist_name = COALESCE((
+    SELECT GROUP_CONCAT(name, ', ')
+    FROM (SELECT ar.name FROM songs_artists sa JOIN artists ar ON sa.artist_id = ar.id WHERE sa.song_id = NEW.song_id ORDER BY sa.position)
+), '')
+WHERE song_id = NEW.song_id;
+END;
+CREATE TRIGGER IF NOT EXISTS artists_au
+AFTER UPDATE ON artists BEGIN
+UPDATE songs_fts
+SET artist_name = COALESCE((
+    SELECT GROUP_CONCAT(name, ', ')
+    FROM (SELECT ar2.name FROM songs_artists sa JOIN artists ar2 ON sa.artist_id = ar2.id WHERE sa.song_id = songs_fts.song_id ORDER BY sa.position)
+), '')
+WHERE song_id IN (SELECT song_id FROM songs_artists WHERE artist_id = NEW.id);
 END;
 CREATE TRIGGER IF NOT EXISTS artists_ad
 AFTER DELETE ON artists BEGIN
 UPDATE songs_fts
-SET artist_name = ''
-WHERE song_id IN (
-        SELECT id
-        FROM songs
-        WHERE artist_id = OLD.id
-    );
+SET artist_name = COALESCE((
+    SELECT GROUP_CONCAT(name, ', ')
+    FROM (SELECT ar2.name FROM songs_artists sa JOIN artists ar2 ON sa.artist_id = ar2.id WHERE sa.song_id = songs_fts.song_id ORDER BY sa.position)
+), '')
+WHERE song_id IN (SELECT song_id FROM songs_artists WHERE artist_id = OLD.id);
 END;
 CREATE TRIGGER IF NOT EXISTS albums_au
 AFTER

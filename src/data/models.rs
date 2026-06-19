@@ -50,13 +50,12 @@ pub struct Image {
 pub struct Song {
     pub id: Cuid,
     pub title: String,
-    pub artist_id: Option<Cuid>,
-    pub artist_name: Option<String>,
+    pub artists: Vec<String>,
     pub album_id: Option<Cuid>,
     pub file_path: String,
     pub file_size: i64,
     pub file_modified: i64,
-    pub genre: Option<String>,
+    pub genres: Vec<String>,
     pub date: Option<String>,
     pub duration: i32,
     pub image_id: Option<String>,
@@ -77,6 +76,7 @@ pub struct SongListItem {
     pub album_id: Option<Cuid>,
     pub duration: i32,
     pub image_id: Option<String>,
+    pub genres: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,13 +85,14 @@ pub enum SongSort {
     Title,
     Album,
     Duration,
+    Genre,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Album {
     pub id: Cuid,
     pub title: String,
-    pub artist_id: Option<Cuid>,
+    pub artists: Vec<String>,
     pub image_id: Option<String>,
     pub favorite: bool,
     pub pinned: bool,
@@ -206,13 +207,12 @@ impl From<SongRow> for Song {
         Self {
             id: row.id,
             title: row.title,
-            artist_id: row.artist_id,
-            artist_name: row.artist_name,
+            artists: row.artists,
             album_id: row.album_id,
             file_path: row.file_path,
             file_size: row.file_size,
             file_modified: row.file_modified,
-            genre: row.genre,
+            genres: row.genres,
             date: row.date,
             duration: row.duration,
             image_id: row.image_id,
@@ -243,7 +243,7 @@ impl From<AlbumRow> for Album {
         Self {
             id: row.id,
             title: row.title,
-            artist_id: row.artist_id,
+            artists: row.artists,
             image_id: row.image_id,
             favorite: row.favorite,
             pinned: row.pinned,
@@ -298,6 +298,7 @@ impl From<SongListRow> for SongListItem {
             album_id: row.album_id,
             duration: row.duration,
             image_id: row.image_id,
+            genres: row.genres,
         }
     }
 }

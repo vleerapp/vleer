@@ -92,9 +92,10 @@ impl Database {
     pub fn get_song(&self, id: &Cuid) -> Result<Option<Song>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare_cached(
-            "SELECT s.*, ar.name AS artist_name
+            "SELECT s.*,
+                    (SELECT GROUP_CONCAT(name, ',') FROM (SELECT ar.name FROM songs_artists sa JOIN artists ar ON sa.artist_id = ar.id WHERE sa.song_id = s.id ORDER BY sa.position)) AS artists,
+                    (SELECT GROUP_CONCAT(g.name, ',') FROM songs_genres sg JOIN genres g ON sg.genre_id = g.id WHERE sg.song_id = s.id) AS genres
              FROM songs s
-             LEFT JOIN artists ar ON s.artist_id = ar.id
              WHERE s.id = ?1",
         )?;
         let row = stmt.query_row(params![id], SongRow::from_row).optional()?;
@@ -110,9 +111,10 @@ impl Database {
             .collect::<Vec<_>>()
             .join(",");
         let sql = format!(
-            "SELECT s.*, ar.name AS artist_name
+            "SELECT s.*,
+                    (SELECT GROUP_CONCAT(name, ',') FROM (SELECT ar.name FROM songs_artists sa JOIN artists ar ON sa.artist_id = ar.id WHERE sa.song_id = s.id ORDER BY sa.position)) AS artists,
+                    (SELECT GROUP_CONCAT(g.name, ',') FROM songs_genres sg JOIN genres g ON sg.genre_id = g.id WHERE sg.song_id = s.id) AS genres
              FROM songs s
-             LEFT JOIN artists ar ON s.artist_id = ar.id
              WHERE s.id IN ({placeholders})"
         );
         let conn = self.conn.lock();
@@ -123,9 +125,10 @@ impl Database {
     pub fn get_song_by_path(&self, file_path: &str) -> Result<Option<Song>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare_cached(
-            "SELECT s.*, ar.name AS artist_name
+            "SELECT s.*,
+                    (SELECT GROUP_CONCAT(name, ',') FROM (SELECT ar.name FROM songs_artists sa JOIN artists ar ON sa.artist_id = ar.id WHERE sa.song_id = s.id ORDER BY sa.position)) AS artists,
+                    (SELECT GROUP_CONCAT(g.name, ',') FROM songs_genres sg JOIN genres g ON sg.genre_id = g.id WHERE sg.song_id = s.id) AS genres
              FROM songs s
-             LEFT JOIN artists ar ON s.artist_id = ar.id
              WHERE s.file_path = ?1",
         )?;
         let row = stmt
@@ -138,13 +141,13 @@ impl Database {
     pub fn upsert_song(
         &self,
         title: &str,
-        artist_id: Option<&Cuid>,
+        artists: &[&str],
         album_id: Option<&Cuid>,
         file_path: &str,
         duration: i32,
         track_number: Option<i32>,
         year: Option<i32>,
-        genre: Option<&str>,
+        genres: &[&str],
         image_id: Option<&str>,
         file_size: i64,
         file_modified: i64,
@@ -152,38 +155,71 @@ impl Database {
     ) -> Result<()> {
         let year_str = year.map(|y| y.to_string());
         let id = Cuid::new();
-        let conn = self.conn.lock();
-        conn.execute(
-            "INSERT INTO songs (id, title, artist_id, album_id, file_path, file_size, file_modified, genre, date, duration, image_id, track_number, lufs)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-             ON CONFLICT(file_path) DO UPDATE SET
-                title = excluded.title,
-                artist_id = excluded.artist_id,
-                album_id = excluded.album_id,
-                file_size = excluded.file_size,
-                file_modified = excluded.file_modified,
-                genre = excluded.genre,
-                date = excluded.date,
-                duration = excluded.duration,
-                image_id = excluded.image_id,
-                track_number = excluded.track_number,
-                lufs = excluded.lufs",
-            params![
-                id,
-                title,
-                artist_id,
-                album_id,
-                file_path,
-                file_size,
-                file_modified,
-                genre,
-                year_str,
-                duration,
-                image_id,
-                track_number,
-                lufs,
-            ],
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+
+        let song_id: Cuid = tx
+            .prepare_cached(
+                "INSERT INTO songs (id, title, album_id, file_path, file_size, file_modified, date, duration, image_id, track_number, lufs)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                 ON CONFLICT(file_path) DO UPDATE SET
+                    title = excluded.title,
+                    album_id = excluded.album_id,
+                    file_size = excluded.file_size,
+                    file_modified = excluded.file_modified,
+                    date = excluded.date,
+                    duration = excluded.duration,
+                    image_id = excluded.image_id,
+                    track_number = excluded.track_number,
+                    lufs = excluded.lufs
+                 RETURNING id",
+            )?
+            .query_row(
+                params![id, title, album_id, file_path, file_size, file_modified, year_str, duration, image_id, track_number, lufs],
+                |row| row.get(0),
+            )?;
+
+        tx.execute(
+            "DELETE FROM songs_artists WHERE song_id = ?1",
+            params![song_id],
         )?;
+        for (position, &artist_name) in artists.iter().enumerate() {
+            let artist_id = Cuid::new();
+            let actual_artist_id: Cuid = tx
+                .prepare_cached(
+                    "INSERT INTO artists (id, name) VALUES (?1, ?2)
+                     ON CONFLICT(name) DO UPDATE SET name = excluded.name
+                     RETURNING id",
+                )?
+                .query_row(params![artist_id, artist_name], |row| row.get(0))?;
+            tx.execute(
+                "INSERT INTO songs_artists (song_id, artist_id, position) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(song_id, artist_id) DO UPDATE SET position = excluded.position",
+                params![song_id, actual_artist_id, position as i64],
+            )?;
+        }
+
+        tx.execute(
+            "DELETE FROM songs_genres WHERE song_id = ?1",
+            params![song_id],
+        )?;
+        for &genre_name in genres {
+            let genre_id = Cuid::new();
+            let actual_genre_id: Cuid = tx
+                .prepare_cached(
+                    "INSERT INTO genres (id, name) VALUES (?1, ?2)
+                     ON CONFLICT(name) DO UPDATE SET name = excluded.name
+                     RETURNING id",
+                )?
+                .query_row(params![genre_id, genre_name], |row| row.get(0))?;
+            tx.execute(
+                "INSERT INTO songs_genres (song_id, genre_id) VALUES (?1, ?2)
+                 ON CONFLICT(song_id, genre_id) DO NOTHING",
+                params![song_id, actual_genre_id],
+            )?;
+        }
+
+        tx.commit()?;
         Ok(())
     }
 
@@ -295,8 +331,8 @@ impl Database {
         )?;
         let artists_removed = tx.execute(
             "DELETE FROM artists
-             WHERE NOT EXISTS (SELECT 1 FROM songs WHERE songs.artist_id = artists.id)
-               AND NOT EXISTS (SELECT 1 FROM albums WHERE albums.artist_id = artists.id)",
+             WHERE NOT EXISTS (SELECT 1 FROM songs_artists WHERE songs_artists.artist_id = artists.id)
+               AND NOT EXISTS (SELECT 1 FROM albums_artists WHERE albums_artists.artist_id = artists.id)",
             [],
         )?;
         let images_removed = tx.execute(
@@ -400,10 +436,12 @@ impl Database {
 
         if !has_query {
             let sql = format!(
-                "SELECT s.id, s.title, ar.name AS artist_name, al.title AS album_title,
-                        s.album_id, s.duration, s.image_id
+                "SELECT s.id, s.title,
+                        (SELECT GROUP_CONCAT(name, ', ') FROM (SELECT ar.name FROM songs_artists sa JOIN artists ar ON sa.artist_id = ar.id WHERE sa.song_id = s.id ORDER BY sa.position)) AS artist_name,
+                        al.title AS album_title,
+                        s.album_id, s.duration, s.image_id,
+                        (SELECT GROUP_CONCAT(g.name, ', ') FROM songs_genres sg JOIN genres g ON sg.genre_id = g.id WHERE sg.song_id = s.id) AS genres
                  FROM songs s
-                 LEFT JOIN artists ar ON s.artist_id = ar.id
                  LEFT JOIN albums al ON s.album_id = al.id
                  ORDER BY {order_clause}
                  LIMIT ?1 OFFSET ?2"
@@ -422,14 +460,16 @@ impl Database {
         };
 
         let sql = format!(
-            "SELECT s.id, s.title, ar.name AS artist_name, al.title AS album_title,
-                    s.album_id, s.duration, s.image_id
+            "SELECT s.id, s.title,
+                    (SELECT GROUP_CONCAT(name, ', ') FROM (SELECT ar.name FROM songs_artists sa JOIN artists ar ON sa.artist_id = ar.id WHERE sa.song_id = s.id ORDER BY sa.position)) AS artist_name,
+                    al.title AS album_title,
+                    s.album_id, s.duration, s.image_id,
+                    (SELECT GROUP_CONCAT(g.name, ', ') FROM songs_genres sg JOIN genres g ON sg.genre_id = g.id WHERE sg.song_id = s.id) AS genres
              FROM songs_fts
              JOIN songs s ON s.id = songs_fts.song_id
-             LEFT JOIN artists ar ON s.artist_id = ar.id
              LEFT JOIN albums al ON s.album_id = al.id
              WHERE songs_fts MATCH ?2
-             GROUP BY s.id, s.title, ar.name, al.title, s.album_id, s.duration, s.image_id
+             GROUP BY s.id, s.title, al.title, s.album_id, s.duration, s.image_id, genres
              ORDER BY {order_clause}
              LIMIT ?3 OFFSET ?4"
         );
@@ -458,7 +498,6 @@ impl Database {
             let sql = format!(
                 "SELECT s.id
                  FROM songs s
-                 LEFT JOIN artists ar ON s.artist_id = ar.id
                  LEFT JOIN albums al ON s.album_id = al.id
                  ORDER BY {order_clause}
                  LIMIT -1 OFFSET ?1"
@@ -478,7 +517,6 @@ impl Database {
             "SELECT s.id
              FROM songs_fts
              JOIN songs s ON s.id = songs_fts.song_id
-             LEFT JOIN artists ar ON s.artist_id = ar.id
              LEFT JOIN albums al ON s.album_id = al.id
              WHERE songs_fts MATCH ?2
              GROUP BY s.id, s.title, al.title, s.duration
@@ -499,9 +537,10 @@ impl Database {
         let conn = self.conn.lock();
         collect_mapped::<SongRow, Song, _>(
             &conn,
-            "SELECT s.*, ar.name AS artist_name
+            "SELECT s.*,
+                    (SELECT GROUP_CONCAT(name, ',') FROM (SELECT ar.name FROM songs_artists sa JOIN artists ar ON sa.artist_id = ar.id WHERE sa.song_id = s.id ORDER BY sa.position)) AS artists,
+                    (SELECT GROUP_CONCAT(g.name, ',') FROM songs_genres sg JOIN genres g ON sg.genre_id = g.id WHERE sg.song_id = s.id) AS genres
              FROM songs s
-             LEFT JOIN artists ar ON s.artist_id = ar.id
              WHERE s.album_id = ?1
              ORDER BY s.track_number ASC",
             params![album_id],
@@ -519,19 +558,6 @@ impl Database {
             )
             .optional()?;
         Ok(row.map(Into::into))
-    }
-
-    pub fn upsert_artist(&self, name: &str) -> Result<Cuid> {
-        let id = Cuid::new();
-        let conn = self.conn.lock();
-        let result_id: Cuid = conn
-            .prepare_cached(
-                "INSERT INTO artists (id, name) VALUES (?1, ?2)
-                 ON CONFLICT(name) DO UPDATE SET name = excluded.name
-                 RETURNING id",
-            )?
-            .query_row(params![id, name], |row| row.get(0))?;
-        Ok(result_id)
     }
 
     pub fn get_artists_count(&self, query: &str) -> Result<usize> {
@@ -583,8 +609,22 @@ impl Database {
     pub fn get_album(&self, id: &Cuid) -> Result<Option<Album>> {
         let conn = self.conn.lock();
         let row = conn
-            .prepare_cached("SELECT * FROM albums WHERE id = ?1")?
+            .prepare_cached(
+                "SELECT al.id, al.title, al.image_id, al.favorite, al.pinned,
+                        (SELECT GROUP_CONCAT(name, ',')
+                         FROM (SELECT ar.name FROM albums_artists aa JOIN artists ar ON aa.artist_id = ar.id WHERE aa.album_id = al.id ORDER BY aa.position)) AS artists
+                 FROM albums al WHERE al.id = ?1",
+            )?
             .query_row(params![id], AlbumRow::from_row)
+            .optional()?;
+        Ok(row.map(Into::into))
+    }
+
+    pub fn get_artist_by_name(&self, name: &str) -> Result<Option<Artist>> {
+        let conn = self.conn.lock();
+        let row = conn
+            .prepare_cached("SELECT * FROM artists WHERE name = ?1")?
+            .query_row(params![name], ArtistRow::from_row)
             .optional()?;
         Ok(row.map(Into::into))
     }
@@ -607,8 +647,9 @@ impl Database {
                      al.title LIKE '%' || ?1 || '%' COLLATE NOCASE
                      OR EXISTS (
                          SELECT 1
-                         FROM artists ar
-                         WHERE ar.id = al.artist_id
+                         FROM albums_artists aa
+                         JOIN artists ar ON aa.artist_id = ar.id
+                         WHERE aa.album_id = al.id
                            AND ar.name LIKE '%' || ?1 || '%' COLLATE NOCASE
                      )",
             )?
@@ -622,12 +663,13 @@ impl Database {
         if query.is_empty() {
             return collect_mapped::<AlbumListRow, AlbumListItem, _>(
                 &conn,
-                "SELECT al.id, al.title, ar.name AS artist_name, al.image_id,
-                        MIN(s.date) AS year
+                "SELECT al.id, al.title,
+                        (SELECT GROUP_CONCAT(name, ', ')
+                         FROM (SELECT ar.name FROM albums_artists aa JOIN artists ar ON aa.artist_id = ar.id WHERE aa.album_id = al.id ORDER BY aa.position)) AS artist_name,
+                        al.image_id, MIN(s.date) AS year
                  FROM albums al
-                 LEFT JOIN artists ar ON al.artist_id = ar.id
                  LEFT JOIN songs s ON s.album_id = al.id
-                 GROUP BY al.id, al.title, ar.name, al.image_id
+                 GROUP BY al.id
                  ORDER BY al.title COLLATE NOCASE ASC
                  LIMIT ?1 OFFSET ?2",
                 params![limit, offset],
@@ -637,20 +679,22 @@ impl Database {
 
         collect_mapped::<AlbumListRow, AlbumListItem, _>(
             &conn,
-            "SELECT al.id, al.title, ar.name AS artist_name, al.image_id,
-                    MIN(s.date) AS year
+            "SELECT al.id, al.title,
+                    (SELECT GROUP_CONCAT(name, ', ')
+                     FROM (SELECT ar.name FROM albums_artists aa JOIN artists ar ON aa.artist_id = ar.id WHERE aa.album_id = al.id ORDER BY aa.position)) AS artist_name,
+                    al.image_id, MIN(s.date) AS year
              FROM albums al
-             LEFT JOIN artists ar ON al.artist_id = ar.id
              LEFT JOIN songs s ON s.album_id = al.id
              WHERE
                  al.title LIKE '%' || ?1 || '%' COLLATE NOCASE
                  OR EXISTS (
                      SELECT 1
-                     FROM artists ar2
-                     WHERE ar2.id = al.artist_id
-                       AND ar2.name LIKE '%' || ?1 || '%' COLLATE NOCASE
+                     FROM albums_artists aa
+                     JOIN artists ar ON aa.artist_id = ar.id
+                     WHERE aa.album_id = al.id
+                       AND ar.name LIKE '%' || ?1 || '%' COLLATE NOCASE
                  )
-             GROUP BY al.id, al.title, ar.name, al.image_id
+             GROUP BY al.id
              ORDER BY al.title COLLATE NOCASE ASC
              LIMIT ?2 OFFSET ?3",
             params![query, limit, offset],
@@ -661,21 +705,42 @@ impl Database {
     pub fn upsert_album(
         &self,
         title: &str,
-        artist_id: Option<&Cuid>,
+        artists: &[&str],
         image_id: Option<&str>,
     ) -> Result<Cuid> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
         let id = Cuid::new();
-        let conn = self.conn.lock();
-        let result_id: Cuid = conn
+        let album_id: Cuid = tx
             .prepare_cached(
-                "INSERT INTO albums (id, title, artist_id, image_id)
-                 VALUES (?1, ?2, ?3, ?4)
-                 ON CONFLICT(title, artist_id) DO UPDATE SET
+                "INSERT INTO albums (id, title, image_id)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT(title) DO UPDATE SET
                     image_id = COALESCE(excluded.image_id, albums.image_id)
                  RETURNING id",
             )?
-            .query_row(params![id, title, artist_id, image_id], |row| row.get(0))?;
-        Ok(result_id)
+            .query_row(params![id, title, image_id], |row| row.get(0))?;
+        tx.execute(
+            "DELETE FROM albums_artists WHERE album_id = ?1",
+            params![album_id],
+        )?;
+        for (position, artist_name) in artists.iter().enumerate() {
+            let artist_id = Cuid::new();
+            let actual_artist_id: Cuid = tx
+                .prepare_cached(
+                    "INSERT INTO artists (id, name) VALUES (?1, ?2)
+                     ON CONFLICT(name) DO UPDATE SET name = excluded.name
+                     RETURNING id",
+                )?
+                .query_row(params![artist_id, artist_name], |row| row.get(0))?;
+            tx.prepare_cached(
+                "INSERT INTO albums_artists (album_id, artist_id, position) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(album_id, artist_id) DO UPDATE SET position = excluded.position",
+            )?
+            .execute(params![album_id, actual_artist_id, position as i64])?;
+        }
+        tx.commit()?;
+        Ok(album_id)
     }
 
     pub fn delete_album(&self, id: &Cuid) -> Result<()> {
@@ -729,8 +794,8 @@ impl Database {
         let id = Cuid::new();
         let conn = self.conn.lock();
         conn.execute(
-            "INSERT INTO playlist_tracks (id, playlist_id, song_id, position)
-             VALUES (?1, ?2, ?3, COALESCE((SELECT MAX(position) FROM playlist_tracks WHERE playlist_id = ?2), -1) + 1)
+            "INSERT INTO playlist_songs (id, playlist_id, song_id, position)
+             VALUES (?1, ?2, ?3, COALESCE((SELECT MAX(position) FROM playlist_songs WHERE playlist_id = ?2), -1) + 1)
              ON CONFLICT(playlist_id, song_id) DO NOTHING",
             params![id, playlist_id, song_id],
         )?;
@@ -741,7 +806,7 @@ impl Database {
     pub fn delete_playlist_song(&self, playlist_id: &Cuid, song_id: &Cuid) -> Result<()> {
         let conn = self.conn.lock();
         conn.execute(
-            "DELETE FROM playlist_tracks WHERE playlist_id = ?1 AND song_id = ?2",
+            "DELETE FROM playlist_songs WHERE playlist_id = ?1 AND song_id = ?2",
             params![playlist_id, song_id],
         )?;
         Ok(())
@@ -750,7 +815,7 @@ impl Database {
     pub fn clear_playlist(&self, playlist_id: &Cuid) -> Result<()> {
         let conn = self.conn.lock();
         conn.execute(
-            "DELETE FROM playlist_tracks WHERE playlist_id = ?1",
+            "DELETE FROM playlist_songs WHERE playlist_id = ?1",
             params![playlist_id],
         )?;
         Ok(())
@@ -760,11 +825,12 @@ impl Database {
         let conn = self.conn.lock();
         collect_mapped::<PlaylistTrackRow, PlaylistTrack, _>(
             &conn,
-            "SELECT pt.id AS pt_id, pt.playlist_id, pt.position, s.*, ar.name AS artist_name,
-                    al.title AS album_title
-             FROM playlist_tracks pt
+            "SELECT pt.id AS pt_id, pt.playlist_id, pt.position, s.*,
+                    al.title AS album_title,
+                    (SELECT GROUP_CONCAT(name, ',') FROM (SELECT ar.name FROM songs_artists sa JOIN artists ar ON sa.artist_id = ar.id WHERE sa.song_id = s.id ORDER BY sa.position)) AS artists,
+                    (SELECT GROUP_CONCAT(g.name, ',') FROM songs_genres sg JOIN genres g ON sg.genre_id = g.id WHERE sg.song_id = s.id) AS genres
+             FROM playlist_songs pt
              JOIN songs s ON s.id = pt.song_id
-             LEFT JOIN artists ar ON s.artist_id = ar.id
              LEFT JOIN albums al ON s.album_id = al.id
              WHERE pt.playlist_id = ?1
              ORDER BY pt.position ASC",
@@ -916,7 +982,7 @@ impl Database {
                     CASE
                         WHEN s.title = sp.query_text COLLATE NOCASE THEN 400
                         WHEN s.title LIKE sp.query_text || '%' COLLATE NOCASE THEN 300
-                        WHEN EXISTS (SELECT 1 FROM artists ar WHERE ar.id = s.artist_id AND ar.name LIKE sp.query_text || '%' COLLATE NOCASE) THEN 220
+                        WHEN EXISTS (SELECT 1 FROM songs_artists sa JOIN artists ar ON sa.artist_id = ar.id WHERE sa.song_id = s.id AND ar.name LIKE sp.query_text || '%' COLLATE NOCASE) THEN 220
                         WHEN EXISTS (SELECT 1 FROM albums al WHERE al.id = s.album_id AND al.title LIKE sp.query_text || '%' COLLATE NOCASE) THEN 200
                         ELSE 100
                     END AS score
@@ -933,13 +999,13 @@ impl Database {
                     CASE
                         WHEN al.title = sp.query_text COLLATE NOCASE THEN 350
                         WHEN al.title LIKE sp.query_text || '%' COLLATE NOCASE THEN 260
-                        WHEN EXISTS (SELECT 1 FROM artists ar WHERE ar.id = al.artist_id AND ar.name LIKE sp.query_text || '%' COLLATE NOCASE) THEN 180
+                        WHEN EXISTS (SELECT 1 FROM albums_artists aa JOIN artists ar ON aa.artist_id = ar.id WHERE aa.album_id = al.id AND ar.name LIKE sp.query_text || '%' COLLATE NOCASE) THEN 180
                         ELSE 90
                     END AS score
                 FROM albums al
                 CROSS JOIN search_params sp
                 WHERE al.title LIKE '%' || sp.query_text || '%' COLLATE NOCASE
-                   OR EXISTS (SELECT 1 FROM artists ar WHERE ar.id = al.artist_id AND ar.name LIKE '%' || sp.query_text || '%' COLLATE NOCASE)
+                   OR EXISTS (SELECT 1 FROM albums_artists aa JOIN artists ar ON aa.artist_id = ar.id WHERE aa.album_id = al.id AND ar.name LIKE '%' || sp.query_text || '%' COLLATE NOCASE)
                 ORDER BY score DESC, al.title COLLATE NOCASE ASC
                 LIMIT ?3
             ),
@@ -1027,7 +1093,7 @@ impl Database {
                 &conn,
                 "SELECT p.id, p.name, p.image_id, COUNT(pt.id) AS song_count
                  FROM playlists p
-                 LEFT JOIN playlist_tracks pt ON pt.playlist_id = p.id
+                 LEFT JOIN playlist_songs pt ON pt.playlist_id = p.id
                  GROUP BY p.id, p.name, p.image_id
                  ORDER BY p.name COLLATE NOCASE ASC
                  LIMIT ?1 OFFSET ?2",
@@ -1039,7 +1105,7 @@ impl Database {
             &conn,
             "SELECT p.id, p.name, p.image_id, COUNT(pt.id) AS song_count
              FROM playlists p
-             LEFT JOIN playlist_tracks pt ON pt.playlist_id = p.id
+             LEFT JOIN playlist_songs pt ON pt.playlist_id = p.id
              WHERE p.name LIKE '%' || ?1 || '%' COLLATE NOCASE
              GROUP BY p.id, p.name, p.image_id
              ORDER BY p.name COLLATE NOCASE ASC
@@ -1085,7 +1151,7 @@ impl Database {
         let mut stmt = conn.prepare(
             r#"
             WITH recent_songs AS (
-                SELECT s.id, s.title, s.artist_id, s.album_id, s.image_id, s.date_added, s.date
+                SELECT s.id, s.title, s.album_id, s.image_id, s.date_added, s.date
                 FROM songs s
                 ORDER BY s.date_added DESC
                 LIMIT ?1
@@ -1109,11 +1175,11 @@ impl Database {
                 s.date AS first_year,
                 ig.album_id,
                 al.title AS album_title,
-                ar.name AS artist_name
+                (SELECT ar.name FROM songs_artists sa JOIN artists ar ON sa.artist_id = ar.id
+                 WHERE sa.song_id = s.id ORDER BY sa.position LIMIT 1) AS artist_name
             FROM image_groups ig
             JOIN songs s ON ig.first_song_id = s.id
             LEFT JOIN albums al ON ig.album_id = al.id
-            LEFT JOIN artists ar ON s.artist_id = ar.id
             LEFT JOIN images img ON ig.image_id = img.id
             ORDER BY ig.most_recent_date DESC
             "#,
@@ -1146,11 +1212,11 @@ impl Database {
                 s.date AS first_year,
                 s.album_id,
                 al.title AS album_title,
-                ar.name AS artist_name
+                (SELECT ar.name FROM songs_artists sa JOIN artists ar ON sa.artist_id = ar.id
+                 WHERE sa.song_id = s.id ORDER BY sa.position LIMIT 1) AS artist_name
             FROM recent_song_plays rsp
             JOIN songs s ON rsp.song_id = s.id
             LEFT JOIN albums al ON s.album_id = al.id
-            LEFT JOIN artists ar ON s.artist_id = ar.id
             ORDER BY rsp.most_recent_date DESC
             "#,
         )?;
@@ -1224,13 +1290,20 @@ fn song_order(sort: SongSort, ascending: bool, has_query: bool) -> &'static str 
                 "s.duration DESC, s.id ASC"
             }
         }
+        SongSort::Genre => {
+            if ascending {
+                "genres COLLATE NOCASE ASC, s.id ASC"
+            } else {
+                "genres COLLATE NOCASE DESC, s.id ASC"
+            }
+        }
         SongSort::Default => {
             if has_query {
                 r#"
                 CASE
                     WHEN s.title = ?1 COLLATE NOCASE THEN 400
                     WHEN s.title LIKE ?1 || '%' COLLATE NOCASE THEN 300
-                    WHEN EXISTS (SELECT 1 FROM artists ar3 WHERE ar3.id = s.artist_id AND ar3.name LIKE ?1 || '%' COLLATE NOCASE) THEN 220
+                    WHEN EXISTS (SELECT 1 FROM songs_artists sa3 JOIN artists ar3 ON sa3.artist_id = ar3.id WHERE sa3.song_id = s.id AND ar3.name LIKE ?1 || '%' COLLATE NOCASE) THEN 220
                     WHEN EXISTS (SELECT 1 FROM albums al3 WHERE al3.id = s.album_id AND al3.title LIKE ?1 || '%' COLLATE NOCASE) THEN 200
                     ELSE 100
                 END DESC,

@@ -24,13 +24,12 @@ impl ImageRow {
 pub struct SongRow {
     pub id: Cuid,
     pub title: String,
-    pub artist_id: Option<Cuid>,
-    pub artist_name: Option<String>,
+    pub artists: Vec<String>,
     pub album_id: Option<Cuid>,
     pub file_path: String,
     pub file_size: i64,
     pub file_modified: i64,
-    pub genre: Option<String>,
+    pub genres: Vec<String>,
     pub date: Option<String>,
     pub duration: i32,
     pub image_id: Option<String>,
@@ -42,18 +41,27 @@ pub struct SongRow {
     pub date_updated: String,
 }
 
+fn split_concat(s: Option<String>) -> Vec<String> {
+    s.map(|v| {
+        v.split(',')
+            .map(|x| x.to_string())
+            .filter(|x| !x.is_empty())
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
 impl SongRow {
     pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
         Ok(SongRow {
             id: row.get("id")?,
             title: row.get("title")?,
-            artist_id: row.get("artist_id")?,
-            artist_name: row.get("artist_name")?,
+            artists: split_concat(row.get::<_, Option<String>>("artists")?),
             album_id: row.get("album_id")?,
             file_path: row.get("file_path")?,
             file_size: row.get("file_size")?,
             file_modified: row.get("file_modified")?,
-            genre: row.get("genre")?,
+            genres: split_concat(row.get::<_, Option<String>>("genres")?),
             date: row.get("date")?,
             duration: row.get("duration")?,
             image_id: row.get("image_id")?,
@@ -76,6 +84,7 @@ pub struct SongListRow {
     pub album_id: Option<Cuid>,
     pub duration: i32,
     pub image_id: Option<String>,
+    pub genres: Option<String>,
 }
 
 impl SongListRow {
@@ -88,6 +97,7 @@ impl SongListRow {
             album_id: row.get("album_id")?,
             duration: row.get("duration")?,
             image_id: row.get("image_id")?,
+            genres: row.get("genres")?,
         })
     }
 }
@@ -134,7 +144,7 @@ impl ArtistListRow {
 pub struct AlbumRow {
     pub id: Cuid,
     pub title: String,
-    pub artist_id: Option<Cuid>,
+    pub artists: Vec<String>,
     pub image_id: Option<String>,
     pub favorite: bool,
     pub pinned: bool,
@@ -145,7 +155,7 @@ impl AlbumRow {
         Ok(Self {
             id: row.get("id")?,
             title: row.get("title")?,
-            artist_id: row.get("artist_id")?,
+            artists: split_concat(row.get::<_, Option<String>>("artists")?),
             image_id: row.get("image_id")?,
             favorite: row.get("favorite")?,
             pinned: row.get("pinned")?,
