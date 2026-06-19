@@ -566,12 +566,10 @@ impl Scanner {
                 continue;
             }
 
-            if track_opt.is_none() {
+            let Some(track) = track_opt else {
                 skipped += 1;
                 continue;
-            }
-
-            let track = track_opt.unwrap();
+            };
             if self
                 .save_track(
                     db,
@@ -600,10 +598,11 @@ impl Scanner {
                 );
             }
 
-            if (added + updated) % 25 == 0 && (added + updated) > 0 {
-                if let Some(ref ui) = self.background_ui {
-                    ui.notify(BackgroundUiEvent::LibraryDataChanged);
-                }
+            if (added + updated) % 25 == 0
+                && (added + updated) > 0
+                && let Some(ref ui) = self.background_ui
+            {
+                ui.notify(BackgroundUiEvent::LibraryDataChanged);
             }
 
             self.update_scan_progress(ScanProgress {
