@@ -454,7 +454,9 @@ impl Database {
             );
         }
 
-        let query = query.unwrap().trim();
+        let Some(query) = query.map(str::trim) else {
+            return Ok(Vec::new());
+        };
         let Some(fts_query) = to_fts_query(query) else {
             return Ok(Vec::new());
         };
@@ -567,7 +569,7 @@ impl Database {
             let count: i64 = conn
                 .prepare_cached("SELECT COUNT(*) FROM artists")?
                 .query_row([], |row| row.get(0))?;
-            return Ok(count as usize);
+            return Ok(count.max(0) as usize);
         }
 
         let count: i64 = conn
@@ -576,7 +578,7 @@ impl Database {
                  WHERE ar.name LIKE '%' || ?1 || '%' COLLATE NOCASE",
             )?
             .query_row(params![query], |row| row.get(0))?;
-        Ok(count as usize)
+        Ok(count.max(0) as usize)
     }
 
     pub fn get_artists(&self, query: &str, offset: i64, limit: i64) -> Result<Vec<ArtistListItem>> {
@@ -636,7 +638,7 @@ impl Database {
             let count: i64 = conn
                 .prepare_cached("SELECT COUNT(*) FROM albums")?
                 .query_row([], |row| row.get(0))?;
-            return Ok(count as usize);
+            return Ok(count.max(0) as usize);
         }
 
         let count: i64 = conn
@@ -654,7 +656,7 @@ impl Database {
                      )",
             )?
             .query_row(params![query], |row| row.get(0))?;
-        Ok(count as usize)
+        Ok(count.max(0) as usize)
     }
 
     pub fn get_albums(&self, query: &str, offset: i64, limit: i64) -> Result<Vec<AlbumListItem>> {
@@ -1058,7 +1060,12 @@ impl Database {
         let albums = self.get_albums_count(query)?;
         let artists = self.get_artists_count(query)?;
         let playlists = self.get_playlists_count(query)?;
-        Ok((songs as usize, albums, artists, playlists as usize))
+        Ok((
+            songs.max(0) as usize,
+            albums,
+            artists,
+            playlists.max(0) as usize,
+        ))
     }
 
     pub fn get_playlists_count(&self, query: &str) -> Result<i64> {
