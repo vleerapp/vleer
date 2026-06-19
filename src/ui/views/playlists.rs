@@ -50,7 +50,8 @@ impl PlaylistsView {
             let query_for_spawn = query.clone();
             let (count, first_page) = bg
                 .spawn(async move {
-                    let count = db.get_playlists_count(&query_for_spawn).unwrap_or(0) as usize;
+                    let count =
+                        db.get_playlists_count(&query_for_spawn).unwrap_or(0).max(0) as usize;
                     let first_page = if count > 0 {
                         db.get_playlists(&query_for_spawn, 0, page_size)
                             .unwrap_or_default()

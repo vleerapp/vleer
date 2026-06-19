@@ -380,7 +380,10 @@ impl Render for ContextMenu {
                             .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                                 let new_id = Cuid::new();
                                 let db = cx.global::<Database>().clone();
-                                let _ = db.upsert_playlist(&new_id, "", None, None, false);
+                                if let Err(e) = db.upsert_playlist(&new_id, "", None, None, false) {
+                                    tracing::error!("Failed to create playlist: {}", e);
+                                    return;
+                                }
                                 cx.update_global::<SelectedPlaylist, _>(|sel, _| {
                                     sel.id = Some(new_id);
                                     sel.focus_title = true;

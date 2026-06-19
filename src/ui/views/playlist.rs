@@ -162,13 +162,16 @@ impl PlaylistView {
             let description = playlist.description.clone();
             let pinned = playlist.pinned;
             let db = cx.global::<Database>().clone();
-            let _ = db.upsert_playlist(
+            if let Err(e) = db.upsert_playlist(
                 &playlist_id,
                 &name,
                 description.as_deref(),
                 image_id.as_deref(),
                 pinned,
-            );
+            ) {
+                tracing::error!("Failed to rename playlist: {}", e);
+                return;
+            }
             if let Some(pl) = this.playlist.as_mut() {
                 pl.name = name;
             }
@@ -539,14 +542,20 @@ fn open_image_picker(
 
         cx.update(|cx| {
             let db = cx.global::<Database>().clone();
-            let _ = db.upsert_image(&image_id, &data);
-            let _ = db.upsert_playlist(
+            if let Err(e) = db.upsert_image(&image_id, &data) {
+                tracing::error!("Failed to upsert playlist cover image: {}", e);
+                return;
+            }
+            if let Err(e) = db.upsert_playlist(
                 &playlist_id,
                 &name,
                 description.as_deref(),
                 Some(&image_id),
                 pinned,
-            );
+            ) {
+                tracing::error!("Failed to update playlist with new cover: {}", e);
+                return;
+            }
             cx.set_global(LibraryDataChanged);
         });
     })
