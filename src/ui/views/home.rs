@@ -4,7 +4,7 @@ use crate::{
     ui::{
         app::MainWindow,
         components::{
-            card::{CARD_GRID_GAP, Card, calculate_card_layout},
+            card::{CARD_GRID_GAP, Card, calculate_card_layout, ArtistHoverHandler},
             context_menu::{
                 ContextMenu, HomeDataChanged, LibraryDataChanged, album_context_menu_items,
                 song_context_menu_items,
@@ -12,6 +12,7 @@ use crate::{
             div::{flex_col, flex_row},
             icons::{self, icon},
             scrollbar::ScrollableElement,
+            song_table::format_artist_line,
         },
         layout::queue::QueueVisible,
         variables::Variables,
@@ -19,6 +20,7 @@ use crate::{
     },
 };
 use gpui::{prelude::FluentBuilder, *};
+use std::rc::Rc;
 
 pub struct HomeView {
     recently_played: Vec<RecentItem>,
@@ -27,6 +29,7 @@ pub struct HomeView {
     recently_added_offset: usize,
     container_width: Option<f32>,
     context_menu: Entity<ContextMenu>,
+    hovered_artist: Option<(String, usize)>,
 }
 
 const HOME_RECENT_ITEMS_LIMIT: i64 = 100;
@@ -39,6 +42,7 @@ impl HomeView {
             recently_added_offset: 0,
             container_width: None,
             context_menu: cx.new(|_| ContextMenu::new()),
+            hovered_artist: None,
         };
 
         cx.observe_global::<HomeDataChanged>(|this, cx| {
@@ -154,18 +158,18 @@ fn recent_item_tile(
     item: RecentItem,
     cover_size: f32,
     context_menu: Entity<ContextMenu>,
+    hovered_artist_idx: Option<usize>,
+    on_artist_hover: ArtistHoverHandler,
 ) -> impl IntoElement {
-    let (item_id, title, subtitle, cover_uri, is_song) = match item.clone() {
+    let (item_id, title, subtitle, subtitle_ranges, cover_uri, is_song) = match item.clone() {
         RecentItem::Song {
             id,
             title,
             artist_name,
             image_id,
         } => {
-            let artist = artist_name
-                .clone()
-                .unwrap_or_else(|| "Unknown Artist".to_string());
-            (id, title.clone(), artist, image_id.clone(), true)
+            let (artist, ranges) = format_artist_line(&artist_name);
+            (id, title.clone(), artist, ranges, image_id.clone(), true)
         }
         RecentItem::Album {
             id,
@@ -174,15 +178,20 @@ fn recent_item_tile(
             image_id,
             year,
         } => {
-            let artist = artist_name
-                .clone()
-                .unwrap_or_else(|| "Unknown Artist".to_string());
-            let subtitle = if let Some(y) = year {
-                format!("{} · {}", y, artist)
+            let (artist_str, artist_ranges) = format_artist_line(&artist_name);
+            let (subtitle, ranges) = if let Some(y) = year {
+                let prefix = format!("{} \u{00B7} ", y);
+                let prefix_len = prefix.len();
+                let subtitle = format!("{}{}", prefix, artist_str);
+                let ranges: Vec<std::ops::Range<usize>> = artist_ranges
+                    .into_iter()
+                    .map(|r| (r.start + prefix_len)..(r.end + prefix_len))
+                    .collect();
+                (subtitle, ranges)
             } else {
-                artist
+                (artist_str, artist_ranges)
             };
-            (id, title.clone(), subtitle, image_id.clone(), false)
+            (id, title.clone(), subtitle, ranges, image_id.clone(), false)
         }
     };
     let play_item_id = item_id.clone();
@@ -195,6 +204,7 @@ fn recent_item_tile(
 
     Card::new(format!("{id_prefix}-item-{idx}"), title, cover_size)
         .subtitle(subtitle)
+        .subtitle_artist_ranges(subtitle_ranges, hovered_artist_idx, on_artist_hover)
         .image_uri(cover_uri)
         .on_play(move |_window, cx| {
             if is_song {
@@ -225,6 +235,7 @@ fn recent_item_tile(
         })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn recent_items_content(
     section_id: &'static str,
     items: &[RecentItem],
@@ -233,6 +244,8 @@ fn recent_items_content(
     cover_size: f32,
     variables: &Variables,
     context_menu: Entity<ContextMenu>,
+    hovered_artist: &Option<(String, usize)>,
+    view_weak: WeakEntity<HomeView>,
 ) -> AnyElement {
     if items.is_empty() {
         return flex_row()
@@ -255,12 +268,26 @@ fn recent_items_content(
         .w_full()
         .gap(px(CARD_GRID_GAP))
         .children(visible_items.into_iter().map(move |(idx, item)| {
+            let card_id = format!("{}-item-{}", section_id, offset + idx);
+            let hovered_artist_idx = hovered_artist
+                .as_ref()
+                .and_then(|(id, idx)| if id == &card_id { Some(*idx) } else { None });
+            let weak = view_weak.clone();
+            let id_for_hover = card_id.clone();
+            let on_artist_hover: ArtistHoverHandler = Rc::new(move |hovered_idx, _window, cx| {
+                let _ = weak.update(cx, |this, cx| {
+                    this.hovered_artist = hovered_idx.map(|idx| (id_for_hover.clone(), idx));
+                    cx.notify();
+                });
+            });
             recent_item_tile(
                 section_id,
                 offset + idx,
                 item.clone(),
                 cover_size,
                 context_menu.clone(),
+                hovered_artist_idx,
+                on_artist_hover,
             )
         }))
         .into_any_element()
@@ -291,6 +318,7 @@ impl Render for HomeView {
         let can_scroll_recently_added_right =
             self.recently_added_offset + items_per_page < self.recently_added.len();
 
+        let view_weak = cx.weak_entity();
         let recently_played_content = recent_items_content(
             "recently-played",
             &self.recently_played,
@@ -299,6 +327,8 @@ impl Render for HomeView {
             cover_size,
             variables,
             context_menu.clone(),
+            &self.hovered_artist,
+            view_weak.clone(),
         );
         let recently_added_content = recent_items_content(
             "recently-added",
@@ -308,6 +338,8 @@ impl Render for HomeView {
             cover_size,
             variables,
             context_menu.clone(),
+            &self.hovered_artist,
+            view_weak.clone(),
         );
 
         let recently_played = flex_col()

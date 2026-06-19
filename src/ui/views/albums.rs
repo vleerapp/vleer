@@ -1,16 +1,18 @@
 use crate::media::playback::play_album_now;
 use gpui::{Context, IntoElement, Render, prelude::FluentBuilder, *};
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::rc::Rc;
 
 use crate::{
     data::{db::repo::Database, models::AlbumListItem},
     ui::{
         app::MainWindow,
         components::{
-            card::{CARD_GRID_GAP, Card, calculate_card_layout},
+            card::{CARD_GRID_GAP, Card, calculate_card_layout, ArtistHoverHandler},
             context_menu::{ContextMenu, LibraryDataChanged, album_context_menu_items},
             div::{flex_col, flex_row},
             scrollbar::{Scrollbar, ScrollbarAxis, ScrollbarHandle},
+            song_table::format_artist_line,
         },
         layout::{library::Search, queue::QueueVisible},
         variables::Variables,
@@ -32,6 +34,7 @@ pub struct AlbumsView {
     container_width: Option<f32>,
     scroll_handle: UniformListScrollHandle,
     context_menu: Entity<ContextMenu>,
+    hovered_artist: Option<(String, usize)>,
 }
 
 impl AlbumsView {
@@ -121,6 +124,7 @@ impl AlbumsView {
             container_width: None,
             scroll_handle: UniformListScrollHandle::default(),
             context_menu: cx.new(|_| ContextMenu::new()),
+            hovered_artist: None,
         };
 
         if cx.global::<ActiveView>().0 == AppView::Albums {
@@ -150,6 +154,7 @@ impl AlbumsView {
         cx.observe_global::<LibraryDataChanged>(|this, cx| {
             this.page_cache.clear();
             this.page_pending.clear();
+            this.pending_query = None;
             this.query_version = this.query_version.wrapping_add(1);
             let query = this.last_query.clone();
             this.request_query(query, cx);
@@ -261,15 +266,21 @@ fn album_tile(
     album: &AlbumListItem,
     cover_size: f32,
     context_menu: Entity<ContextMenu>,
+    hovered_artist_idx: Option<usize>,
+    on_artist_hover: ArtistHoverHandler,
 ) -> impl IntoElement {
-    let artist = album
-        .artist_name
-        .clone()
-        .unwrap_or_else(|| "Unknown Artist".to_string());
-    let subtitle = if let Some(year) = &album.year {
-        format!("{} · {}", year, artist)
+    let (artist_str, artist_ranges) = format_artist_line(&album.artist_name);
+    let (subtitle, subtitle_ranges) = if let Some(year) = &album.year {
+        let prefix = format!("{} \u{00B7} ", year);
+        let prefix_len = prefix.len();
+        let subtitle = format!("{}{}", prefix, artist_str);
+        let ranges: Vec<std::ops::Range<usize>> = artist_ranges
+            .into_iter()
+            .map(|r| (r.start + prefix_len)..(r.end + prefix_len))
+            .collect();
+        (subtitle, ranges)
     } else {
-        artist
+        (artist_str, artist_ranges)
     };
 
     let album_id = album.id.clone();
@@ -282,6 +293,7 @@ fn album_tile(
         cover_size,
     )
     .subtitle(subtitle)
+    .subtitle_artist_ranges(subtitle_ranges, hovered_artist_idx, on_artist_hover)
     .image_uri(album.image_id.clone())
     .on_play(move |_window, cx| {
         play_album_now(play_album_id.clone(), cx);
@@ -372,11 +384,29 @@ impl Render for AlbumsView {
                                         let album_opt = view_handle.read(cx).get_album_at(item_idx);
 
                                         if let Some(album) = album_opt {
+                                            let card_id = format!("album-item-{}", item_idx);
+                                            let hovered_artist_idx =
+                                                view_handle.read(cx).hovered_artist.as_ref()
+                                                    .and_then(|(id, idx)| {
+                                                        if id == &card_id { Some(*idx) } else { None }
+                                                    });
+                                            let weak = view_handle.downgrade();
+                                            let id_for_hover = card_id.clone();
+                                            let on_artist_hover: ArtistHoverHandler =
+                                                Rc::new(move |hovered_idx, _window, cx| {
+                                                    let _ = weak.update(cx, |this, cx| {
+                                                        this.hovered_artist = hovered_idx
+                                                            .map(|idx| (id_for_hover.clone(), idx));
+                                                        cx.notify();
+                                                    });
+                                                });
                                             row = row.child(album_tile(
                                                 item_idx,
                                                 &album,
                                                 cover_size,
                                                 context_menu.clone(),
+                                                hovered_artist_idx,
+                                                on_artist_hover,
                                             ));
                                         } else {
                                             row = row.child(

@@ -148,6 +148,7 @@ impl PlaylistsView {
         cx.observe_global::<LibraryDataChanged>(|this, cx| {
             this.page_cache.clear();
             this.page_pending.clear();
+            this.pending_query = None;
             this.query_version = this.query_version.wrapping_add(1);
             let query = this.last_query.clone();
             this.request_query(query, cx);

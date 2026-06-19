@@ -24,7 +24,7 @@ use crate::{
             input::{InputEvent, TextInput},
             song_table::{
                 GetRowCountHandler, GetRowHandler, QueueHandler, SongEntry, SongTable,
-                SongTableEvent,
+                SongTableEvent, join_artists,
             },
         },
         variables::Variables,
@@ -48,21 +48,25 @@ pub struct PlaylistView {
 
 fn song_entry_from_track(track: &PlaylistTrack) -> Arc<SongEntry> {
     let song = &track.song;
-    let artist = song
-        .artist_name
-        .clone()
-        .unwrap_or_else(|| "Unknown".to_string());
+    let artists = if song.artists.is_empty() {
+        vec!["Unknown".to_string()]
+    } else {
+        song.artists.clone()
+    };
+    let (artist, artist_ranges) = join_artists(&artists);
     let minutes = song.duration / 60;
     let seconds = song.duration % 60;
     Arc::new(SongEntry {
         id: song.id.clone(),
         title: song.title.clone(),
         artist,
+        artist_ranges,
         album: track.album_title.clone().unwrap_or_default(),
         album_id: song.album_id.clone(),
         duration: format!("{}:{:02}", minutes, seconds),
         cover_uri: song.image_id.clone().map(|id| format!("!image://{}", id)),
         track_number: song.track_number,
+        genre: String::new(),
     })
 }
 
@@ -109,6 +113,7 @@ impl PlaylistView {
             false,
             true,
             true,
+            false,
         );
 
         let title_input = cx.new(|cx| {
@@ -227,11 +232,11 @@ impl PlaylistView {
 
         let task = cx.spawn(async move |this, cx: &mut AsyncApp| {
             let id_for = playlist_id.clone();
-            let (playlist, tracks) = bg
+            let (playlist, songs) = bg
                 .spawn(async move {
                     let playlist = db.get_playlist(&id_for).ok().flatten();
-                    let tracks = db.get_playlist_songs(&id_for).unwrap_or_default();
-                    (playlist, tracks)
+                    let songs = db.get_playlist_songs(&id_for).unwrap_or_default();
+                    (playlist, songs)
                 })
                 .await;
 
@@ -245,11 +250,11 @@ impl PlaylistView {
                         .map(|p| p.name.clone())
                         .unwrap_or_default();
                     title_input.update(cx, |inp, cx| inp.set_text(name, cx));
-                    this.total_duration_secs = tracks.iter().map(|t| t.song.duration).sum();
+                    this.total_duration_secs = songs.iter().map(|t| t.song.duration).sum();
                     {
                         let mut cache = this.songs_cache.borrow_mut();
                         cache.clear();
-                        cache.extend(tracks.iter().map(song_entry_from_track));
+                        cache.extend(songs.iter().map(song_entry_from_track));
                     }
                     this.playlist = playlist;
                     let table = this.table.clone();
@@ -299,6 +304,8 @@ impl Render for PlaylistView {
                 Some(uri) => div()
                     .id("playlist-cover")
                     .size(px(cover_size))
+                    .overflow_hidden()
+                    .rounded(px(8.0))
                     .relative()
                     .cursor_pointer()
                     .child(
@@ -334,6 +341,7 @@ impl Render for PlaylistView {
                 None => div()
                     .id("playlist-cover-placeholder")
                     .size(px(cover_size))
+                    .rounded(px(8.0))
                     .bg(variables.border)
                     .relative()
                     .cursor_pointer()
@@ -370,6 +378,8 @@ impl Render for PlaylistView {
                 .text_size(px(18.0))
                 .text_ellipsis()
                 .overflow_x_hidden()
+                .w_full()
+                .min_w_0()
                 .child(self.title_input.clone());
 
             let header = flex_col()

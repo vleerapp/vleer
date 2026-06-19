@@ -78,10 +78,7 @@ impl MediaController {
     pub fn update_song(&self, song: Song) -> Result<()> {
         let db = self.inner.db.clone();
 
-        let artist = match song.artist_id.clone() {
-            Some(id) => db.get_artist(&id).ok().flatten().map(|a| a.name),
-            None => None,
-        };
+        let artist = Some(song.artists.join(", ")).filter(|s| !s.is_empty());
 
         let album = match song.album_id.clone() {
             Some(id) => db.get_album(&id).ok().flatten().map(|a| a.title),

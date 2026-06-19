@@ -17,7 +17,7 @@ use crate::{
             div::flex_col,
             song_table::{
                 GetRowCountHandler, GetRowHandler, QueueHandler, SongColumn, SongEntry, SongTable,
-                SongTableEvent, TableSort,
+                SongTableEvent, TableSort, format_artist_line,
             },
         },
         layout::library::Search,
@@ -42,12 +42,16 @@ fn map_sort(sort: Option<TableSort>) -> (SongSort, bool) {
             column: SongColumn::Duration,
             ascending,
         }) => (SongSort::Duration, ascending),
+        Some(TableSort {
+            column: SongColumn::Genre,
+            ascending,
+        }) => (SongSort::Genre, ascending),
         _ => (SongSort::Default, false),
     }
 }
 
 fn song_entry_from_list_item(item: SongListItem) -> Arc<SongEntry> {
-    let artist = item.artist_name.unwrap_or_else(|| "Unknown".to_string());
+    let (artist, artist_ranges) = format_artist_line(&item.artist_name);
     let album = item.album_title.unwrap_or_else(|| "Unknown".to_string());
     let minutes = item.duration / 60;
     let seconds = item.duration % 60;
@@ -56,11 +60,13 @@ fn song_entry_from_list_item(item: SongListItem) -> Arc<SongEntry> {
         id: item.id,
         title: item.title,
         artist,
+        artist_ranges,
         album,
         album_id: item.album_id,
         duration: format!("{}:{:02}", minutes, seconds),
         cover_uri: item.image_id.map(|id| format!("!image://{}", id)),
         track_number: None,
+        genre: item.genres.unwrap_or_default(),
     })
 }
 
@@ -403,6 +409,7 @@ impl SongsView {
             Some(queue_handler),
             None,
             false,
+            true,
             true,
             true,
         );

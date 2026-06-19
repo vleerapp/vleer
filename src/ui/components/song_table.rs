@@ -10,6 +10,7 @@ use crate::ui::variables::Variables;
 use crate::ui::views::{AppView, SelectedAlbum};
 use gpui::{prelude::*, *};
 use rustc_hash::FxHashMap;
+use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
 use tracing::debug;
@@ -28,6 +29,7 @@ pub enum SongColumn {
     Number,
     Title,
     Album,
+    Genre,
     Duration,
 }
 
@@ -37,6 +39,7 @@ impl SongColumn {
             SongColumn::Number => "#",
             SongColumn::Title => "Title",
             SongColumn::Album => "Album",
+            SongColumn::Genre => "Genre",
             SongColumn::Duration => "Duration",
         }
     }
@@ -47,13 +50,15 @@ impl SongColumn {
             SongColumn::Title => ColumnSize::Flex(),
             SongColumn::Album => ColumnSize::Flex(),
             SongColumn::Duration => ColumnSize::Fixed(duration_width),
+            SongColumn::Genre => ColumnSize::Flex(),
         }
     }
 
-    const ALL: [SongColumn; 4] = [
+    const ALL: [SongColumn; 5] = [
         SongColumn::Number,
         SongColumn::Title,
         SongColumn::Album,
+        SongColumn::Genre,
         SongColumn::Duration,
     ];
 }
@@ -69,11 +74,13 @@ pub struct SongEntry {
     pub id: Cuid,
     pub title: String,
     pub artist: String,
+    pub artist_ranges: Vec<Range<usize>>,
     pub album: String,
     pub album_id: Option<Cuid>,
     pub duration: String,
     pub cover_uri: Option<String>,
     pub track_number: Option<i32>,
+    pub genre: String,
 }
 
 impl SongEntry {
@@ -82,8 +89,41 @@ impl SongEntry {
             SongColumn::Number => unreachable!(),
             SongColumn::Title => self.title.clone().into(),
             SongColumn::Album => self.album.clone().into(),
+            SongColumn::Genre => self.genre.clone().into(),
             SongColumn::Duration => self.duration.clone().into(),
         }
+    }
+}
+
+pub fn join_artists(artists: &[String]) -> (String, Vec<Range<usize>>) {
+    let separator = " \u{00B7} ";
+    let mut result = String::new();
+    let mut ranges = Vec::new();
+    for (i, name) in artists.iter().enumerate() {
+        if i > 0 {
+            result.push_str(separator);
+        }
+        let start = result.len();
+        result.push_str(name);
+        let end = result.len();
+        ranges.push(start..end);
+    }
+    (result, ranges)
+}
+
+pub fn format_artist_line(artist_name: &Option<String>) -> (String, Vec<Range<usize>>) {
+    let artists: Vec<String> = artist_name
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.split(", ").map(|s| s.to_string()).collect())
+        .unwrap_or_default();
+    if artists.is_empty() {
+        let unknown = "Unknown Artist".to_string();
+        let len = unknown.len();
+        #[allow(clippy::single_range_in_vec_init)]
+        (unknown, vec![0..len])
+    } else {
+        join_artists(&artists)
     }
 }
 
@@ -102,6 +142,7 @@ pub struct SongTableLayout {
     pub show_numbers: bool,
     pub show_album: bool,
     pub show_cover: bool,
+    pub show_genre: bool,
     pub sort_method: Option<TableSort>,
 }
 
@@ -156,8 +197,10 @@ pub struct SongTableItem {
     show_numbers: bool,
     show_album: bool,
     show_cover: bool,
+    show_genre: bool,
     row_index: usize,
     is_animating: bool,
+    hovered_artist: Option<usize>,
     context_menu: Entity<ContextMenu>,
 }
 
@@ -178,8 +221,10 @@ impl SongTableItem {
             show_numbers: layout.show_numbers,
             show_album: layout.show_album,
             show_cover: layout.show_cover,
+            show_genre: layout.show_genre,
             row_index,
             is_animating: false,
+            hovered_artist: None,
             context_menu: cx.new(|_| ContextMenu::new()),
         })
     }
@@ -199,6 +244,7 @@ impl Render for SongTableItem {
         let show_numbers = self.show_numbers;
         let show_album = self.show_album;
         let show_cover = self.show_cover;
+        let show_genre = self.show_genre;
         let context_menu_entity = self.context_menu.clone();
 
         let mut row = flex_row()
@@ -294,6 +340,9 @@ impl Render for SongTableItem {
                     continue;
                 }
                 if matches!(column, SongColumn::Album) && !show_album {
+                    continue;
+                }
+                if matches!(column, SongColumn::Genre) && !show_genre {
                     continue;
                 }
                 let size = if matches!(column, SongColumn::Number) && !show_cover {
@@ -413,7 +462,7 @@ impl Render for SongTableItem {
                             .items_start()
                             .child(
                                 div()
-                                    .overflow_hidden()
+                                    .whitespace_nowrap()
                                     .text_ellipsis()
                                     .font_weight(FontWeight(500.0))
                                     .hover(|this| this.underline())
@@ -421,40 +470,104 @@ impl Render for SongTableItem {
                             )
                             .child(
                                 div()
-                                    .id(data.artist.clone())
+                                    .id(ElementId::Name(
+                                        format!("song-{}-artist-wrap", self.row_index).into(),
+                                    ))
+                                    .w_full()
                                     .text_color(variables.text_secondary)
-                                    .overflow_hidden()
+                                    .whitespace_nowrap()
                                     .text_ellipsis()
-                                    .hover(|s| s.underline())
-                                    .child(data.artist.clone()),
+                                    .on_hover({
+                                        let weak = cx.weak_entity();
+                                        move |hovered, _window, cx| {
+                                            if !hovered {
+                                                let _ = weak.update(cx, |this, cx| {
+                                                    if this.hovered_artist.is_some() {
+                                                        this.hovered_artist = None;
+                                                        cx.notify();
+                                                    }
+                                                });
+                                            }
+                                        }
+                                    })
+                                    .child({
+                                        let mut highlights: Vec<(
+                                            Range<usize>,
+                                            HighlightStyle,
+                                        )> = Vec::new();
+                                        if let Some(idx) = self.hovered_artist
+                                            && let Some(range) = data.artist_ranges.get(idx)
+                                        {
+                                            highlights.push((
+                                                range.clone(),
+                                                HighlightStyle {
+                                                    underline: Some(UnderlineStyle {
+                                                        thickness: px(1.),
+                                                        ..Default::default()
+                                                    }),
+                                                    ..Default::default()
+                                                },
+                                            ));
+                                        }
+                                        let styled = StyledText::new(data.artist.clone())
+                                            .with_highlights(highlights);
+                                        let weak = cx.weak_entity();
+                                        let ranges = data.artist_ranges.clone();
+                                        InteractiveText::new(
+                                            ElementId::Name(
+                                                format!("song-{}-artist", self.row_index)
+                                                    .into(),
+                                            ),
+                                            styled,
+                                        )
+                                        .on_hover(move |hovered_ix, _event, _window, cx| {
+                                            let new_hovered = hovered_ix.and_then(|ix| {
+                                                ranges.iter().position(|r| r.contains(&ix))
+                                            });
+                                            let _ = weak.update(cx, |this, cx| {
+                                                if this.hovered_artist != new_hovered {
+                                                    this.hovered_artist = new_hovered;
+                                                    cx.notify();
+                                                }
+                                            });
+                                        })
+                                        .into_any_element()
+                                    }),
                             ),
                     );
                 } else if matches!(column, SongColumn::Album) {
                     let album_id = data.album_id.clone();
                     column_div = column_div.items_start().child(
                         div()
-                            .id(data.album.clone())
+                            .id(ElementId::Name(
+                                format!("song-{}-album", self.row_index).into(),
+                            ))
                             .text_color(variables.text_secondary)
                             .when_some(album_id.clone(), |div, album_id| {
-                                div.cursor_pointer().on_mouse_down(
-                                    MouseButton::Left,
-                                    move |_event, window, cx| {
-                                        cx.set_global(SelectedAlbum(Some(album_id.clone())));
-                                        if let Some(Some(root)) = window.root::<MainWindow>() {
-                                            root.update(cx, |view, cx| {
-                                                view.set_current_view(AppView::Album, window, cx);
-                                            });
-                                        }
-                                    },
-                                )
+                                div.cursor_pointer()
+                                    .hover(|s| s.underline())
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        move |_event, window, cx| {
+                                            cx.set_global(SelectedAlbum(Some(album_id.clone())));
+                                            if let Some(Some(root)) = window.root::<MainWindow>()
+                                            {
+                                                root.update(cx, |view, cx| {
+                                                    view.set_current_view(
+                                                        AppView::Album,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                });
+                                            }
+                                        },
+                                    )
                             })
                             .child(
                                 div()
-                                    .id(data.album.clone())
-                                    .overflow_hidden()
+                                    .whitespace_nowrap()
                                     .text_ellipsis()
-                                    .child(data.album.clone())
-                                    .hover(|s| s.underline()),
+                                    .child(data.album.clone()),
                             ),
                     )
                 } else if matches!(column, SongColumn::Number) {
@@ -598,6 +711,7 @@ pub struct SongTable {
     show_numbers: bool,
     show_album: bool,
     show_cover: bool,
+    show_genre: bool,
     scroll_handle: UniformListScrollHandle,
 }
 
@@ -625,6 +739,7 @@ impl SongTable {
         show_numbers: bool,
         show_album: bool,
         show_cover: bool,
+        show_genre: bool,
     ) -> Entity<Self> {
         cx.new(|cx| {
             let views = cx.new(|_| FxHashMap::default());
@@ -701,6 +816,7 @@ impl SongTable {
                 show_numbers,
                 show_album,
                 show_cover,
+                show_genre,
                 scroll_handle: UniformListScrollHandle::default(),
             }
         })
@@ -721,6 +837,7 @@ impl Render for SongTable {
         let show_numbers = self.show_numbers;
         let show_album = self.show_album;
         let show_cover = self.show_cover;
+        let show_genre = self.show_genre;
         let row_count = self.row_count;
 
         let mut header = flex_row()
@@ -737,6 +854,9 @@ impl Render for SongTable {
                 continue;
             }
             if matches!(column_id, SongColumn::Album) && !show_album {
+                continue;
+            }
+            if matches!(column_id, SongColumn::Genre) && !show_genre {
                 continue;
             }
             let size = if matches!(column_id, SongColumn::Number) && !show_cover {
@@ -847,6 +967,7 @@ impl Render for SongTable {
                                                         show_numbers,
                                                         show_album,
                                                         show_cover,
+                                                        show_genre,
                                                         sort_method,
                                                     },
                                                     SongTableHandlers {

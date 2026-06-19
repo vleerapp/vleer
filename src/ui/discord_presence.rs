@@ -78,14 +78,7 @@ impl DiscordPresence {
                             }
                         };
 
-                        let artist_name = if let Some(ref artist_id) = song.artist_id {
-                            db.get_artist(&artist_id.clone())
-                                .ok()
-                                .flatten()
-                                .map(|a| a.name)
-                        } else {
-                            None
-                        };
+                        let artist_name = Some(song.artists.join(", ")).filter(|s| !s.is_empty());
 
                         cached_song_info = Some(CachedSongInfo {
                             title: song.title,

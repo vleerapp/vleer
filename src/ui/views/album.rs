@@ -22,7 +22,7 @@ use crate::{
             icons,
             song_table::{
                 GetRowCountHandler, GetRowHandler, QueueHandler, SongEntry, SongTable,
-                SongTableEvent,
+                SongTableEvent, join_artists,
             },
         },
         variables::Variables,
@@ -32,13 +32,17 @@ use crate::{
 
 type SongCache = Rc<RefCell<Vec<Arc<SongEntry>>>>;
 
+type ArtistInfo = (String, Option<String>);
+
 pub struct AlbumView {
     album_id: Option<Cuid>,
     album: Option<Album>,
     artist_id: Option<Cuid>,
     artist_name: Option<String>,
     artist_image_id: Option<String>,
+    artists_data: Vec<ArtistInfo>,
     year: Option<String>,
+    genres: Vec<String>,
     total_duration_secs: i32,
     songs_cache: SongCache,
     load_task: Option<Task<()>>,
@@ -47,21 +51,25 @@ pub struct AlbumView {
 }
 
 fn song_entry_from_song(song: &crate::data::models::Song) -> Arc<SongEntry> {
-    let artist = song
-        .artist_name
-        .clone()
-        .unwrap_or_else(|| "Unknown".to_string());
+    let artists = if song.artists.is_empty() {
+        vec!["Unknown".to_string()]
+    } else {
+        song.artists.clone()
+    };
+    let (artist, artist_ranges) = join_artists(&artists);
     let minutes = song.duration / 60;
     let seconds = song.duration % 60;
     Arc::new(SongEntry {
         id: song.id.clone(),
         title: song.title.clone(),
         artist,
+        artist_ranges,
         album: String::new(),
         album_id: song.album_id.clone(),
         duration: format!("{}:{:02}", minutes, seconds),
         cover_uri: song.image_id.clone().map(|id| format!("!image://{}", id)),
         track_number: song.track_number,
+        genre: String::new(),
     })
 }
 
@@ -108,6 +116,7 @@ impl AlbumView {
             true,
             false,
             false,
+            false,
         );
 
         let mut view = Self {
@@ -116,7 +125,9 @@ impl AlbumView {
             artist_id: None,
             artist_name: None,
             artist_image_id: None,
+            artists_data: Vec::new(),
             year: None,
+            genres: Vec::new(),
             total_duration_secs: 0,
             songs_cache,
             load_task: None,
@@ -164,7 +175,9 @@ impl AlbumView {
             self.artist_id = None;
             self.artist_name = None;
             self.artist_image_id = None;
+            self.artists_data = Vec::new();
             self.year = None;
+            self.genres = Vec::new();
             self.total_duration_secs = 0;
             self.songs_cache.borrow_mut().clear();
             let table = self.table.clone();
@@ -178,25 +191,64 @@ impl AlbumView {
 
         let task = cx.spawn(async move |this, cx: &mut AsyncApp| {
             let id_for = album_id.clone();
-            let (album, artist_id, artist_name, artist_image_id, year, songs) = bg
+            let (album, artist_id, artist_name, artist_image_id, year, songs, artists_data) = bg
                 .spawn(async move {
                     let album = db.get_album(&id_for).ok().flatten();
                     let songs = db.get_album_songs(&id_for).unwrap_or_default();
-                    let artist = album
+                    let primary_artist_name = album
                         .as_ref()
-                        .and_then(|a| a.artist_id.as_ref())
-                        .and_then(|aid| db.get_artist(aid).ok().flatten());
+                        .and_then(|a| a.artists.first().cloned())
+                        .or_else(|| songs.first().and_then(|s| s.artists.first().cloned()));
+                    let artist = primary_artist_name
+                        .as_deref()
+                        .and_then(|name| db.get_artist_by_name(name).ok().flatten());
                     let artist_id = artist.as_ref().map(|a| a.id.clone());
                     let artist_image_id = artist.as_ref().and_then(|a| a.image_id.clone());
-                    let artist_name = artist
-                        .map(|a| a.name)
-                        .or_else(|| songs.first().and_then(|s| s.artist_name.clone()));
+                    let artist_name = album
+                        .as_ref()
+                        .map(|a| {
+                            if a.artists.is_empty() {
+                                String::new()
+                            } else {
+                                join_artists(&a.artists).0
+                            }
+                        })
+                        .filter(|s| !s.is_empty())
+                        .or_else(|| {
+                            songs
+                                .first()
+                                .map(|s| {
+                                    if s.artists.is_empty() {
+                                        String::new()
+                                    } else {
+                                        join_artists(&s.artists).0
+                                    }
+                                })
+                                .filter(|s| !s.is_empty())
+                        });
+                    let artist_names_list: Vec<String> = album
+                        .as_ref()
+                        .map(|a| a.artists.clone())
+                        .filter(|a| !a.is_empty())
+                        .or_else(|| {
+                            songs.first().map(|s| s.artists.clone()).filter(|a| !a.is_empty())
+                        })
+                        .unwrap_or_default();
+                    let mut artists_data: Vec<ArtistInfo> = Vec::new();
+                    for name in &artist_names_list {
+                        let img = db
+                            .get_artist_by_name(name)
+                            .ok()
+                            .flatten()
+                            .and_then(|a| a.image_id.clone());
+                        artists_data.push((name.clone(), img));
+                    }
                     let year = songs
                         .iter()
                         .find_map(|s| s.date.clone())
                         .map(|d| d.chars().take(4).collect::<String>())
                         .filter(|y| !y.is_empty());
-                    (album, artist_id, artist_name, artist_image_id, year, songs)
+                    (album, artist_id, artist_name, artist_image_id, year, songs, artists_data)
                 })
                 .await;
 
@@ -209,8 +261,18 @@ impl AlbumView {
                     this.artist_id = artist_id;
                     this.artist_name = artist_name;
                     this.artist_image_id = artist_image_id;
+                    this.artists_data = artists_data;
                     this.year = year;
                     this.total_duration_secs = songs.iter().map(|s| s.duration).sum();
+                    {
+                        let mut seen = std::collections::BTreeSet::new();
+                        for s in &songs {
+                            for g in &s.genres {
+                                seen.insert(g.clone());
+                            }
+                        }
+                        this.genres = seen.into_iter().collect();
+                    }
                     {
                         let mut cache = this.songs_cache.borrow_mut();
                         cache.clear();
@@ -260,10 +322,6 @@ impl Render for AlbumView {
                     .into_any_element(),
             };
 
-            let artist = self
-                .artist_name
-                .clone()
-                .unwrap_or_else(|| "Unknown Artist".to_string());
             let song_count = self.songs_cache.borrow().len();
             let duration = self.total_duration_string();
             let year = self.year.clone();
@@ -271,12 +329,19 @@ impl Render for AlbumView {
             let album_id_menu = album.id.clone();
             let menu_for_button = context_menu.clone();
             let songs_for_shuffle = self.songs_cache.clone();
-            let artist_image_id = self.artist_image_id.clone();
             let _artist_id = self.artist_id.clone();
 
+            let genres_str = if self.genres.is_empty() {
+                String::new()
+            } else {
+                format!(" \u{00B7} {}", self.genres.join(", "))
+            };
             let meta_line = match year {
-                Some(y) => format!("{} \u{00B7} {} songs \u{00B7} {}", y, song_count, duration),
-                None => format!("{} songs \u{00B7} {}", song_count, duration),
+                Some(y) => format!(
+                    "{} \u{00B7} {} songs \u{00B7} {}{}",
+                    y, song_count, duration, genres_str
+                ),
+                None => format!("{} songs \u{00B7} {}{}", song_count, duration, genres_str),
             };
 
             let header = flex_col()
@@ -290,6 +355,8 @@ impl Render for AlbumView {
                         .line_height(px(22.0))
                         .text_ellipsis()
                         .overflow_x_hidden()
+                        .w_full()
+                        .min_w_0()
                         .child(album.title.clone()),
                 )
                 .child(div().text_color(variables.text_secondary).child(meta_line))
@@ -349,22 +416,29 @@ impl Render for AlbumView {
                         ),
                 );
 
+            let artists_data = self.artists_data.clone();
+
             let sidebar = flex_col()
                 .w(px(cover_size))
                 .flex_shrink_0()
-                .gap(px(variables.padding_24))
+                .gap(px(variables.padding_16))
                 .child(image)
-                .child(
+                .children(artists_data.into_iter().enumerate().map(|(i, (name, image_uri))| {
+                    let tile_id = format!("album-artist-{}", i);
                     flex_row()
+                        .id(ElementId::Name(tile_id.clone().into()))
                         .gap(px(variables.padding_8))
                         .items_center()
                         .child(
                             div()
+                                .id(ElementId::Name(
+                                    format!("{}-avatar", tile_id).into(),
+                                ))
                                 .size(px(36.0))
                                 .rounded_full()
                                 .relative()
                                 .overflow_hidden()
-                                .child(match artist_image_id {
+                                .child(match image_uri {
                                     Some(uri) => img(format!("!image://{}", uri))
                                         .size_full()
                                         .rounded_full()
@@ -379,14 +453,19 @@ impl Render for AlbumView {
                         )
                         .child(
                             div()
+                                .id(ElementId::Name(
+                                    format!("{}-name", tile_id).into(),
+                                ))
                                 .flex_1()
                                 .min_w_0()
-                                .overflow_x_hidden()
+                                .overflow_hidden()
                                 .text_ellipsis()
-                                .font_weight(FontWeight(500.0))
-                                .child(artist.clone()),
-                        ),
-                );
+                                .hover(|s| s.underline())
+                                .cursor_pointer()
+                                .child(name),
+                        )
+                        .into_any_element()
+                }));
 
             flex_row()
                 .size_full()

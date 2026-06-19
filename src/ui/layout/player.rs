@@ -1,4 +1,5 @@
-use gpui::{prelude::FluentBuilder, *};
+use gpui::*;
+use std::ops::Range;
 use std::time::Duration;
 
 use crate::{
@@ -8,7 +9,6 @@ use crate::{
         queue::{Queue, RepeatMode},
     },
     ui::{
-        app::MainWindow,
         components::{
             button::Button,
             context_menu::{ContextMenu, QueueChanged, song_context_menu_items},
@@ -19,7 +19,6 @@ use crate::{
         },
         layout::queue::QueueVisible,
         variables::Variables,
-        views::{AppView, SelectedAlbum},
     },
 };
 
@@ -35,6 +34,7 @@ struct CachedSong {
 pub struct Player {
     cached_song_data: Option<CachedSong>,
     context_menu: Entity<ContextMenu>,
+    hovered_artist: Option<usize>,
 }
 
 impl Player {
@@ -77,6 +77,7 @@ impl Player {
         Self {
             cached_song_data: None,
             context_menu: cx.new(|_| ContextMenu::new()),
+            hovered_artist: None,
         }
     }
 }
@@ -86,12 +87,35 @@ impl Render for Player {
         let variables = cx.global::<Variables>();
 
         let current_song = if let Some(song) = cx.global::<Queue>().get_current_song(cx) {
+            let song_changed = match &self.cached_song_data {
+                Some(c) => c.id != song.id,
+                None => true,
+            };
+            if song_changed {
+                self.hovered_artist = None;
+            }
+
             let title = song.title.clone();
             let cover = song.image_id.map(|id| format!("!image://{}", id));
-            let artist = song
-                .artist_name
-                .clone()
-                .unwrap_or_else(|| "Unknown Artist".to_string());
+
+            let artists_vec = if song.artists.is_empty() {
+                vec!["Unknown Artist".to_string()]
+            } else {
+                song.artists.clone()
+            };
+
+            let separator = " · ";
+            let mut artist = String::new();
+            let mut artist_ranges: Vec<Range<usize>> = Vec::new();
+            for (i, name) in artists_vec.iter().enumerate() {
+                if i > 0 {
+                    artist.push_str(separator);
+                }
+                let start = artist.len();
+                artist.push_str(name);
+                let end = artist.len();
+                artist_ranges.push(start..end);
+            }
 
             self.cached_song_data = Some(CachedSong {
                 id: song.id.clone(),
@@ -100,10 +124,10 @@ impl Render for Player {
                 cover: cover.clone(),
                 album_id: song.album_id.clone(),
             });
-            Some((title, artist, cover, song.album_id.clone()))
+            Some((title, artist, cover, song.album_id.clone(), artist_ranges))
         } else {
             self.cached_song_data = None;
-            None::<(String, String, Option<String>, Option<Cuid>)>
+            None::<(String, String, Option<String>, Option<Cuid>, Vec<Range<usize>>)>
         };
 
         let is_playing = cx.global::<Playback>().get_playing();
@@ -201,25 +225,49 @@ impl Render for Player {
             .child(next_button)
             .child(repeat_button);
 
-        let track_info = if let Some((title, artist, cover_uri, album_id)) = current_song {
+        let track_info = if let Some((title, artist, cover_uri, _album_id, artist_ranges)) =
+            current_song
+        {
             let ctx_menu = self.context_menu.clone();
             let song_id = cx.global::<Queue>().get_current_song_id();
+
+            let mut highlights: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
+            if let Some(idx) = self.hovered_artist
+                && let Some(range) = artist_ranges.get(idx)
+            {
+                highlights.push((
+                    range.clone(),
+                    HighlightStyle {
+                        underline: Some(UnderlineStyle {
+                            thickness: px(1.),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                ));
+            }
+
+            let styled = StyledText::new(artist.clone()).with_highlights(highlights);
+
+            let weak = cx.weak_entity();
+            let ranges = artist_ranges.clone();
+            let artist_line = InteractiveText::new("artist-line", styled)
+                .on_hover(move |hovered_ix, _event, _window, cx| {
+                    let new_hovered =
+                        hovered_ix.and_then(|ix| ranges.iter().position(|r| r.contains(&ix)));
+                    let _ = weak.update(cx, |this, cx| {
+                        if this.hovered_artist != new_hovered {
+                            this.hovered_artist = new_hovered;
+                            cx.notify();
+                        }
+                    });
+                })
+                .into_any_element();
+
+            let weak_for_leave = cx.weak_entity();
             flex_row()
                 .gap(px(variables.padding_8))
                 .items_center()
-                .when_some(album_id.clone(), |div, album_id| {
-                    div.cursor_pointer().on_mouse_down(
-                        MouseButton::Left,
-                        move |_event, window, cx| {
-                            cx.set_global(SelectedAlbum(Some(album_id.clone())));
-                            if let Some(Some(root)) = window.root::<MainWindow>() {
-                                root.update(cx, |view, cx| {
-                                    view.set_current_view(AppView::Album, window, cx);
-                                });
-                            }
-                        },
-                    )
-                })
                 .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
                     if let Some(id) = &song_id {
                         let items = song_context_menu_items(id.clone(), cx);
@@ -232,6 +280,7 @@ impl Render for Player {
                     img(format!("{}?size=50", uri))
                         .size(px(36.0))
                         .object_fit(ObjectFit::Cover)
+                        .flex_shrink_0()
                         .into_any_element()
                 } else {
                     div().size(px(36.0)).bg(variables.border).into_any_element()
@@ -243,16 +292,28 @@ impl Render for Player {
                         .child(
                             div()
                                 .font_weight(FontWeight(500.0))
+                                .whitespace_nowrap()
                                 .text_ellipsis()
-                                .max_w(px(200.0))
                                 .child(title),
                         )
                         .child(
                             div()
-                                .text_color(variables.text_secondary)
+                                .id("player-artist-line")
+                                .w_full()
+                                .whitespace_nowrap()
                                 .text_ellipsis()
-                                .max_w(px(200.0))
-                                .child(artist),
+                                .text_color(variables.text_secondary)
+                                .on_hover(move |hovered, _window, cx| {
+                                    if !hovered {
+                                        let _ = weak_for_leave.update(cx, |this, cx| {
+                                            if this.hovered_artist.is_some() {
+                                                this.hovered_artist = None;
+                                                cx.notify();
+                                            }
+                                        });
+                                    }
+                                })
+                                .child(artist_line),
                         ),
                 )
                 .into_any_element()

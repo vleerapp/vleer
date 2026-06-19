@@ -1,4 +1,5 @@
 use gpui::{prelude::FluentBuilder as _, *};
+use std::ops::Range;
 use std::rc::Rc;
 
 use crate::ui::{
@@ -10,6 +11,7 @@ use crate::ui::{
 };
 
 pub type PlayHandler = Rc<dyn Fn(&mut Window, &mut App)>;
+pub type ArtistHoverHandler = Rc<dyn Fn(Option<usize>, &mut Window, &mut App)>;
 
 pub const CARD_MIN_IMAGE_SIZE: f32 = 180.0;
 pub const CARD_MAX_IMAGE_SIZE: f32 = 400.0;
@@ -41,6 +43,9 @@ pub struct Card {
     base: Stateful<Div>,
     title: SharedString,
     subtitle: Option<SharedString>,
+    subtitle_artist_ranges: Option<Vec<Range<usize>>>,
+    hovered_artist_idx: Option<usize>,
+    on_artist_hover: Option<ArtistHoverHandler>,
     image_uri: Option<String>,
     image_size: f32,
     image_shape: CardImageShape,
@@ -60,6 +65,9 @@ impl Card {
             id,
             title: title.into(),
             subtitle: None,
+            subtitle_artist_ranges: None,
+            hovered_artist_idx: None,
+            on_artist_hover: None,
             image_uri: None,
             image_size,
             image_shape: CardImageShape::Square,
@@ -69,6 +77,18 @@ impl Card {
 
     pub fn subtitle(mut self, subtitle: impl Into<SharedString>) -> Self {
         self.subtitle = Some(subtitle.into());
+        self
+    }
+
+    pub fn subtitle_artist_ranges(
+        mut self,
+        ranges: Vec<Range<usize>>,
+        hovered_idx: Option<usize>,
+        on_hover: ArtistHoverHandler,
+    ) -> Self {
+        self.subtitle_artist_ranges = Some(ranges);
+        self.hovered_artist_idx = hovered_idx;
+        self.on_artist_hover = Some(on_hover);
         self
     }
 
@@ -107,6 +127,9 @@ impl RenderOnce for Card {
             base,
             title,
             subtitle,
+            subtitle_artist_ranges,
+            hovered_artist_idx,
+            on_artist_hover,
             image_uri,
             image_size,
             image_shape,
@@ -205,21 +228,79 @@ impl RenderOnce for Card {
                         div()
                             .id(ElementId::Name(format!("{tile_id}-title").into()))
                             .text_ellipsis()
+                            .whitespace_nowrap()
                             .font_weight(FontWeight(500.0))
-                            .overflow_x_hidden()
                             .max_w(px(image_size))
                             .child(title),
                     )
                     .when_some(subtitle, |this, subtitle| {
-                        this.child(
-                            div()
-                                .id(ElementId::Name(format!("{tile_id}-subtitle").into()))
-                                .text_ellipsis()
-                                .overflow_x_hidden()
-                                .max_w(px(image_size))
-                                .text_color(variables.text_secondary)
-                                .child(subtitle),
-                        )
+                        if let Some(ranges) = subtitle_artist_ranges {
+                            let mut highlights: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
+                            if let Some(idx) = hovered_artist_idx
+                                && let Some(range) = ranges.get(idx)
+                            {
+                                highlights.push((
+                                    range.clone(),
+                                    HighlightStyle {
+                                        underline: Some(UnderlineStyle {
+                                            thickness: px(1.),
+                                            ..Default::default()
+                                        }),
+                                        ..Default::default()
+                                    },
+                                ));
+                            }
+                            let styled = StyledText::new(subtitle.clone())
+                                .with_highlights(highlights);
+                            let on_hover = on_artist_hover.clone();
+                            let on_leave = on_artist_hover.clone();
+                            let ranges_for_cb = ranges.clone();
+                            this.child(
+                                div()
+                                    .id(ElementId::Name(
+                                        format!("{tile_id}-subtitle").into(),
+                                    ))
+                                    .text_ellipsis()
+                                    .whitespace_nowrap()
+                                    .max_w(px(image_size))
+                                    .text_color(variables.text_secondary)
+                                    .on_hover(move |hovered, window, cx| {
+                                        if !hovered
+                                            && let Some(on_leave) = on_leave.as_ref()
+                                        {
+                                            on_leave(None, window, cx);
+                                        }
+                                    })
+                                    .child(
+                                        InteractiveText::new(
+                                            ElementId::Name(
+                                                format!("{tile_id}-artist-line").into(),
+                                            ),
+                                            styled,
+                                        )
+                                        .on_hover(move |hovered_ix, _event, window, cx| {
+                                            let new_hovered = hovered_ix.and_then(|ix| {
+                                                ranges_for_cb.iter().position(|r| r.contains(&ix))
+                                            });
+                                            if let Some(on_hover) = on_hover.as_ref() {
+                                                on_hover(new_hovered, window, cx);
+                                            }
+                                        })
+                                        .into_any_element(),
+                                    ),
+                            )
+                        } else {
+                            this.child(
+                                div()
+                                    .id(ElementId::Name(format!("{tile_id}-subtitle").into()))
+                                    .text_ellipsis()
+                                    .whitespace_nowrap()
+                                    .max_w(px(image_size))
+                                    .text_color(variables.text_secondary)
+                                    .hover(|s| s.underline())
+                                    .child(subtitle),
+                            )
+                        }
                     }),
             )
     }
