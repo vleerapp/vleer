@@ -21,37 +21,30 @@ fn bench_sqlite_operations() {
     const ARTISTS: usize = 100;
     const ALBUMS: usize = 500;
 
-    let t = Instant::now();
-    for i in 0..ARTISTS {
-        db.upsert_artist(&format!("Artist {i}")).unwrap();
-    }
-    println!("insert {ARTISTS} artists:       {:>10?}", t.elapsed());
-
-    let artists = db.get_artists("", 0, ARTISTS as i64).unwrap();
+    let artist_names: Vec<String> = (0..ARTISTS).map(|i| format!("Artist {i}")).collect();
 
     let t = Instant::now();
+    let mut album_ids = Vec::with_capacity(ALBUMS);
     for i in 0..ALBUMS {
-        let artist_id = artists.get(i % artists.len()).map(|a| &a.id);
-        db.upsert_album(&format!("Album {i}"), artist_id, None)
-            .unwrap();
+        let artist = &artist_names[i % ARTISTS];
+        let id = db.upsert_album(&format!("Album {i}"), &[artist.as_str()], None).unwrap();
+        album_ids.push(id);
     }
     println!("insert {ALBUMS} albums:         {:>10?}", t.elapsed());
 
-    let albums = db.get_albums("", 0, ALBUMS as i64).unwrap();
-
     let t = Instant::now();
     for i in 0..SONGS {
-        let album = &albums[i % albums.len()];
-        let artist_id = artists.get(i % artists.len()).map(|a| &a.id);
+        let album_id = &album_ids[i % album_ids.len()];
+        let artist = &artist_names[i % ARTISTS];
         db.upsert_song(
             &format!("Song Title {i}"),
-            artist_id,
-            Some(&album.id),
+            &[artist.as_str()],
+            Some(album_id),
             &format!("/music/song_{i}.mp3"),
             180 + (i as i32 % 300),
             Some((i as i32 % 20) + 1),
             Some(2000 + (i as i32 % 24)),
-            None,
+            &[],
             None,
             1_000_000,
             i as i64,
@@ -69,15 +62,13 @@ fn bench_sqlite_operations() {
 
     let t = Instant::now();
     for i in 0..100 {
-        db.get_songs(None, SongSort::Default, true, i * 50, 50)
-            .unwrap();
+        db.get_songs(None, SongSort::Default, true, i * 50, 50).unwrap();
     }
     println!("get_songs paginated   x100:  {:>10?}", t.elapsed());
 
     let t = Instant::now();
     for _ in 0..50 {
-        db.get_songs(Some("Song"), SongSort::Default, true, 0, 20)
-            .unwrap();
+        db.get_songs(Some("Song"), SongSort::Default, true, 0, 20).unwrap();
     }
     println!("get_songs FTS search   x50:  {:>10?}", t.elapsed());
 
