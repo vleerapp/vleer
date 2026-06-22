@@ -273,10 +273,9 @@ fn recent_items_content(
                 .as_ref()
                 .and_then(|(id, idx)| if id == &card_id { Some(*idx) } else { None });
             let weak = view_weak.clone();
-            let id_for_hover = card_id.clone();
             let on_artist_hover: ArtistHoverHandler = Rc::new(move |hovered_idx, _window, cx| {
                 let _ = weak.update(cx, |this, cx| {
-                    this.hovered_artist = hovered_idx.map(|idx| (id_for_hover.clone(), idx));
+                    this.hovered_artist = hovered_idx.map(|idx| (card_id.clone(), idx));
                     cx.notify();
                 });
             });
