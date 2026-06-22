@@ -171,30 +171,30 @@ impl MacosState {
             let dict = NSMutableDictionary::<NSString, AnyObject>::new();
 
             if let Some(title) = metadata.title {
-                dict_insert(&dict, key_title(), &*NSString::from_str(&title));
+                dict_insert(&dict, key_title(), &NSString::from_str(&title));
             }
             if let Some(artist) = metadata.artist {
-                dict_insert(&dict, key_artist(), &*NSString::from_str(&artist));
+                dict_insert(&dict, key_artist(), &NSString::from_str(&artist));
             }
             if let Some(album) = metadata.album {
-                dict_insert(&dict, key_album(), &*NSString::from_str(&album));
+                dict_insert(&dict, key_album(), &NSString::from_str(&album));
             }
             if let Some(duration_ms) = metadata.duration_ms {
                 dict_insert(
                     &dict,
                     key_duration(),
-                    &*NSNumber::new_f64(duration_ms as f64 / 1000.0),
+                    &NSNumber::new_f64(duration_ms as f64 / 1000.0),
                 );
             }
             if let Some(position_ms) = metadata.position_ms {
                 dict_insert(
                     &dict,
                     key_elapsed_time(),
-                    &*NSNumber::new_f64(position_ms as f64 / 1000.0),
+                    &NSNumber::new_f64(position_ms as f64 / 1000.0),
                 );
             }
             if let Some(artwork) = self.build_artwork(metadata.artwork_data.as_deref())? {
-                dict_insert(&dict, key_artwork(), &*artwork);
+                dict_insert(&dict, key_artwork(), &artwork);
             }
 
             self.now_playing_center.apply_dict(&dict);
@@ -223,7 +223,7 @@ impl MacosState {
             dict_insert(
                 &dict,
                 key_elapsed_time(),
-                &*NSNumber::new_f64(position_ms as f64 / 1000.0),
+                &NSNumber::new_f64(position_ms as f64 / 1000.0),
             );
             self.now_playing_center.apply_dict(&dict);
             Ok(())
@@ -305,21 +305,20 @@ fn nsdata_from_bytes(data: &[u8]) -> Retained<NSData> {
     unsafe { NSData::dataWithBytes_length(data.as_ptr().cast(), data.len()) }
 }
 
+type ArtworkHandler = RcBlock<dyn Fn(CGSize) -> NonNull<NSImage>>;
+
 fn create_artwork(
     image_ptr: *mut NSImage,
     size: CGSize,
-) -> (
-    Retained<MPMediaItemArtwork>,
-    RcBlock<dyn Fn(CGSize) -> NonNull<NSImage>>,
-) {
-    let handler: RcBlock<dyn Fn(CGSize) -> NonNull<NSImage>> = RcBlock::new(move |_: CGSize| {
+) -> (Retained<MPMediaItemArtwork>, ArtworkHandler) {
+    let handler: ArtworkHandler = RcBlock::new(move |_: CGSize| {
         NonNull::new(image_ptr).expect("image_ptr from Retained is always non-null")
     });
     let artwork = unsafe {
         MPMediaItemArtwork::initWithBoundsSize_requestHandler(
             MPMediaItemArtwork::alloc(),
             size,
-            &*handler,
+            &handler,
         )
     };
     (artwork, handler)
@@ -387,7 +386,7 @@ impl RemoteCommandExt for MPRemoteCommand {
     fn register(&self, handler: &CommandHandler) {
         unsafe {
             self.setEnabled(true);
-            let _ = self.addTargetWithHandler(&*handler);
+            let _ = self.addTargetWithHandler(handler);
         }
     }
     fn set_enabled(&self, enabled: bool) {
