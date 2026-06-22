@@ -550,12 +550,10 @@ pub fn song_context_menu_items(song_id: Cuid, cx: &App) -> Vec<ContextMenuItem> 
         ContextMenuItem::entry(fav_label, fav_icon, {
             let id = song_id.clone();
             move |_, cx| {
-                write_and_notify(cx, {
-                    let id = id.clone();
-                    move |db| {
-                        if let Err(e) = db.set_favorite::<Song>(&id, !favorite) {
-                            error!("set_favorite song failed: {e}");
-                        }
+                let id = &id;
+                write_and_notify(cx, move |db| {
+                    if let Err(e) = db.set_favorite::<Song>(id, !favorite) {
+                        error!("set_favorite song failed: {e}");
                     }
                 });
             }
@@ -563,12 +561,10 @@ pub fn song_context_menu_items(song_id: Cuid, cx: &App) -> Vec<ContextMenuItem> 
         ContextMenuItem::entry(pin_label, pin_icon, {
             let id = song_id.clone();
             move |_, cx| {
-                write_and_notify_pinned(cx, {
-                    let id = id.clone();
-                    move |db| {
-                        if let Err(e) = db.set_pinned::<Song>(&id, !pinned) {
-                            error!("set_pinned song failed: {e}");
-                        }
+                let id = &id;
+                write_and_notify_pinned(cx, move |db| {
+                    if let Err(e) = db.set_pinned::<Song>(id, !pinned) {
+                        error!("set_pinned song failed: {e}");
                     }
                 });
             }
@@ -593,12 +589,10 @@ pub fn song_context_menu_items(song_id: Cuid, cx: &App) -> Vec<ContextMenuItem> 
         ContextMenuItem::destructive("Remove from library", icons::TRASH, {
             let id = song_id.clone();
             move |_, cx| {
-                write_and_notify(cx, {
-                    let id = id.clone();
-                    move |db| {
-                        if let Err(e) = db.delete_song(&id) {
-                            error!("remove_song failed: {e}");
-                        }
+                let id = &id;
+                write_and_notify(cx, move |db| {
+                    if let Err(e) = db.delete_song(id) {
+                        error!("remove_song failed: {e}");
                     }
                 });
             }
@@ -652,12 +646,10 @@ pub fn album_context_menu_items(album_id: Cuid, cx: &App) -> Vec<ContextMenuItem
         ContextMenuItem::entry(fav_label, fav_icon, {
             let id = album_id.clone();
             move |_, cx| {
-                write_and_notify(cx, {
-                    let id = id.clone();
-                    move |db| {
-                        if let Err(e) = db.set_favorite::<Album>(&id, !favorite) {
-                            error!("set_favorite album failed: {e}");
-                        }
+                let id = &id;
+                write_and_notify(cx, move |db| {
+                    if let Err(e) = db.set_favorite::<Album>(id, !favorite) {
+                        error!("set_favorite album failed: {e}");
                     }
                 });
             }
@@ -665,12 +657,10 @@ pub fn album_context_menu_items(album_id: Cuid, cx: &App) -> Vec<ContextMenuItem
         ContextMenuItem::entry(pin_label, pin_icon, {
             let id = album_id.clone();
             move |_, cx| {
-                write_and_notify_pinned(cx, {
-                    let id = id.clone();
-                    move |db| {
-                        if let Err(e) = db.set_pinned::<Album>(&id, !pinned) {
-                            error!("set_pinned album failed: {e}");
-                        }
+                let id = &id;
+                write_and_notify_pinned(cx, move |db| {
+                    if let Err(e) = db.set_pinned::<Album>(id, !pinned) {
+                        error!("set_pinned album failed: {e}");
                     }
                 });
             }
@@ -681,12 +671,10 @@ pub fn album_context_menu_items(album_id: Cuid, cx: &App) -> Vec<ContextMenuItem
         ContextMenuItem::separator(),
         ContextMenuItem::destructive("Remove from library", icons::TRASH, {
             move |_, cx| {
-                write_and_notify(cx, {
-                    let id = album_id.clone();
-                    move |db| {
-                        if let Err(e) = db.delete_album(&id) {
-                            error!("remove album failed: {e}");
-                        }
+                let id = &album_id;
+                write_and_notify(cx, move |db| {
+                    if let Err(e) = db.delete_album(id) {
+                        error!("remove album failed: {e}");
                     }
                 });
             }
@@ -715,24 +703,20 @@ pub fn artist_context_menu_items(artist_id: Cuid, cx: &App) -> Vec<ContextMenuIt
         ContextMenuItem::entry(fav_label, fav_icon, {
             let id = artist_id.clone();
             move |_, cx| {
-                write_and_notify(cx, {
-                    let id = id.clone();
-                    move |db| {
-                        if let Err(e) = db.set_favorite::<Artist>(&id, !favorite) {
-                            error!("set_favorite artist failed: {e}");
-                        }
+                let id = &id;
+                write_and_notify(cx, move |db| {
+                    if let Err(e) = db.set_favorite::<Artist>(id, !favorite) {
+                        error!("set_favorite artist failed: {e}");
                     }
                 });
             }
         }),
         ContextMenuItem::entry(pin_label, pin_icon, {
             move |_, cx| {
-                write_and_notify_pinned(cx, {
-                    let id = artist_id.clone();
-                    move |db| {
-                        if let Err(e) = db.set_pinned::<Artist>(&id, !pinned) {
-                            error!("set_pinned artist failed: {e}");
-                        }
+                let id = &artist_id;
+                write_and_notify_pinned(cx, move |db| {
+                    if let Err(e) = db.set_pinned::<Artist>(id, !pinned) {
+                        error!("set_pinned artist failed: {e}");
                     }
                 });
             }
@@ -764,12 +748,10 @@ pub fn playlist_context_menu_items(playlist_id: Cuid, cx: &App) -> Vec<ContextMe
         ContextMenuItem::entry(pin_label, pin_icon, {
             let id = playlist_id.clone();
             move |_, cx| {
-                write_and_notify_pinned(cx, {
-                    let id = id.clone();
-                    move |db| {
-                        if let Err(e) = db.set_pinned::<Playlist>(&id, !pinned) {
-                            error!("set_pinned playlist failed: {e}");
-                        }
+                let id = &id;
+                write_and_notify_pinned(cx, move |db| {
+                    if let Err(e) = db.set_pinned::<Playlist>(id, !pinned) {
+                        error!("set_pinned playlist failed: {e}");
                     }
                 });
             }
@@ -778,12 +760,10 @@ pub fn playlist_context_menu_items(playlist_id: Cuid, cx: &App) -> Vec<ContextMe
         ContextMenuItem::entry("Clear playlist", icons::X, {
             let id = playlist_id.clone();
             move |_, cx| {
-                write_and_notify(cx, {
-                    let id = id.clone();
-                    move |db| {
-                        if let Err(e) = db.clear_playlist(&id) {
-                            error!("clear_playlist failed: {e}");
-                        }
+                let id = &id;
+                write_and_notify(cx, move |db| {
+                    if let Err(e) = db.clear_playlist(id) {
+                        error!("clear_playlist failed: {e}");
                     }
                 });
             }
@@ -792,12 +772,10 @@ pub fn playlist_context_menu_items(playlist_id: Cuid, cx: &App) -> Vec<ContextMe
         ContextMenuItem::separator(),
         ContextMenuItem::destructive("Delete playlist", icons::TRASH, {
             move |window, cx| {
-                write_and_notify(cx, {
-                    let id = playlist_id.clone();
-                    move |db| {
-                        if let Err(e) = db.delete_playlist(&id) {
-                            error!("delete_playlist failed: {e}");
-                        }
+                let id = &playlist_id;
+                write_and_notify(cx, move |db| {
+                    if let Err(e) = db.delete_playlist(id) {
+                        error!("delete_playlist failed: {e}");
                     }
                 });
                 let is_viewing = cx.global::<SelectedPlaylist>().id.as_ref() == Some(&playlist_id);
