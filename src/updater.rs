@@ -323,7 +323,7 @@ fn replace_macos_app(dmg_path: &Path) -> Result<()> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mount_point = stdout
         .lines()
-        .filter_map(|line| line.split('\t').last())
+        .filter_map(|line| line.split('\t').next_back())
         .find(|s| s.trim().starts_with("/Volumes/"))
         .map(|s| PathBuf::from(s.trim()))
         .ok_or_else(|| anyhow!("could not find mount point in hdiutil output"))?;
@@ -331,14 +331,14 @@ fn replace_macos_app(dmg_path: &Path) -> Result<()> {
     let app_in_dmg = std::fs::read_dir(&mount_point)
         .context("reading mounted DMG")?
         .filter_map(|e| e.ok())
-        .find(|e| e.path().extension().map_or(false, |ext| ext == "app"))
+        .find(|e| e.path().extension().is_some_and(|ext| ext == "app"))
         .map(|e| e.path())
         .ok_or_else(|| anyhow!("no .app found in DMG"))?;
 
     let current_exe = std::env::current_exe().context("getting current exe")?;
     let install_dir = current_exe
         .ancestors()
-        .find(|p| p.extension().map_or(false, |e| e == "app"))
+        .find(|p| p.extension().is_some_and(|e| e == "app"))
         .and_then(|bundle| bundle.parent())
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("/Applications"));
