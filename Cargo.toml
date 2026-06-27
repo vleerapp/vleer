@@ -10,15 +10,15 @@ license = "AGPL-3.0"
 categories = ["multimedia::audio"]
 
 [dependencies]
-gpui = { git = "https://github.com/vleerapp/zed", rev = "eb6bfff642ec26797761843115b698e069f2b922" }
-gpui_macros = { git = "https://github.com/vleerapp/zed", rev = "eb6bfff642ec26797761843115b698e069f2b922" }
-gpui_platform = { git = "https://github.com/vleerapp/zed", rev = "eb6bfff642ec26797761843115b698e069f2b922", features = [
+gpui = { git = "https://github.com/vleerapp/zed", rev = "b8ba7a3b2efd9db89c470379386ffb3b299fa0cb" }
+gpui_macros = { git = "https://github.com/vleerapp/zed", rev = "b8ba7a3b2efd9db89c470379386ffb3b299fa0cb" }
+gpui_platform = { git = "https://github.com/vleerapp/zed", rev = "b8ba7a3b2efd9db89c470379386ffb3b299fa0cb", features = [
   "font-kit",
   "x11",
   "wayland",
   "runtime_shaders",
 ] }
-anyhow = "1.0.102"
+anyhow = "1.0.103"
 dirs = "6.0.0"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
@@ -52,22 +52,22 @@ lru = "0.18.0"
 lazy_static = "1.5.0"
 dashmap = "6.2.1"
 ureq = { version = "3.3.0", features = ["json"] }
-uuid = { version = "1.23.3", features = ["serde", "v4"] }
-semver = "1.0"
-minisign-verify = "0.2"
+uuid = { version = "1.23.4", features = ["serde", "v4"] }
+semver = "1.0.28"
+minisign-verify = "0.2.5"
 souvlaki = "0.8.3"
 spectrum-analyzer = "1.7.0"
 discord-rich-presence = "1.1.0"
 chrono = "0.4.45"
 base64 = "0.22.1"
-itertools = "0.14.0"
+itertools = "0.15.0"
 rand = "0.10.1"
 async-trait = "0.1.89"
 raw-window-handle = "0.6.2"
 interprocess = "2.4.2"
 
 [dev-dependencies]
-serde_json = "1"
+serde_json = "1.0.150"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 mpris-server = "0.10.0"
