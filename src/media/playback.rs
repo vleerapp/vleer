@@ -11,6 +11,7 @@ use gpui::{App, AsyncWindowContext, BorrowAppContext, Global, Window};
 use parking_lot::Mutex;
 use rodio::decoder::{Decoder, DecoderBuilder};
 use rodio::source::Source;
+use rodio::mixer::Mixer;
 use rodio::{DeviceSinkBuilder, MixerDeviceSink, Player as Sink};
 use std::fs::File;
 use std::io::BufReader;
@@ -32,13 +33,15 @@ pub enum PlaybackCommand {
 }
 
 struct PreparedPlayback {
-    _device: MixerDeviceSink,
+    _device: Option<MixerDeviceSink>,
+    mixer: Mixer,
     sink: Sink,
     current_file: String,
 }
 
 pub struct Playback {
     _device: Option<MixerDeviceSink>,
+    mixer: Option<Mixer>,
     sink: Option<Sink>,
     equalizer: Arc<Mutex<Equalizer>>,
     volume: f32,
@@ -79,6 +82,7 @@ impl Playback {
         eq_settings: EqualizerSettings,
         equalizer: Arc<Mutex<Equalizer>>,
         visualizer_state: VisualizerState,
+        existing_mixer: Option<Mixer>,
     ) -> Result<PreparedPlayback> {
         let file =
             File::open(&path).with_context(|| format!("Failed to open audio file: {:?}", path))?;
@@ -97,17 +101,23 @@ impl Playback {
 
         debug!("Audio file: {:?}Hz, {:?} channels", sample_rate, channels);
 
-        let mut device = DeviceSinkBuilder::from_default_device()
-            .and_then(|b| {
-                b.with_sample_rate(sample_rate)
-                    .with_channels(channels)
-                    .open_stream()
-            })
-            .or_else(|_| DeviceSinkBuilder::open_default_sink())
-            .context("Failed to open audio device")?;
-        device.log_on_drop(false);
+        let (new_device, mixer) = if let Some(m) = existing_mixer {
+            (None, m)
+        } else {
+            let mut device = DeviceSinkBuilder::from_default_device()
+                .and_then(|b| {
+                    b.with_sample_rate(sample_rate)
+                        .with_channels(channels)
+                        .open_stream()
+                })
+                .or_else(|_| DeviceSinkBuilder::open_default_sink())
+                .context("Failed to open audio device")?;
+            device.log_on_drop(false);
+            let m = device.mixer().clone();
+            (Some(device), m)
+        };
 
-        let sink = Sink::connect_new(device.mixer());
+        let sink = Sink::connect_new(&mixer);
 
         let sample_rate_u32: u32 = sample_rate.get();
         *equalizer.lock() = Equalizer::from_settings(sample_rate_u32, &eq_settings);
@@ -122,7 +132,8 @@ impl Playback {
         sink.pause();
 
         Ok(PreparedPlayback {
-            _device: device,
+            _device: new_device,
+            mixer,
             sink,
             current_file: path,
         })
@@ -143,7 +154,7 @@ impl Playback {
         self.loading = true;
         self.position = 0.0;
         self.sink = None;
-        self._device = None;
+        let existing_mixer = self.mixer.clone();
 
         cx.spawn(async move |cx| {
             let song = db.get_song(&song_id);
@@ -172,6 +183,7 @@ impl Playback {
                         eq_settings,
                         equalizer,
                         visualizer_state,
+                        existing_mixer,
                     )
                 })
                 .await;
@@ -203,7 +215,10 @@ impl Playback {
                         return;
                     }
 
-                    playback._device = Some(prepared._device);
+                    if let Some(device) = prepared._device {
+                        playback._device = Some(device);
+                        playback.mixer = Some(prepared.mixer);
+                    }
                     playback.sink = Some(prepared.sink);
                     playback.position = 0.0;
                     playback.current_file = Some(prepared.current_file);
@@ -244,6 +259,7 @@ impl Playback {
 
         Ok(Self {
             _device: None,
+            mixer: None,
             sink: None,
             equalizer,
             volume: 0.5,
