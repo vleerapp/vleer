@@ -308,7 +308,6 @@ impl Render for PlaylistView {
                     .id("playlist-cover")
                     .size(px(cover_size))
                     .overflow_hidden()
-                    .rounded(px(8.0))
                     .relative()
                     .cursor_pointer()
                     .child(
@@ -344,7 +343,6 @@ impl Render for PlaylistView {
                 None => div()
                     .id("playlist-cover-placeholder")
                     .size(px(cover_size))
-                    .rounded(px(8.0))
                     .bg(variables.border)
                     .relative()
                     .cursor_pointer()
