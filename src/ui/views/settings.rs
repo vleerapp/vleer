@@ -402,7 +402,6 @@ impl Render for SettingsView {
         let variables = cx.global::<Variables>();
         let telemetry = cx.global::<Config>().get().telemetry;
         let discord_rpc = cx.global::<Config>().get().discord_rpc;
-        let normalization = cx.global::<Config>().get().audio.normalization;
         let eq_enabled = cx.global::<Config>().get().equalizer.enabled;
 
         div()
@@ -471,23 +470,6 @@ impl Render for SettingsView {
                                     .text_xl()
                                     .font_weight(FontWeight::BOLD)
                                     .child("Audio"),
-                            )
-                            .child(
-                                flex_row()
-                                    .gap(px(variables.padding_8))
-                                    .child(
-                                        Switch::new("normalization-switch", normalization)
-                                            .on_change(move |value, _window, cx| {
-                                                cx.update_global::<Config, _>(|config, _cx| {
-                                                    config.set(|s| s.audio.normalization = value);
-                                                });
-                                            }),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_color(variables.text_secondary)
-                                            .child("Normalization"),
-                                    ),
                             )
                             .child(
                                 flex_row()

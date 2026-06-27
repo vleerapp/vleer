@@ -43,16 +43,12 @@ impl Default for ScanSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AudioSettings {
-    pub normalization: bool,
     pub volume: f32,
 }
 
 impl Default for AudioSettings {
     fn default() -> Self {
-        Self {
-            normalization: true,
-            volume: 0.5,
-        }
+        Self { volume: 0.5 }
     }
 }
 

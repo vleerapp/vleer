@@ -10,8 +10,8 @@ use anyhow::{Context, Result};
 use gpui::{App, AsyncWindowContext, BorrowAppContext, Global, Window};
 use parking_lot::Mutex;
 use rodio::decoder::{Decoder, DecoderBuilder};
-use rodio::source::Source;
 use rodio::mixer::Mixer;
+use rodio::source::Source;
 use rodio::{DeviceSinkBuilder, MixerDeviceSink, Player as Sink};
 use std::fs::File;
 use std::io::BufReader;
@@ -37,6 +37,7 @@ struct PreparedPlayback {
     mixer: Mixer,
     sink: Sink,
     current_file: String,
+    lufs: Option<f32>,
 }
 
 pub struct Playback {
@@ -48,7 +49,6 @@ pub struct Playback {
     paused: bool,
     current_file: Option<String>,
     current_lufs: Option<f32>,
-    normalization_enabled: bool,
     position: f32,
     visualizer_state: VisualizerState,
     command_rx: Option<mpsc::UnboundedReceiver<PlaybackCommand>>,
@@ -61,11 +61,8 @@ impl Global for Playback {}
 static PLAYBACK_CMD_TX: OnceLock<mpsc::UnboundedSender<PlaybackCommand>> = OnceLock::new();
 
 impl Playback {
-    fn compute_normalization_gain_for(
-        normalization_enabled: bool,
-        current_lufs: Option<f32>,
-    ) -> f32 {
-        if normalization_enabled && let Some(lufs) = current_lufs {
+    fn compute_normalization_gain_for(current_lufs: Option<f32>) -> f32 {
+        if let Some(lufs) = current_lufs {
             let gain_db = (DEFAULT_TARGET_LUFS - lufs).clamp(-12.0, 12.0);
             let linear_gain = 10.0f32.powf(gain_db / 20.0);
             debug!("Normalization: LUFS {:.2}, gain {:.2} dB", lufs, gain_db);
@@ -78,7 +75,6 @@ impl Playback {
         path: String,
         lufs: Option<f32>,
         volume: f32,
-        normalization_enabled: bool,
         eq_settings: EqualizerSettings,
         equalizer: Arc<Mutex<Equalizer>>,
         visualizer_state: VisualizerState,
@@ -124,7 +120,7 @@ impl Playback {
 
         let eq_source = EqualizerSource::new(source, equalizer.clone());
         let vis_source = VisualizerSource::new(eq_source, visualizer_state);
-        let gain = Self::compute_normalization_gain_for(normalization_enabled, lufs);
+        let gain = Self::compute_normalization_gain_for(lufs);
         let normalized = vis_source.amplify(gain);
 
         sink.append(normalized);
@@ -136,6 +132,7 @@ impl Playback {
             mixer,
             sink,
             current_file: path,
+            lufs,
         })
     }
 
@@ -143,7 +140,6 @@ impl Playback {
         let db = cx.global::<Database>().clone();
         let config = cx.global::<Config>().clone();
         let eq_settings = config.get().equalizer.clone();
-        let normalization_enabled = config.get().audio.normalization;
         let equalizer = self.equalizer.clone();
         let visualizer_state = self.visualizer_state.clone();
         let volume = self.volume;
@@ -179,7 +175,6 @@ impl Playback {
                         path,
                         lufs,
                         volume,
-                        normalization_enabled,
                         eq_settings,
                         equalizer,
                         visualizer_state,
@@ -222,8 +217,7 @@ impl Playback {
                     playback.sink = Some(prepared.sink);
                     playback.position = 0.0;
                     playback.current_file = Some(prepared.current_file);
-                    playback.current_lufs = lufs;
-                    playback.normalization_enabled = normalization_enabled;
+                    playback.current_lufs = prepared.lufs;
                     playback.paused = true;
                     playback.loading = false;
                     debug!("Calling play()");
@@ -266,7 +260,7 @@ impl Playback {
             paused: true,
             current_file: None,
             current_lufs: None,
-            normalization_enabled: false,
+
             position: 0.0,
             visualizer_state: VisualizerState::default(),
             command_rx: None,
@@ -476,18 +470,9 @@ impl Playback {
         debug!("EQ {}", if enabled { "enabled" } else { "disabled" });
     }
 
-    pub fn set_normalization(&mut self, enabled: bool) {
-        self.normalization_enabled = enabled;
-        debug!(
-            "Normalization {}",
-            if enabled { "enabled" } else { "disabled" }
-        );
-    }
-
     pub fn apply_config(&mut self, config: &Config) {
         let settings = config.get();
         self.volume = settings.audio.volume;
-        self.set_normalization(settings.audio.normalization);
 
         let mut eq = self.equalizer.lock();
         eq.apply_settings(&settings.equalizer);
@@ -599,9 +584,7 @@ impl Playback {
     }
 
     fn compute_normalization_gain(&self) -> f32 {
-        if self.normalization_enabled
-            && let Some(lufs) = self.current_lufs
-        {
+        if let Some(lufs) = self.current_lufs {
             let gain_db = (DEFAULT_TARGET_LUFS - lufs).clamp(-12.0, 12.0);
             let linear_gain = 10.0f32.powf(gain_db / 20.0);
             debug!("Normalization: LUFS {:.2}, gain {:.2} dB", lufs, gain_db);
