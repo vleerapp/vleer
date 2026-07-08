@@ -179,7 +179,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ART_ID="${{ steps.upload-unsigned-windows.outputs.artifact-id }}"
-          gh api -X DELETE "/repos/${{ github.repository }}/actions/artifacts/$ART_ID"
+          gh api -X DELETE "repos/${{ github.repository }}/actions/artifacts/$ART_ID"
 
       - name: Sign binaries
         shell: bash
