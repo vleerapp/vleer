@@ -2,6 +2,7 @@ name: Nightly Build
 
 permissions:
   contents: read
+  actions: write
 
 on:
   schedule:
@@ -125,9 +126,60 @@ jobs:
             }
           }
 
-      - name: CodeSign macOS
-        if: runner.os == 'macOS'
-        run: codesign --force --deep --sign - target/release/bundles/*.app
+      - name: Locate unsigned Windows MSI
+        if: runner.os == 'Windows'
+        id: locate-msi
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem -Path target/release/bundles -Filter *.msi -File | Select-Object -First 1
+          if (-Not $msi) { throw "No .msi found in target/release/bundles" }
+          "path=$($msi.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "name=$($msi.Name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Upload unsigned Windows MSI for SignPath
+        if: runner.os == 'Windows'
+        id: upload-unsigned-windows
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.locate-msi.outputs.path }}
+          archive: false
+
+      - name: Submit SignPath signing request (Windows)
+        if: runner.os == 'Windows'
+        id: signpath
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: '${{ secrets.SIGNPATH_ORGANIZATION_ID }}'
+          project-slug: '${{ secrets.SIGNPATH_PROJECT_SLUG }}'
+          signing-policy-slug: '${{ secrets.SIGNPATH_SIGNING_POLICY_SLUG }}'
+          github-artifact-id: '${{ steps.upload-unsigned-windows.outputs.artifact-id }}'
+          wait-for-completion: true
+          skip-decompress: true
+          output-artifact-directory: 'signpath-signed'
+
+      - name: Replace unsigned MSI with signed (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIGNED=$(find signpath-signed -type f -name '*.msi' | head -n 1)
+          if [ -z "$SIGNED" ]; then
+            echo "No signed .msi found under signpath-signed:"
+            find signpath-signed -type f
+            exit 1
+          fi
+          mv -f "$SIGNED" "${{ steps.locate-msi.outputs.path }}"
+          rm -rf signpath-signed
+
+      - name: Delete unsigned MSI actions artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ART_ID="${{ steps.upload-unsigned-windows.outputs.artifact-id }}"
+          gh api -X DELETE "/repos/${{ github.repository }}/actions/artifacts/$ART_ID"
 
       - name: Sign binaries
         shell: bash
@@ -139,6 +191,7 @@ jobs:
           rm -f minisign.key
 
       - name: Rename artifacts
+        id: rename
         shell: bash
         run: |
           ARCH_LOWER=$(echo "${{ matrix.arch }}" | tr '[:upper:]' '[:lower:]')
@@ -149,7 +202,6 @@ jobs:
             [[ "$f" == *.minisig ]] && continue
             [[ -f "$f" ]] || continue
             case "$f" in
-              *.app.tar.gz) EXT="app.tar.gz" ;;
               *.tar.gz) EXT="tar.gz" ;;
               *.tar.xz) EXT="tar.xz" ;;
               *.pkg.tar.zst) EXT="pkg.tar.zst" ;;
@@ -159,9 +211,58 @@ jobs:
             [[ -f "${f}.minisig" ]] && mv "${f}.minisig" "${PREFIX}.${EXT}.minisig"
           done
 
-      - name: Upload artifacts
+      - name: Upload MSI (Windows)
+        if: runner.os == 'Windows'
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ steps.version.outputs.full }}_${{ matrix.os_name }}_${{ matrix.arch }}
-          path: |
-            target/release/bundles/*
+          path: target/release/bundles/${{ steps.rename.outputs.prefix }}.msi
+          archive: false
+
+      - name: Upload MSI minisig (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          path: target/release/bundles/${{ steps.rename.outputs.prefix }}.msi.minisig
+          archive: false
+
+      - name: Upload DMG (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v7
+        with:
+          path: target/release/bundles/${{ steps.rename.outputs.prefix }}.dmg
+          archive: false
+
+      - name: Upload DMG minisig (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v7
+        with:
+          path: target/release/bundles/${{ steps.rename.outputs.prefix }}.dmg.minisig
+          archive: false
+
+      - name: Upload DEB (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          path: target/release/bundles/${{ steps.rename.outputs.prefix }}.deb
+          archive: false
+
+      - name: Upload DEB minisig (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          path: target/release/bundles/${{ steps.rename.outputs.prefix }}.deb.minisig
+          archive: false
+
+      - name: Upload AppImage (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          path: target/release/bundles/${{ steps.rename.outputs.prefix }}.AppImage
+          archive: false
+
+      - name: Upload AppImage minisig (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          path: target/release/bundles/${{ steps.rename.outputs.prefix }}.AppImage.minisig
+          archive: false

@@ -130,4 +130,7 @@ icons = [
   "assets/images/icon.icns",
 ]
 out_dir = "target/release/bundles"
-formats = ["all"]
+formats = ["dmg", "wix", "appimage", "deb"]
+
+[package.metadata.packager.macos]
+signing_identity = "-"
