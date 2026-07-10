@@ -84,7 +84,7 @@ impl Default for SettingsConfig {
     fn default() -> Self {
         Self {
             version: default_version(),
-            telemetry: true,
+            telemetry: false,
             discord_rpc: false,
             equalizer: EqualizerSettings::default(),
             scan: ScanSettings::default(),

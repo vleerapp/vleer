@@ -427,6 +427,7 @@ impl Render for SettingsView {
                             )
                             .child(
                                 flex_row()
+                                    .items_center()
                                     .gap(px(variables.padding_8))
                                     .child(Switch::new("telemetry-switch", telemetry).on_change(
                                         move |value, _window, cx| {
@@ -439,6 +440,37 @@ impl Render for SettingsView {
                                         div()
                                             .text_color(variables.text_secondary)
                                             .child("Telemetry"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("telemetry-dashboard-link")
+                                            .ml(px(variables.padding_16))
+                                            .cursor_pointer()
+                                            .group("telemetry-link")
+                                            .font_weight(FontWeight::BOLD)
+                                            .border_b_1()
+                                            .border_color(variables.accent)
+                                            .hover(|s| s.opacity(0.7))
+                                            .child(
+                                                flex_row()
+                                                    .items_center()
+                                                    .gap(px(4.0))
+                                                    .child(
+                                                        div()
+                                                            .text_color(variables.accent)
+                                                            .child("Public Dashboard"),
+                                                    )
+                                                    .child(
+                                                        icon(icons::LINK)
+                                                            .text_color(variables.accent)
+                                                            .group_hover("telemetry-link", |s| {
+                                                                s.opacity(0.7)
+                                                            }),
+                                                    ),
+                                            )
+                                            .on_click(|_event, _window, cx| {
+                                                cx.open_url("https://graf.wireway.ch/public-dashboards/c518e42c7bc14c5ba95040671fb9e467");
+                                            }),
                                     ),
                             )
                             .child(

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use gpui::{App, BackgroundExecutor, Global};
 use serde::{Deserialize, Serialize};
-use std::{fs, path::PathBuf, time::Duration};
+use std::{fs, path::{Path, PathBuf}, time::Duration};
 use tracing::{debug, error, info};
 use ureq::Agent;
 use uuid::Uuid;
@@ -35,17 +35,32 @@ pub struct Telemetry {
 impl Global for Telemetry {}
 
 impl Telemetry {
+    pub fn is_first_launch(data_dir: &Path) -> bool {
+        Self::migrate_id_file(data_dir);
+        !data_dir.join("telemetry_id.txt").exists()
+    }
+
+    fn migrate_id_file(data_dir: &Path) {
+        let old = data_dir.join("user_id.txt");
+        let new = data_dir.join("telemetry_id.txt");
+        if old.exists() && !new.exists() {
+            let _ = fs::rename(&old, &new);
+        }
+    }
+
     pub fn init(cx: &mut App, data_dir: PathBuf) {
         let agent: Agent = Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(2)))
             .build()
             .into();
 
-        cx.set_global(Self {
+        let telemetry = Self {
             agent,
             data_dir,
             executor: cx.background_executor().clone(),
-        });
+        };
+        let _ = telemetry.get_or_create_user_id();
+        cx.set_global(telemetry);
     }
 
     pub fn submit(&self, db: &Database, config: &Config) {
@@ -100,7 +115,7 @@ impl Telemetry {
     }
 
     fn get_or_create_user_id(&self) -> Result<Uuid> {
-        let path = self.data_dir.join("user_id.txt");
+        let path = self.data_dir.join("telemetry_id.txt");
         if let Ok(s) = fs::read_to_string(&path)
             && let Ok(id) = Uuid::parse_str(s.trim())
         {
