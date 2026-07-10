@@ -5,15 +5,15 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use gpui::{App, Global};
-use parking_lot::RwLock;
-use semver::Version;
-use sequoia_openpgp as openpgp;
 use openpgp::Cert;
 use openpgp::parse::Parse;
 use openpgp::parse::stream::{
     DetachedVerifierBuilder, MessageLayer, MessageStructure, VerificationHelper,
 };
 use openpgp::policy::StandardPolicy;
+use parking_lot::RwLock;
+use semver::Version;
+use sequoia_openpgp as openpgp;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 use ureq::Agent;
@@ -300,10 +300,10 @@ impl VerificationHelper for Helper {
                         return Ok(());
                     }
                 }
-                return Err(anyhow!("no valid signature").into());
+                return Err(anyhow!("no valid signature"));
             }
         }
-        Err(anyhow!("no signature layer").into())
+        Err(anyhow!("no signature layer"))
     }
 }
 
