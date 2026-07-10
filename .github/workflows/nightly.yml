@@ -63,16 +63,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libxkbcommon-x11-dev minisign
-
-      - name: Install minisign (macOS)
-        if: runner.os == 'macOS'
-        run: brew install minisign
-
-      - name: Install minisign (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: choco install minisign -y
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libxkbcommon-x11-dev
 
       - name: Install WiX Toolset (Windows)
         if: runner.os == 'Windows'
@@ -181,14 +172,23 @@ jobs:
           ART_ID="${{ steps.upload-unsigned-windows.outputs.artifact-id }}"
           gh api -X DELETE "repos/${{ github.repository }}/actions/artifacts/$ART_ID"
 
+      - name: Install GnuPG (macOS)
+        if: runner.os == 'macOS'
+        run: brew install gnupg
+
       - name: Sign binaries
         shell: bash
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
-          echo "${{ secrets.MINISIGN_SECRET_KEY }}" > minisign.key
+          set -euo pipefail
+          printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
           for f in target/release/bundles/*; do
-            [ -f "$f" ] && echo "${{ secrets.MINISIGN_PASSWORD }}" | minisign -SHm "$f" -s minisign.key
+            [ -f "$f" ] || continue
+            gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" \
+              --detach-sign --armor --output "$f.sig" "$f"
           done
-          rm -f minisign.key
 
       - name: Rename artifacts
         id: rename
@@ -199,7 +199,7 @@ jobs:
           echo "prefix=$PREFIX" >> $GITHUB_OUTPUT
           cd target/release/bundles
           for f in *; do
-            [[ "$f" == *.minisig ]] && continue
+            [[ "$f" == *.sig ]] && continue
             [[ -f "$f" ]] || continue
             case "$f" in
               *.tar.gz) EXT="tar.gz" ;;
@@ -208,7 +208,7 @@ jobs:
               *) EXT="${f##*.}" ;;
             esac
             mv "$f" "${PREFIX}.${EXT}"
-            [[ -f "${f}.minisig" ]] && mv "${f}.minisig" "${PREFIX}.${EXT}.minisig"
+            [[ -f "${f}.sig" ]] && mv "${f}.sig" "${PREFIX}.${EXT}.sig"
           done
 
       - name: Upload MSI (Windows)
@@ -218,11 +218,11 @@ jobs:
           path: target/release/bundles/${{ steps.rename.outputs.prefix }}.msi
           archive: false
 
-      - name: Upload MSI minisig (Windows)
+      - name: Upload MSI signature (Windows)
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v7
         with:
-          path: target/release/bundles/${{ steps.rename.outputs.prefix }}.msi.minisig
+          path: target/release/bundles/${{ steps.rename.outputs.prefix }}.msi.sig
           archive: false
 
       - name: Upload DMG (macOS)
@@ -232,11 +232,11 @@ jobs:
           path: target/release/bundles/${{ steps.rename.outputs.prefix }}.dmg
           archive: false
 
-      - name: Upload DMG minisig (macOS)
+      - name: Upload DMG signature (macOS)
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v7
         with:
-          path: target/release/bundles/${{ steps.rename.outputs.prefix }}.dmg.minisig
+          path: target/release/bundles/${{ steps.rename.outputs.prefix }}.dmg.sig
           archive: false
 
       - name: Upload DEB (Linux)
@@ -246,11 +246,11 @@ jobs:
           path: target/release/bundles/${{ steps.rename.outputs.prefix }}.deb
           archive: false
 
-      - name: Upload DEB minisig (Linux)
+      - name: Upload DEB signature (Linux)
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v7
         with:
-          path: target/release/bundles/${{ steps.rename.outputs.prefix }}.deb.minisig
+          path: target/release/bundles/${{ steps.rename.outputs.prefix }}.deb.sig
           archive: false
 
       - name: Upload AppImage (Linux)
@@ -260,9 +260,9 @@ jobs:
           path: target/release/bundles/${{ steps.rename.outputs.prefix }}.AppImage
           archive: false
 
-      - name: Upload AppImage minisig (Linux)
+      - name: Upload AppImage signature (Linux)
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v7
         with:
-          path: target/release/bundles/${{ steps.rename.outputs.prefix }}.AppImage.minisig
+          path: target/release/bundles/${{ steps.rename.outputs.prefix }}.AppImage.sig
           archive: false

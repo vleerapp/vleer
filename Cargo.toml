@@ -54,7 +54,7 @@ dashmap = "6.2.1"
 ureq = { version = "3.3.0", features = ["json"] }
 uuid = { version = "1.23.4", features = ["serde", "v4"] }
 semver = "1.0.28"
-minisign-verify = "0.2.5"
+sequoia-openpgp = { version = "2", default-features = false, features = ["crypto-rust", "allow-experimental-crypto", "allow-variable-time-crypto"] }
 souvlaki = "0.8.3"
 spectrum-analyzer = "1.8.0"
 discord-rich-presence = "1.1.0"

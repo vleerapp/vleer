@@ -44,7 +44,7 @@ fn serve_update(binary: Vec<u8>, sig: String) -> String {
                 let mut buf = [0u8; 4096];
                 let n = s.read(&mut buf).unwrap_or(0);
                 let req = String::from_utf8_lossy(&buf[..n]);
-                if req.contains(".minisig") {
+                if req.contains(".sig") {
                     let resp = format!(
                         "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                         sig.len(),
@@ -149,14 +149,13 @@ fn managed_externally_without_appimage_env() {
 
 #[test]
 fn verify_signature_rejects_invalid_public_key() {
-    assert!(verify_signature("not_a_key", b"data", "not_a_sig").is_err());
+    assert!(verify_signature(b"not_a_key", b"data", b"not_a_sig").is_err());
 }
 
 #[test]
 fn verify_signature_rejects_malformed_sig_content() {
-    let fake_key =
-        "RWAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-    assert!(verify_signature(fake_key, b"data", "not a minisig").is_err());
+    let real_key = include_bytes!("../assets/key.asc");
+    assert!(verify_signature(real_key, b"data", b"not a pgp signature").is_err());
 }
 
 #[test]
@@ -241,12 +240,13 @@ fn check_none_on_linux_without_appimage_env() {
 #[test]
 fn download_rejects_malformed_sig() {
     let data = b"fake installer".to_vec();
-    let url = serve_update(data, "not a valid minisig file".to_string());
+    let url = serve_update(data, "not a valid pgp signature".to_string());
     let dir = tmp_dir();
     let updater = Updater::new(dir.clone());
     let err = updater.download(&make_info(url)).unwrap_err();
+    let msg = err.to_string();
     assert!(
-        err.to_string().contains("signature") || err.to_string().contains("invalid"),
+        msg.contains("signature") || msg.contains("invalid") || msg.contains("verifier"),
         "unexpected error: {err}"
     );
     std::fs::remove_dir_all(&dir).ok();

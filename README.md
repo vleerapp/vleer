@@ -31,10 +31,11 @@ Download the latest nightly build [here](https://github.com/vleerapp/vleer/actio
 yay -S vleer-git
 ```
 
-(Optional) Verify downloads with [minisign](https://jedisct1.github.io/minisign/):
+(Optional) Verify downloads with GPG. Import the signing key (fingerprint `7E48 1786 6409 4A19 EF60  EEC8 8524 0717 1261 C8A4`):
 
 ```bash
-minisign -Vm <downloaded_file_name> -P RWQc0Dzx5Dhao5YtQGj79Y4AN7U1pjJFctj3dCLr4tQqkjewjl5xnSqe
+curl -sSL https://raw.githubusercontent.com/vleerapp/vleer/main/assets/key.asc | gpg --import
+gpg --verify <downloaded_file_name>.sig <downloaded_file_name>
 ```
 
 </details>
@@ -46,10 +47,11 @@ Download the latest nightly build [here](https://github.com/vleerapp/vleer/actio
 
 SmartScreen may block the installer. Click "More info" then "Run anyway".
 
-(Optional) Verify downloads with [minisign](https://jedisct1.github.io/minisign/):
+(Optional) Verify downloads with GPG. Import the signing key (fingerprint `7E48 1786 6409 4A19 EF60  EEC8 8524 0717 1261 C8A4`):
 
 ```bash
-minisign -Vm <downloaded_file_name> -P RWQc0Dzx5Dhao5YtQGj79Y4AN7U1pjJFctj3dCLr4tQqkjewjl5xnSqe
+curl -sSL https://raw.githubusercontent.com/vleerapp/vleer/main/assets/key.asc | gpg --import
+gpg --verify <downloaded_file_name>.sig <downloaded_file_name>
 ```
 
 </details>
@@ -61,10 +63,11 @@ Download the latest nightly build [here](https://github.com/vleerapp/vleer/actio
 
 You may see a warning that the app is damaged. Run `xattr -dr com.apple.quarantine /Applications/Vleer.app` to fix it.
 
-(Optional) Verify downloads with [minisign](https://jedisct1.github.io/minisign/):
+(Optional) Verify downloads with GPG. Import the signing key (fingerprint `7E48 1786 6409 4A19 EF60  EEC8 8524 0717 1261 C8A4`):
 
 ```bash
-minisign -Vm <downloaded_file_name> -P RWQc0Dzx5Dhao5YtQGj79Y4AN7U1pjJFctj3dCLr4tQqkjewjl5xnSqe
+curl -sSL https://raw.githubusercontent.com/vleerapp/vleer/main/assets/key.asc | gpg --import
+gpg --verify <downloaded_file_name>.sig <downloaded_file_name>
 ```
 
 </details>

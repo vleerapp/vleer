@@ -5,15 +5,21 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use gpui::{App, Global};
-use minisign_verify::{PublicKey, Signature};
 use parking_lot::RwLock;
 use semver::Version;
+use sequoia_openpgp as openpgp;
+use openpgp::Cert;
+use openpgp::parse::Parse;
+use openpgp::parse::stream::{
+    DetachedVerifierBuilder, MessageLayer, MessageStructure, VerificationHelper,
+};
+use openpgp::policy::StandardPolicy;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 use ureq::Agent;
 
 const URL: &str = "https://api.vleer.app/update/v1/check";
-const PUBLIC_KEY: &str = "untrusted comment: minisign public key A35A38E4F13CD01C\nRWQc0Dzx5Dhao5YtQGj79Y4AN7U1pjJFctj3dCLr4tQqkjewjl5xnSqe";
+const PUBLIC_KEY: &[u8] = include_bytes!("../assets/key.asc");
 
 #[derive(Debug, Clone, Default)]
 pub enum UpdateStatus {
@@ -174,16 +180,16 @@ impl Updater {
 
         let bytes = std::fs::read(&target).context("reading update file for verification")?;
 
-        let sig_url = format!("{}.minisig", asset.url);
-        let sig_content = agent
+        let sig_url = format!("{}.sig", asset.url);
+        let sig_bytes = agent
             .get(&sig_url)
             .call()
             .context("downloading signature")?
             .body_mut()
-            .read_to_string()
+            .read_to_vec()
             .context("reading signature")?;
 
-        if let Err(e) = verify_signature(PUBLIC_KEY, &bytes, &sig_content) {
+        if let Err(e) = verify_signature(PUBLIC_KEY, &bytes, &sig_bytes) {
             let _ = std::fs::remove_file(&target);
             return Err(e);
         }
@@ -263,12 +269,42 @@ elseif (Test-Path '{fallback}') {{ Start-Process '{fallback}' }}
     }
 }
 
-pub fn verify_signature(public_key: &str, data: &[u8], sig_content: &str) -> Result<()> {
-    let pk = PublicKey::decode(public_key).context("invalid public key")?;
-    let sig = Signature::decode(sig_content).context("invalid signature format")?;
-    pk.verify(data, &sig, true)
+pub fn verify_signature(public_key: &[u8], data: &[u8], sig_bytes: &[u8]) -> Result<()> {
+    let cert = Cert::from_bytes(public_key).context("invalid public key")?;
+    let policy = StandardPolicy::new();
+    let helper = Helper { cert };
+    let mut verifier = DetachedVerifierBuilder::from_bytes(sig_bytes)
+        .context("parsing signature")?
+        .with_policy(&policy, None, helper)
+        .context("initializing verifier")?;
+    verifier
+        .verify_bytes(data)
         .context("signature verification failed")?;
     Ok(())
+}
+
+struct Helper {
+    cert: Cert,
+}
+
+impl VerificationHelper for Helper {
+    fn get_certs(&mut self, _ids: &[openpgp::KeyHandle]) -> openpgp::Result<Vec<Cert>> {
+        Ok(vec![self.cert.clone()])
+    }
+
+    fn check(&mut self, structure: MessageStructure) -> openpgp::Result<()> {
+        for layer in structure {
+            if let MessageLayer::SignatureGroup { results } = layer {
+                for result in results {
+                    if result.is_ok() {
+                        return Ok(());
+                    }
+                }
+                return Err(anyhow!("no valid signature").into());
+            }
+        }
+        Err(anyhow!("no signature layer").into())
+    }
 }
 
 #[cfg(target_os = "linux")]
