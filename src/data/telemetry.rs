@@ -1,7 +1,11 @@
 use anyhow::Result;
 use gpui::{App, BackgroundExecutor, Global};
 use serde::{Deserialize, Serialize};
-use std::{fs, path::{Path, PathBuf}, time::Duration};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 use tracing::{debug, error, info};
 use ureq::Agent;
 use uuid::Uuid;

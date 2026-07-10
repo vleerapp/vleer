@@ -213,8 +213,7 @@ impl Scanner {
                 if progress.total == 0 {
                     reporter.clear("library.scan");
                 } else {
-                    let ratio =
-                        (progress.current as f32 / progress.total as f32).clamp(0.0, 1.0);
+                    let ratio = (progress.current as f32 / progress.total as f32).clamp(0.0, 1.0);
                     reporter.set(
                         "library.scan",
                         format!(

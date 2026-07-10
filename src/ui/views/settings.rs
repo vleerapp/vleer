@@ -3,7 +3,7 @@ use gpui::{Context, Entity, IntoElement, Render, prelude::FluentBuilder as _, *}
 use crate::data::config::Config;
 use crate::media::playback::Playback;
 use crate::ui::components::div::{flex_col, flex_row};
-use crate::ui::components::icons::{self, icon};
+use crate::ui::components::icons::{self, LINK, icon};
 use crate::ui::components::input::{InputEvent, TextInput};
 use crate::ui::components::scrollbar::ScrollableElement;
 use crate::ui::components::slider::slider;
@@ -461,7 +461,7 @@ impl Render for SettingsView {
                                                             .child("Public Dashboard"),
                                                     )
                                                     .child(
-                                                        icon(icons::LINK)
+                                                        icon(LINK)
                                                             .text_color(variables.accent)
                                                             .group_hover("telemetry-link", |s| {
                                                                 s.opacity(0.7)
