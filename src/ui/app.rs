@@ -300,7 +300,7 @@ pub async fn run() -> anyhow::Result<()> {
             Queue::init(cx);
             Variables::init(cx);
             Telemetry::init(cx, data_dir.clone());
-            Updater::init(cx, data_dir.clone());
+            Updater::init(cx);
             MediaController::init(cx);
 
             {

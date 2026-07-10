@@ -162,7 +162,7 @@ fn verify_signature_rejects_malformed_sig_content() {
 #[cfg(not(target_os = "linux"))]
 fn check_none_when_same_version() {
     let dir = tmp_dir();
-    let updater = Updater::new(dir.clone());
+    let updater = Updater::new();
     let current = env!("CARGO_PKG_VERSION");
     let json = format!(
         r#"{{"version":"{}","platforms":{{"{}":{{"url":"https://x.test/f"}}}}}}"#,
@@ -177,7 +177,7 @@ fn check_none_when_same_version() {
 #[cfg(not(target_os = "linux"))]
 fn check_none_when_older_version() {
     let dir = tmp_dir();
-    let updater = Updater::new(dir.clone());
+    let updater = Updater::new();
     let json = format!(
         r#"{{"version":"0.0.1","platforms":{{"{}":{{"url":"https://x.test/f"}}}}}}"#,
         platform()
@@ -190,7 +190,7 @@ fn check_none_when_older_version() {
 #[cfg(not(target_os = "linux"))]
 fn check_some_when_newer_version_with_platform_asset() {
     let dir = tmp_dir();
-    let updater = Updater::new(dir.clone());
+    let updater = Updater::new();
     let json = format!(
         r#"{{"version":"99.0.0","platforms":{{"{}":{{"url":"https://x.test/f"}}}}}}"#,
         platform()
@@ -204,7 +204,7 @@ fn check_some_when_newer_version_with_platform_asset() {
 #[cfg(not(target_os = "linux"))]
 fn check_none_when_newer_version_missing_platform_asset() {
     let dir = tmp_dir();
-    let updater = Updater::new(dir.clone());
+    let updater = Updater::new();
     let other = if platform() == "macos" {
         "windows"
     } else {
@@ -222,7 +222,7 @@ fn check_none_when_newer_version_missing_platform_asset() {
 #[cfg(not(target_os = "linux"))]
 fn check_error_on_invalid_json_response() {
     let dir = tmp_dir();
-    let updater = Updater::new(dir.clone());
+    let updater = Updater::new();
     assert!(updater.check(&serve_json("not json".to_string())).is_err());
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -232,7 +232,7 @@ fn check_error_on_invalid_json_response() {
 fn check_none_on_linux_without_appimage_env() {
     unsafe { std::env::remove_var("APPIMAGE") };
     let dir = tmp_dir();
-    let updater = Updater::new(dir.clone());
+    let updater = Updater::new();
     assert!(updater.check("http://127.0.0.1:1").unwrap().is_none());
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -242,7 +242,7 @@ fn download_rejects_malformed_sig() {
     let data = b"fake installer".to_vec();
     let url = serve_update(data, "not a valid pgp signature".to_string());
     let dir = tmp_dir();
-    let updater = Updater::new(dir.clone());
+    let updater = Updater::new();
     let err = updater.download(&make_info(url)).unwrap_err();
     let msg = err.to_string();
     assert!(
@@ -253,13 +253,14 @@ fn download_rejects_malformed_sig() {
 }
 
 #[test]
-fn download_file_placed_under_updates_subdir() {
+fn download_cleans_up_on_sig_failure() {
     let data = b"payload".to_vec();
     let url = serve_update(data, "bad sig".to_string());
-    let dir = tmp_dir();
 
-    let updater = Updater::new(dir.clone());
+    let updater = Updater::new();
     let _ = updater.download(&make_info(url));
-    assert!(dir.join("updates").exists());
-    std::fs::remove_dir_all(&dir).ok();
+    assert!(
+        !std::env::temp_dir().join("vleer.bin").exists(),
+        "temp file should be cleaned up after sig failure"
+    );
 }

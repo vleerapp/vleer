@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 use ureq::Agent;
 
-const URL: &str = "https://api.vleer.app/update/v1/check";
+const URL: &str = "http://localhost:3000/update/v1/check";
 const PUBLIC_KEY: &[u8] = include_bytes!("../assets/key.asc");
 
 #[derive(Debug, Clone, Default)]
@@ -58,13 +58,13 @@ pub struct Updater {
 struct Inner {
     agent: Agent,
     status: UpdateStatus,
-    data_dir: PathBuf,
 }
 
 impl Global for Updater {}
 
 impl Updater {
-    pub fn new(data_dir: PathBuf) -> Self {
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
         let agent: Agent = Agent::config_builder()
             .timeout_connect(Some(Duration::from_secs(10)))
             .timeout_send_request(Some(Duration::from_secs(10)))
@@ -76,13 +76,12 @@ impl Updater {
             inner: Arc::new(RwLock::new(Inner {
                 agent,
                 status: UpdateStatus::Idle,
-                data_dir,
             })),
         }
     }
 
-    pub fn init(cx: &mut App, data_dir: PathBuf) {
-        cx.set_global(Self::new(data_dir));
+    pub fn init(cx: &mut App) {
+        cx.set_global(Self::new());
     }
 
     pub fn status(&self) -> UpdateStatus {
@@ -162,9 +161,7 @@ impl Updater {
             .filter(|s| !s.is_empty())
             .unwrap_or("update.bin")
             .to_string();
-        let dir = self.inner.read().data_dir.join("updates");
-        std::fs::create_dir_all(&dir)?;
-        let target = dir.join(&file_name);
+        let target = std::env::temp_dir().join(&file_name);
 
         let agent = self.inner.read().agent.clone();
         let response = agent
@@ -327,11 +324,28 @@ fn replace_appimage(new_file: &Path) -> Result<()> {
     let _ = std::fs::remove_file(&staged);
     std::fs::copy(new_file, &staged).context("copying new AppImage next to current")?;
     std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))?;
-    std::fs::rename(&staged, &current).context("atomic swap of AppImage")?;
+    let _ = std::fs::remove_file(new_file);
 
-    std::process::Command::new(&current)
-        .arg("--skip-single-instance")
-        .spawn()?;
+    let pid = std::process::id();
+    let current_s = current.to_string_lossy().replace('\'', "'\"'\"'");
+    let staged_s = staged.to_string_lossy().replace('\'', "'\"'\"'");
+    let script = format!(
+        "for i in $(seq 1 50); do\n  kill -0 {pid} 2>/dev/null || break\n  sleep 0.2\ndone\n\
+mv -f -- '{staged_s}' '{current_s}'\nchmod 0755 -- '{current_s}'\nexec '{current_s}' --skip-single-instance\n"
+    );
+
+    let script_path = std::env::temp_dir().join(format!("vleer_update_{pid}.sh"));
+    std::fs::write(&script_path, &script).context("writing swap script")?;
+    std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))?;
+
+    std::process::Command::new("sh")
+        .arg(&script_path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .context("launching swap script")?;
+
     Ok(())
 }
 
