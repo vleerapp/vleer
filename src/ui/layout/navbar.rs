@@ -1,76 +1,97 @@
 use gpui::prelude::FluentBuilder;
 use gpui::*;
+use parking_lot::RwLock;
+use std::collections::BTreeMap;
+use std::sync::OnceLock;
 use std::time::Duration;
 
-use crate::{
-    data::scanner::{ScanPhase, Scanner},
-    ui::{
-        components::{
-            div::flex_row,
-            icons::{HOME, SETTINGS},
-            nav_button::NavButton,
-        },
-        variables::Variables,
-        views::AppView,
+use crate::ui::{
+    components::{
+        div::flex_row,
+        icons::{HOME, SETTINGS},
+        nav_button::NavButton,
     },
+    variables::Variables,
+    views::AppView,
 };
+
+#[derive(Clone)]
+pub struct ProgressEntry {
+    pub text: String,
+    pub ratio: Option<f32>,
+}
+
+#[derive(Default)]
+pub struct ProgressReporter {
+    entries: RwLock<BTreeMap<String, ProgressEntry>>,
+}
+
+impl ProgressReporter {
+    pub fn set(&self, key: &str, text: impl Into<String>, ratio: Option<f32>) {
+        self.entries.write().insert(
+            key.to_string(),
+            ProgressEntry {
+                text: text.into(),
+                ratio,
+            },
+        );
+    }
+
+    pub fn clear(&self, key: &str) {
+        self.entries.write().remove(key);
+    }
+
+    pub fn entries(&self) -> Vec<ProgressEntry> {
+        self.entries.read().values().cloned().collect()
+    }
+}
+
+static PROGRESS: OnceLock<ProgressReporter> = OnceLock::new();
+
+pub fn progress() -> &'static ProgressReporter {
+    PROGRESS.get_or_init(ProgressReporter::default)
+}
 
 pub struct Navbar {
     _refresh_task: Task<()>,
 }
 
-pub struct NavbarScanProgressBar {
+pub struct NavbarProgressBar {
     _refresh_task: Task<()>,
+}
+
+fn spawn_refresh<T: 'static>(cx: &mut Context<T>) -> Task<()> {
+    cx.spawn(async move |this, cx: &mut AsyncApp| {
+        loop {
+            cx.background_executor()
+                .timer(Duration::from_millis(100))
+                .await;
+            if cx
+                .update(|cx| {
+                    this.update(cx, |_this, cx| {
+                        cx.notify();
+                    })
+                })
+                .is_err()
+            {
+                break;
+            }
+        }
+    })
 }
 
 impl Navbar {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        let refresh_task = cx.spawn(async move |this, cx: &mut AsyncApp| {
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(100))
-                    .await;
-                if cx
-                    .update(|cx| {
-                        this.update(cx, |_this, cx| {
-                            cx.notify();
-                        })
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        });
-
         Self {
-            _refresh_task: refresh_task,
+            _refresh_task: spawn_refresh(cx),
         }
     }
 }
 
-impl NavbarScanProgressBar {
+impl NavbarProgressBar {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        let refresh_task = cx.spawn(async move |this, cx: &mut AsyncApp| {
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(100))
-                    .await;
-                if cx
-                    .update(|cx| {
-                        this.update(cx, |_this, cx| {
-                            cx.notify();
-                        })
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        });
-
         Self {
-            _refresh_task: refresh_task,
+            _refresh_task: spawn_refresh(cx),
         }
     }
 }
@@ -78,24 +99,7 @@ impl NavbarScanProgressBar {
 impl Render for Navbar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
-        let scanning_text = cx.try_global::<Scanner>().and_then(|scanner| {
-            let progress = scanner.get_scan_progress();
-            match progress.phase {
-                ScanPhase::Idle => None,
-                ScanPhase::Completed => Some("Scanning: done".to_string()),
-                ScanPhase::Scanning => {
-                    if progress.total == 0 {
-                        return None;
-                    }
-                    let ratio = (progress.current as f32 / progress.total as f32).clamp(0.0, 1.0);
-                    let percent = (ratio as f64) * 100.0;
-                    Some(format!(
-                        "Scanning: {}/{} - {:.0}%",
-                        progress.current, progress.total, percent
-                    ))
-                }
-            }
-        });
+        let entries = progress().entries();
 
         flex_row()
             .h_full()
@@ -106,54 +110,42 @@ impl Render for Navbar {
                 None,
                 AppView::Home,
             )))
-            .child(
-                flex_row()
-                    .items_center()
-                    .when_some(scanning_text, |this, text| {
-                        this.child(
-                            div()
-                                .text_color(variables.accent)
-                                .font_weight(FontWeight(500.0))
-                                .child(text),
-                        )
-                    })
-                    .child(div().p(px(variables.padding_16)).child(NavButton::new(
-                        SETTINGS,
-                        None,
-                        None,
-                        AppView::Settings,
-                    ))),
-            )
+            .child({
+                let mut row = flex_row().items_center().gap(px(variables.padding_16));
+                for entry in entries {
+                    row = row.child(
+                        div()
+                            .text_color(variables.accent)
+                            .font_weight(FontWeight(500.0))
+                            .child(entry.text),
+                    );
+                }
+                row.child(div().p(px(variables.padding_16)).child(NavButton::new(
+                    SETTINGS,
+                    None,
+                    None,
+                    AppView::Settings,
+                )))
+            })
     }
 }
 
-impl Render for NavbarScanProgressBar {
+impl Render for NavbarProgressBar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
-        let scan_ratio = cx
-            .try_global::<Scanner>()
-            .and_then(|scanner| {
-                let progress = scanner.get_scan_progress();
-                match progress.phase {
-                    ScanPhase::Idle => None,
-                    ScanPhase::Completed => Some(1.0f32),
-                    ScanPhase::Scanning => {
-                        if progress.total == 0 {
-                            return None;
-                        }
-                        Some((progress.current as f32 / progress.total as f32).clamp(0.0, 1.0))
-                    }
-                }
-            })
-            .unwrap_or(0.0);
+        let ratio = progress()
+            .entries()
+            .iter()
+            .filter_map(|e| e.ratio)
+            .fold(0.0_f32, f32::max);
 
         div()
             .absolute()
             .left_0()
             .bottom_0()
             .h(px(2.0))
-            .when(scan_ratio > 0.0, |this| {
-                this.w(relative(scan_ratio)).bg(variables.accent)
+            .when(ratio > 0.0, |this| {
+                this.w(relative(ratio)).bg(variables.accent)
             })
     }
 }

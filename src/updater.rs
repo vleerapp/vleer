@@ -50,6 +50,9 @@ pub struct PlatformAsset {
     pub size: Option<u64>,
 }
 
+pub type ProgressSetFn = Arc<dyn Fn(&str, String, Option<f32>) + Send + Sync>;
+pub type ProgressClearFn = Arc<dyn Fn(&str) + Send + Sync>;
+
 #[derive(Clone)]
 pub struct Updater {
     inner: Arc<RwLock<Inner>>,
@@ -58,6 +61,8 @@ pub struct Updater {
 struct Inner {
     agent: Agent,
     status: UpdateStatus,
+    progress_set: Option<ProgressSetFn>,
+    progress_clear: Option<ProgressClearFn>,
 }
 
 impl Global for Updater {}
@@ -76,6 +81,8 @@ impl Updater {
             inner: Arc::new(RwLock::new(Inner {
                 agent,
                 status: UpdateStatus::Idle,
+                progress_set: None,
+                progress_clear: None,
             })),
         }
     }
@@ -90,6 +97,43 @@ impl Updater {
 
     fn set_status(&self, s: UpdateStatus) {
         self.inner.write().status = s;
+    }
+
+    pub fn set_progress_reporter(&self, set: ProgressSetFn, clear: ProgressClearFn) {
+        let mut inner = self.inner.write();
+        inner.progress_set = Some(set);
+        inner.progress_clear = Some(clear);
+    }
+
+    fn report_progress(&self, key: &str, text: String, ratio: Option<f32>) {
+        if let Some(cb) = self.inner.read().progress_set.clone() {
+            cb(key, text, ratio);
+        }
+    }
+
+    fn report_clear(&self, key: &str) {
+        if let Some(cb) = self.inner.read().progress_clear.clone() {
+            cb(key);
+        }
+    }
+
+    fn report_download(&self, current: u64, total: u64) {
+        let mb = |b: u64| b as f64 / 1_048_576.0;
+        let (text, ratio) = if total == 0 {
+            (format!("Downloading: {:.1} MB", mb(current)), None)
+        } else {
+            let r = (current as f32 / total as f32).clamp(0.0, 1.0);
+            (
+                format!(
+                    "Downloading: {:.1}/{:.1} MB - {:.0}%",
+                    mb(current),
+                    mb(total),
+                    r * 100.0
+                ),
+                Some(r),
+            )
+        };
+        self.report_progress("update.download", text, ratio);
     }
 
     fn current_platform_key() -> &'static str {
@@ -147,6 +191,8 @@ impl Updater {
     }
 
     pub fn download(&self, info: &UpdateInfo) -> Result<PathBuf> {
+        use std::io::{Read, Write};
+
         self.set_status(UpdateStatus::Downloading);
 
         let asset = info
@@ -170,9 +216,22 @@ impl Updater {
             .call()
             .context("downloading update")?;
 
+        let total = asset.size.unwrap_or(0);
+        self.report_download(0, total);
+
         let mut file = std::fs::File::create(&target).context("creating update file")?;
         let mut reader = response.into_body().into_reader();
-        std::io::copy(&mut reader, &mut file).context("writing download body")?;
+        let mut buf = [0u8; 64 * 1024];
+        let mut current: u64 = 0;
+        loop {
+            let n = reader.read(&mut buf).context("reading download body")?;
+            if n == 0 {
+                break;
+            }
+            file.write_all(&buf[..n]).context("writing download body")?;
+            current += n as u64;
+            self.report_download(current, total);
+        }
         drop(file);
 
         let bytes = std::fs::read(&target).context("reading update file for verification")?;
@@ -188,8 +247,11 @@ impl Updater {
 
         if let Err(e) = verify_signature(PUBLIC_KEY, &bytes, &sig_bytes) {
             let _ = std::fs::remove_file(&target);
+            self.report_clear("update.download");
             return Err(e);
         }
+
+        self.report_clear("update.download");
 
         Ok(target)
     }

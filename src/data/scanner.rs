@@ -122,7 +122,6 @@ pub struct Scanner {
     scan_generation: Arc<AtomicU64>,
     pending_changed_paths: Arc<AsyncMutex<HashSet<PathBuf>>>,
     incremental_worker_running: Arc<AtomicBool>,
-    scan_progress: Arc<std::sync::Mutex<ScanProgress>>,
     executor: BackgroundExecutor,
     background_ui: Option<BackgroundUiNotifier>,
 }
@@ -143,7 +142,6 @@ impl Scanner {
             scan_generation: Arc::new(AtomicU64::new(0)),
             pending_changed_paths: Arc::new(AsyncMutex::new(HashSet::new())),
             incremental_worker_running: Arc::new(AtomicBool::new(false)),
-            scan_progress: Arc::new(std::sync::Mutex::new(ScanProgress::default())),
             executor,
             background_ui,
         }
@@ -207,20 +205,33 @@ impl Scanner {
     }
 
     fn update_scan_progress(&self, progress: ScanProgress) {
-        if let Ok(mut state) = self.scan_progress.lock() {
-            *state = progress;
+        let reporter = crate::ui::layout::navbar::progress();
+        match progress.phase {
+            ScanPhase::Idle => reporter.clear("library.scan"),
+            ScanPhase::Completed => reporter.set("library.scan", "Scanning: done", Some(1.0)),
+            ScanPhase::Scanning => {
+                if progress.total == 0 {
+                    reporter.clear("library.scan");
+                } else {
+                    let ratio =
+                        (progress.current as f32 / progress.total as f32).clamp(0.0, 1.0);
+                    reporter.set(
+                        "library.scan",
+                        format!(
+                            "Scanning: {}/{} - {:.0}%",
+                            progress.current,
+                            progress.total,
+                            ratio * 100.0
+                        ),
+                        Some(ratio),
+                    );
+                }
+            }
         }
     }
 
     fn clear_scan_progress(&self) {
         self.update_scan_progress(ScanProgress::default());
-    }
-
-    pub fn get_scan_progress(&self) -> ScanProgress {
-        self.scan_progress
-            .lock()
-            .map(|state| *state)
-            .unwrap_or_default()
     }
 
     pub fn init(cx: &mut App) {

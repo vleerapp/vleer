@@ -24,7 +24,7 @@ use crate::{
         global_actions::register_actions,
         layout::{
             library::{Library, Search},
-            navbar::{Navbar, NavbarScanProgressBar},
+            navbar::{Navbar, NavbarProgressBar},
             player::Player,
             queue::{QueuePane, QueueVisible},
         },
@@ -37,7 +37,7 @@ use crate::{
 pub(crate) struct MainWindow {
     library: Entity<Library>,
     navbar: Entity<Navbar>,
-    navbar_scan_progress: Entity<NavbarScanProgressBar>,
+    navbar_progress: Entity<NavbarProgressBar>,
     player: Entity<Player>,
     queue: Entity<QueuePane>,
     views: HashMap<AppView, AnyView>,
@@ -55,6 +55,9 @@ impl MainWindow {
             return;
         }
         self.current_view = view;
+        if view == AppView::Settings {
+            crate::ui::layout::navbar::progress().clear("telemetry.consent");
+        }
         cx.update_global::<ActiveView, _>(|active, _cx| {
             active.0 = view;
         });
@@ -179,7 +182,7 @@ impl Render for MainWindow {
                                                 .title("Navbar")
                                                 .child(self.navbar.clone()),
                                         )
-                                        .child(self.navbar_scan_progress.clone()),
+                                        .child(self.navbar_progress.clone()),
                                 )
                                 .child({
                                     let mut row = div()
@@ -295,12 +298,28 @@ pub async fn run() -> anyhow::Result<()> {
             cx.set_global(QueueChanged);
 
             Config::init(cx, &config_dir).expect("failed to initialize settings");
+            let is_first_launch = crate::data::telemetry::Telemetry::is_first_launch(&data_dir);
             Playback::init(cx).expect("failed to initialize playback context");
             DiscordPresence::init(cx);
             Queue::init(cx);
             Variables::init(cx);
             Telemetry::init(cx, data_dir.clone());
+            if is_first_launch {
+                crate::ui::layout::navbar::progress().set(
+                    "telemetry.consent",
+                    "Enable telemetry in Settings: only OS, app version & song count →",
+                    None,
+                );
+            }
             Updater::init(cx);
+            {
+                use std::sync::Arc;
+                let reporter = crate::ui::layout::navbar::progress();
+                cx.global::<Updater>().set_progress_reporter(
+                    Arc::new(|key, text, ratio| reporter.set(key, text, ratio)),
+                    Arc::new(|key| reporter.clear(key)),
+                );
+            }
             MediaController::init(cx);
 
             {
@@ -356,7 +375,7 @@ pub async fn run() -> anyhow::Result<()> {
 
                         let library_entity = cx.new(Library::new);
                         let navbar_entity = cx.new(Navbar::new);
-                        let navbar_scan_progress_entity = cx.new(NavbarScanProgressBar::new);
+                        let navbar_progress_entity = cx.new(NavbarProgressBar::new);
                         let player_entity = cx.new(Player::new);
                         let queue_entity = cx.new(QueuePane::new);
 
@@ -365,7 +384,7 @@ pub async fn run() -> anyhow::Result<()> {
                         MainWindow {
                             library: library_entity,
                             navbar: navbar_entity,
-                            navbar_scan_progress: navbar_scan_progress_entity,
+                            navbar_progress: navbar_progress_entity,
                             player: player_entity,
                             queue: queue_entity,
                             views,
