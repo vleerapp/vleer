@@ -584,7 +584,8 @@ pub fn song_context_menu_items(song_id: Cuid, cx: &App) -> Vec<ContextMenuItem> 
                 }
             }
         }),
-        ContextMenuItem::entry("Properties", icons::PROPERTIES, move |_, _| {}),
+        // to be implemented
+        // ContextMenuItem::entry("Properties", icons::PROPERTIES, move |_, _| {}),
         ContextMenuItem::separator(),
         ContextMenuItem::destructive("Remove from library", icons::TRASH, {
             let id = song_id.clone();
@@ -667,7 +668,8 @@ pub fn album_context_menu_items(album_id: Cuid, cx: &App) -> Vec<ContextMenuItem
         }),
         ContextMenuItem::separator(),
         ContextMenuItem::entry("Go to artist", icons::ARTIST, move |_, _| {}),
-        ContextMenuItem::entry("Properties", icons::PROPERTIES, move |_, _| {}),
+        // to be implemented
+        // ContextMenuItem::entry("Properties", icons::PROPERTIES, move |_, _| {}),
         ContextMenuItem::separator(),
         ContextMenuItem::destructive("Remove from library", icons::TRASH, {
             move |_, cx| {
@@ -723,7 +725,8 @@ pub fn artist_context_menu_items(artist_id: Cuid, cx: &App) -> Vec<ContextMenuIt
         }),
         ContextMenuItem::separator(),
         ContextMenuItem::entry("Go to albums", icons::ALBUM, move |_, _| {}),
-        ContextMenuItem::entry("Properties", icons::PROPERTIES, move |_, _| {}),
+        // to be implemented
+        // ContextMenuItem::entry("Properties", icons::PROPERTIES, move |_, _| {}),
     ]
 }
 
@@ -768,7 +771,8 @@ pub fn playlist_context_menu_items(playlist_id: Cuid, cx: &App) -> Vec<ContextMe
                 });
             }
         }),
-        ContextMenuItem::entry("Properties", icons::PROPERTIES, move |_, _| {}),
+        // to be implemented
+        // ContextMenuItem::entry("Properties", icons::PROPERTIES, move |_, _| {}),
         ContextMenuItem::separator(),
         ContextMenuItem::destructive("Delete playlist", icons::TRASH, {
             move |window, cx| {
