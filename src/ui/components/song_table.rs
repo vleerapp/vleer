@@ -491,24 +491,7 @@ impl Render for SongTableItem {
                                         }
                                     })
                                     .child({
-                                        let mut highlights: Vec<(Range<usize>, HighlightStyle)> =
-                                            Vec::new();
-                                        if let Some(idx) = self.hovered_artist
-                                            && let Some(range) = data.artist_ranges.get(idx)
-                                        {
-                                            highlights.push((
-                                                range.clone(),
-                                                HighlightStyle {
-                                                    underline: Some(UnderlineStyle {
-                                                        thickness: px(1.),
-                                                        ..Default::default()
-                                                    }),
-                                                    ..Default::default()
-                                                },
-                                            ));
-                                        }
-                                        let styled = StyledText::new(data.artist.clone())
-                                            .with_highlights(highlights);
+                                        let styled = StyledText::new(data.artist.clone());
                                         let weak = cx.weak_entity();
                                         let ranges = data.artist_ranges.clone();
                                         InteractiveText::new(

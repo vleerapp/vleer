@@ -236,23 +236,7 @@ impl Render for Player {
                 let ctx_menu = self.context_menu.clone();
                 let song_id = cx.global::<Queue>().get_current_song_id();
 
-                let mut highlights: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
-                if let Some(idx) = self.hovered_artist
-                    && let Some(range) = artist_ranges.get(idx)
-                {
-                    highlights.push((
-                        range.clone(),
-                        HighlightStyle {
-                            underline: Some(UnderlineStyle {
-                                thickness: px(1.),
-                                ..Default::default()
-                            }),
-                            ..Default::default()
-                        },
-                    ));
-                }
-
-                let styled = StyledText::new(artist.clone()).with_highlights(highlights);
+                let styled = StyledText::new(artist.clone());
 
                 let weak = cx.weak_entity();
                 let ranges = artist_ranges.clone();

@@ -128,7 +128,7 @@ impl RenderOnce for Card {
             title,
             subtitle,
             subtitle_artist_ranges,
-            hovered_artist_idx,
+            hovered_artist_idx: _,
             on_artist_hover,
             image_uri,
             image_size,
@@ -235,23 +235,7 @@ impl RenderOnce for Card {
                     )
                     .when_some(subtitle, |this, subtitle| {
                         if let Some(ranges) = subtitle_artist_ranges {
-                            let mut highlights: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
-                            if let Some(idx) = hovered_artist_idx
-                                && let Some(range) = ranges.get(idx)
-                            {
-                                highlights.push((
-                                    range.clone(),
-                                    HighlightStyle {
-                                        underline: Some(UnderlineStyle {
-                                            thickness: px(1.),
-                                            ..Default::default()
-                                        }),
-                                        ..Default::default()
-                                    },
-                                ));
-                            }
-                            let styled =
-                                StyledText::new(subtitle.clone()).with_highlights(highlights);
+                            let styled = StyledText::new(subtitle.clone());
                             let on_hover = on_artist_hover.clone();
                             let on_leave = on_artist_hover.clone();
                             let ranges_for_cb = ranges.clone();
@@ -293,7 +277,6 @@ impl RenderOnce for Card {
                                     .whitespace_nowrap()
                                     .max_w(px(image_size))
                                     .text_color(variables.text_secondary)
-                                    .hover(|s| s.underline())
                                     .child(subtitle),
                             )
                         }

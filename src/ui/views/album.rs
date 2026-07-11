@@ -469,8 +469,6 @@ impl Render for AlbumView {
                                         .min_w_0()
                                         .overflow_hidden()
                                         .text_ellipsis()
-                                        .hover(|s| s.underline())
-                                        .cursor_pointer()
                                         .child(name),
                                 )
                                 .into_any_element()
