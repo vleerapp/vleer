@@ -122,7 +122,7 @@ impl Render for Navbar {
                 }
                 row.child(div().p(px(variables.padding_16)).child(NavButton::new(
                     SETTINGS,
-                    None,
+                    Some("Settings"),
                     None,
                     AppView::Settings,
                 )))
