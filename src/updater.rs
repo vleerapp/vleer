@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 use ureq::Agent;
 
-const URL: &str = "http://localhost:3000/update/v1/check";
+const URL: &str = "https://api.vleer.app/update/v1/check";
 const PUBLIC_KEY: &[u8] = include_bytes!("../assets/key.asc");
 
 #[derive(Debug, Clone, Default)]
