@@ -98,6 +98,7 @@ impl Default for SettingsConfig {
 pub struct Config {
     config: SettingsConfig,
     config_path: PathBuf,
+    pub parse_warning: Option<String>,
 }
 
 impl Global for Config {}
@@ -116,13 +117,15 @@ impl Config {
         let config_path = config_dir.join("config.toml");
         debug!("Loading config from {:?}", config_path);
 
+        let mut parse_warning: Option<String> = None;
         let mut config = if config_path.exists() {
             let content = fs::read_to_string(&config_path).context("Failed to read config file")?;
 
             match toml::from_str(&content) {
                 Ok(config) => config,
                 Err(e) => {
-                    warn!("Failed to parse config file: {}. Using defaults.", e);
+                    warn!("Failed to parse config file: {}", e);
+                    parse_warning = Some("Settings file is corrupted, using defaults".to_string());
                     SettingsConfig::default()
                 }
             }
@@ -144,6 +147,7 @@ impl Config {
         let config = Self {
             config,
             config_path,
+            parse_warning,
         };
 
         if needs_save {
@@ -167,6 +171,13 @@ impl Config {
     }
 
     fn validate_equalizer(eq: &mut EqualizerSettings) {
+        if eq.frequencies.len() != 10 {
+            warn!(
+                "Equalizer frequencies array has {} items, expected 10. Resetting to defaults.",
+                eq.frequencies.len()
+            );
+            eq.frequencies = EqualizerSettings::default().frequencies;
+        }
         if eq.gains.len() != 10 {
             warn!(
                 "Equalizer gains array has {} items, expected 10. Resetting to defaults.",
@@ -184,6 +195,10 @@ impl Config {
     }
 
     pub fn set(&mut self, f: impl FnOnce(&mut SettingsConfig)) {
+        if self.parse_warning.is_some() {
+            warn!("Config has parse errors, skipping write to preserve file");
+            return;
+        }
         f(&mut self.config);
         self.config.audio.volume = self.config.audio.volume.clamp(0.0, 1.0);
         let scan_paths: Vec<String> = self
@@ -226,10 +241,13 @@ impl Config {
                 Ok(mut config) => {
                     Self::validate_equalizer(&mut config.equalizer);
                     self.config = config;
+                    self.parse_warning = None;
 
                     info!("Config reloaded successfully");
                 }
                 Err(e) => {
+                    self.parse_warning =
+                        Some("Settings file is corrupted, using defaults".to_string());
                     warn!("Failed to parse config file during reload: {}", e);
                 }
             }
