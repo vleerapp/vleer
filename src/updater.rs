@@ -50,8 +50,9 @@ pub struct PlatformAsset {
     pub size: Option<u64>,
 }
 
-pub type ProgressSetFn = Arc<dyn Fn(&str, String, Option<f32>) + Send + Sync>;
-pub type ProgressClearFn = Arc<dyn Fn(&str) + Send + Sync>;
+pub type StatusSetFn =
+    Arc<dyn Fn(&str, String, Option<f32>, crate::status::StatusColor) + Send + Sync>;
+pub type StatusClearFn = Arc<dyn Fn(&str) + Send + Sync>;
 
 #[derive(Clone)]
 pub struct Updater {
@@ -61,8 +62,8 @@ pub struct Updater {
 struct Inner {
     agent: Agent,
     status: UpdateStatus,
-    progress_set: Option<ProgressSetFn>,
-    progress_clear: Option<ProgressClearFn>,
+    status_set: Option<StatusSetFn>,
+    status_clear: Option<StatusClearFn>,
 }
 
 impl Global for Updater {}
@@ -81,14 +82,19 @@ impl Updater {
             inner: Arc::new(RwLock::new(Inner {
                 agent,
                 status: UpdateStatus::Idle,
-                progress_set: None,
-                progress_clear: None,
+                status_set: None,
+                status_clear: None,
             })),
         }
     }
 
-    pub fn init(cx: &mut App) {
-        cx.set_global(Self::new());
+    pub fn init(cx: &mut App, reporter: &'static crate::status::StatusReporter) {
+        let updater = Self::new();
+        updater.set_status_reporter(
+            Arc::new(|key, text, ratio, color| reporter.set(key, text, ratio, color)),
+            Arc::new(|key| reporter.clear(key)),
+        );
+        cx.set_global(updater);
     }
 
     pub fn status(&self) -> UpdateStatus {
@@ -99,20 +105,26 @@ impl Updater {
         self.inner.write().status = s;
     }
 
-    pub fn set_progress_reporter(&self, set: ProgressSetFn, clear: ProgressClearFn) {
+    pub fn set_status_reporter(&self, set: StatusSetFn, clear: StatusClearFn) {
         let mut inner = self.inner.write();
-        inner.progress_set = Some(set);
-        inner.progress_clear = Some(clear);
+        inner.status_set = Some(set);
+        inner.status_clear = Some(clear);
     }
 
-    fn report_progress(&self, key: &str, text: String, ratio: Option<f32>) {
-        if let Some(cb) = self.inner.read().progress_set.clone() {
-            cb(key, text, ratio);
+    fn report_status(
+        &self,
+        key: &str,
+        text: String,
+        ratio: Option<f32>,
+        color: crate::status::StatusColor,
+    ) {
+        if let Some(cb) = self.inner.read().status_set.clone() {
+            cb(key, text, ratio, color);
         }
     }
 
     fn report_clear(&self, key: &str) {
-        if let Some(cb) = self.inner.read().progress_clear.clone() {
+        if let Some(cb) = self.inner.read().status_clear.clone() {
             cb(key);
         }
     }
@@ -133,7 +145,12 @@ impl Updater {
                 Some(r),
             )
         };
-        self.report_progress("update.download", text, ratio);
+        self.report_status(
+            "update.download",
+            text,
+            ratio,
+            crate::status::StatusColor::Accent,
+        );
     }
 
     fn current_platform_key() -> &'static str {
@@ -191,7 +208,7 @@ impl Updater {
     }
 
     pub fn download(&self, info: &UpdateInfo) -> Result<PathBuf> {
-        use std::io::{Read, Write};
+        use std::io::{Read, Seek, Write};
 
         self.set_status(UpdateStatus::Downloading);
 
@@ -207,7 +224,7 @@ impl Updater {
             .filter(|s| !s.is_empty())
             .unwrap_or("update.bin")
             .to_string();
-        let target = std::env::temp_dir().join(&file_name);
+        let target = update_cache_dir()?.join(&file_name);
 
         let agent = self.inner.read().agent.clone();
         let response = agent
@@ -232,9 +249,12 @@ impl Updater {
             current += n as u64;
             self.report_download(current, total);
         }
+        file.seek(std::io::SeekFrom::Start(0))
+            .context("seeking update file for verification")?;
+        let mut bytes = Vec::with_capacity(current as usize);
+        file.read_to_end(&mut bytes)
+            .context("reading update file for verification")?;
         drop(file);
-
-        let bytes = std::fs::read(&target).context("reading update file for verification")?;
 
         let sig_url = format!("{}.sig", asset.url);
         let sig_bytes = agent
@@ -293,8 +313,18 @@ elseif (Test-Path '{fallback}') {{ Start-Process '{fallback}' }}
                 fallback = fallback_exe.replace('\'', "''"),
             );
 
-            let script_path = std::env::temp_dir().join("vleer_update.ps1");
-            std::fs::write(&script_path, &script).context("writing update script")?;
+            let script_path = update_cache_dir()?.join("vleer_update.ps1");
+            let _ = std::fs::remove_file(&script_path);
+            {
+                use std::io::Write as _;
+                let mut f = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&script_path)
+                    .context("writing update script")?;
+                f.write_all(script.as_bytes())
+                    .context("writing update script")?;
+            }
 
             std::process::Command::new("powershell")
                 .creation_flags(CREATE_NO_WINDOW)
@@ -396,9 +426,20 @@ fn replace_appimage(new_file: &Path) -> Result<()> {
 mv -f -- '{staged_s}' '{current_s}'\nchmod 0755 -- '{current_s}'\nexec '{current_s}' --skip-single-instance\n"
     );
 
-    let script_path = std::env::temp_dir().join(format!("vleer_update_{pid}.sh"));
-    std::fs::write(&script_path, &script).context("writing swap script")?;
-    std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))?;
+    let script_path = update_cache_dir()?.join(format!("vleer_update_{pid}.sh"));
+    let _ = std::fs::remove_file(&script_path);
+    {
+        use std::io::Write as _;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o700)
+            .open(&script_path)
+            .context("writing swap script")?;
+        f.write_all(script.as_bytes())
+            .context("writing swap script")?;
+    }
 
     std::process::Command::new("sh")
         .arg(&script_path)
@@ -484,6 +525,21 @@ fn replace_macos_app(dmg_path: &Path) -> Result<()> {
         .context("launching new app")?;
 
     Ok(())
+}
+
+fn update_cache_dir() -> Result<PathBuf> {
+    let dir = dirs::cache_dir()
+        .ok_or_else(|| anyhow!("cannot determine user cache directory"))?
+        .join("vleer")
+        .join("updates");
+    std::fs::create_dir_all(&dir).context("creating update cache directory")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+            .context("setting update cache directory permissions")?;
+    }
+    Ok(dir)
 }
 
 pub fn is_managed_externally() -> bool {
