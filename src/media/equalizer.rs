@@ -159,8 +159,9 @@ impl<S: rodio::Source<Item = f32>> EqualizerSource<S> {
     pub fn new(inner: S, equalizer: Arc<parking_lot::Mutex<Equalizer>>) -> Self {
         let eq = equalizer.lock();
         let channels = inner.channels().get() as usize;
+        let num_bands = eq.get_coeffs().read().len();
         let states: Vec<Vec<(f32, f32)>> = (0..channels)
-            .map(|_| (0..10).map(|_| (0.0, 0.0)).collect())
+            .map(|_| (0..num_bands).map(|_| (0.0, 0.0)).collect())
             .collect();
         Self {
             inner,
@@ -180,7 +181,8 @@ impl<S: rodio::Source<Item = f32>> Iterator for EqualizerSource<S> {
         let coeffs_guard = self.coeffs.read();
         let mut s = input;
         let state = &mut self.states[ch];
-        for (i, (z1, z2)) in state.iter_mut().enumerate() {
+        let bands = state.len().min(coeffs_guard.len());
+        for (i, (z1, z2)) in state.iter_mut().enumerate().take(bands) {
             let c = coeffs_guard[i];
             let out = c.b0 * s + *z1;
             *z1 = c.b1 * s - c.a1 * out + *z2;
