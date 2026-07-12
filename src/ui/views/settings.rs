@@ -389,6 +389,28 @@ impl SettingsView {
             .detach();
         }
 
+        for (i, input) in freq_inputs.iter().enumerate() {
+            cx.subscribe(input, move |_this, _entity, event, cx| {
+                if let InputEvent::Submit(text) = event
+                    && let Ok(new_freq) = text.parse::<i32>()
+                {
+                    let new_freq = new_freq.clamp(20, 20000);
+                    cx.update_global::<Config, _>(|config, _cx| {
+                        config.set(|s| {
+                            if let Some(f) = s.equalizer.frequencies.get_mut(i) {
+                                *f = new_freq;
+                            }
+                        });
+                    });
+                    cx.update_global::<Playback, _>(|playback, cx| {
+                        let config = cx.global::<Config>().clone();
+                        playback.apply_config(&config);
+                    });
+                }
+            })
+            .detach();
+        }
+
         Self {
             gain_inputs,
             freq_inputs,

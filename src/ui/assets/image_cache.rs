@@ -108,14 +108,12 @@ impl ImageCache for VleerImageCache {
         let hash = hash(resource);
 
         if let Some(item) = self.cache.get_mut(&hash) {
-            let current_idx = self
-                .usage_list
-                .iter()
-                .position(|item| *item == hash)
-                .expect("cache has an item usage_list doesn't");
-
-            self.usage_list.remove(current_idx);
-            self.usage_list.push_front(hash);
+            if let Some(current_idx) = self.usage_list.iter().position(|h| *h == hash) {
+                self.usage_list.remove(current_idx);
+                self.usage_list.push_front(hash);
+            } else {
+                self.usage_list.push_front(hash);
+            }
 
             return item.0.get();
         }
@@ -131,11 +129,8 @@ impl ImageCache for VleerImageCache {
         if self.usage_list.len() >= self.max_items {
             trace!("Image cache is full, evicting oldest item");
 
-            let oldest = self.usage_list.pop_back().unwrap();
-            let mut image = self
-                .cache
-                .remove(&oldest)
-                .expect("usage_list has an item cache doesn't");
+            let oldest = self.usage_list.pop_back()?;
+            let mut image = self.cache.remove(&oldest)?;
 
             if let Some(Ok(image)) = image.0.get() {
                 trace!("requesting image to be dropped");

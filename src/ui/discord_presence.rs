@@ -123,12 +123,16 @@ impl DiscordPresence {
 
                 let mut act = activity::Activity::new()
                     .details(&song.title)
-                    .state("Playing")
                     .activity_type(activity::ActivityType::Listening)
                     .timestamps(activity::Timestamps::new().start(start).end(end));
 
-                if let Some(ref name) = song.artist_name {
-                    act = act.state(name);
+                match &song.artist_name {
+                    Some(name) => {
+                        act = act.state(name);
+                    }
+                    None => {
+                        act = act.state("Playing");
+                    }
                 }
 
                 if client.set_activity(act).is_err() {
