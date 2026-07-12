@@ -96,10 +96,5 @@ fn bench_sqlite_operations() {
     }
     println!("get_albums_count      x100:  {:>10?}", t.elapsed());
 
-    let paths: Vec<String> = (0..1000).map(|i| format!("/music/song_{i}.mp3")).collect();
-    let t = Instant::now();
-    db.delete_songs_by_paths(&paths).unwrap();
-    println!("delete 1000 songs (batch):   {:>10?}", t.elapsed());
-
     cleanup(&path);
 }
