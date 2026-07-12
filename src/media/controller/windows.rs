@@ -213,9 +213,9 @@ fn attach_button_handler(
         let button = args.Button()?;
 
         let cmd = match button {
-            SystemMediaTransportControlsButton::Play
-            | SystemMediaTransportControlsButton::Pause
-            | SystemMediaTransportControlsButton::Stop => PlaybackCommand::PlayPause,
+            SystemMediaTransportControlsButton::Play => PlaybackCommand::Play,
+            SystemMediaTransportControlsButton::Pause => PlaybackCommand::Pause,
+            SystemMediaTransportControlsButton::Stop => PlaybackCommand::Stop,
             SystemMediaTransportControlsButton::Next => PlaybackCommand::Next,
             SystemMediaTransportControlsButton::Previous => PlaybackCommand::Previous,
             _ => return Ok(()),

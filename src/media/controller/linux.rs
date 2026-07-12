@@ -99,21 +99,21 @@ fn run_mpris(
         {
             let tx = playback_tx.clone();
             player.connect_play(move |_player| {
-                let _ = tx.send(PlaybackCommand::PlayPause);
+                let _ = tx.send(PlaybackCommand::Play);
             });
         }
 
         {
             let tx = playback_tx.clone();
             player.connect_pause(move |_player| {
-                let _ = tx.send(PlaybackCommand::PlayPause);
+                let _ = tx.send(PlaybackCommand::Pause);
             });
         }
 
         {
             let tx = playback_tx.clone();
             player.connect_stop(move |_player| {
-                let _ = tx.send(PlaybackCommand::PlayPause);
+                let _ = tx.send(PlaybackCommand::Stop);
             });
         }
 

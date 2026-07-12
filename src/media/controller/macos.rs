@@ -127,11 +127,11 @@ impl MacosState {
         command_center.toggle_play_pause_cmd().register(&handler);
         handlers.push(handler);
 
-        let handler = make_command_handler(playback_tx.clone(), PlaybackCommand::PlayPause);
+        let handler = make_command_handler(playback_tx.clone(), PlaybackCommand::Play);
         command_center.play_cmd().register(&handler);
         handlers.push(handler);
 
-        let handler = make_command_handler(playback_tx.clone(), PlaybackCommand::PlayPause);
+        let handler = make_command_handler(playback_tx.clone(), PlaybackCommand::Pause);
         command_center.pause_cmd().register(&handler);
         handlers.push(handler);
 

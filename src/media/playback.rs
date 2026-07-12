@@ -27,6 +27,9 @@ const DEFAULT_TARGET_LUFS: f32 = -14.0;
 #[derive(Debug, Clone)]
 pub enum PlaybackCommand {
     PlayPause,
+    Play,
+    Pause,
+    Stop,
     Next,
     Previous,
     Seek(f32),
@@ -307,6 +310,27 @@ impl Playback {
                             playback.play_pause(cx);
                         });
                     }
+                    PlaybackCommand::Play => {
+                        cx.update_global::<Playback, _>(|playback, cx| {
+                            playback.play(cx);
+                        });
+                    }
+                    PlaybackCommand::Pause => {
+                        cx.update_global::<Playback, _>(|playback, cx| {
+                            playback.pause(cx);
+                        });
+                    }
+                    PlaybackCommand::Stop => {
+                        cx.update_global::<Playback, _>(|playback, cx| {
+                            if let Some(sink) = &playback.sink {
+                                sink.stop();
+                            }
+                            playback.paused = true;
+                            if let Some(mc) = cx.try_global::<MediaController>() {
+                                mc.set_state(PlaybackState::Paused).ok();
+                            }
+                        });
+                    }
                     PlaybackCommand::Next => {
                         cx.update_global::<Playback, _>(|playback, cx| {
                             playback.next(cx);
@@ -373,6 +397,9 @@ impl Playback {
     }
 
     pub fn seek(&mut self, position: f32) -> Result<()> {
+        if self.loading {
+            return Ok(());
+        }
         if let Some(file_path) = &self.current_file {
             let was_playing = !self.paused;
 
@@ -383,7 +410,9 @@ impl Playback {
                 .with_data(BufReader::new(file))
                 .with_byte_len(file_len)
                 .build()?;
-            source.try_seek(Duration::from_secs_f32(position)).ok();
+            if source.try_seek(Duration::from_secs_f32(position)).is_err() {
+                return Ok(());
+            }
 
             let eq_source = EqualizerSource::new(source, self.equalizer.clone());
             let vis_source = VisualizerSource::new(eq_source, self.visualizer_state.clone());
@@ -497,7 +526,13 @@ impl Playback {
         if let Some(song_id) = song_id {
             self.load_song_by_id(cx, song_id);
         } else {
+            if let Some(sink) = &self.sink {
+                sink.stop();
+            }
             self.paused = true;
+            if let Some(mc) = cx.try_global::<MediaController>() {
+                mc.set_state(PlaybackState::Paused).ok();
+            }
         }
     }
 
@@ -510,7 +545,13 @@ impl Playback {
         if let Some(song_id) = song_id {
             self.load_song_by_id(cx, song_id);
         } else {
+            if let Some(sink) = &self.sink {
+                sink.stop();
+            }
             self.paused = true;
+            if let Some(mc) = cx.try_global::<MediaController>() {
+                mc.set_state(PlaybackState::Paused).ok();
+            }
         }
     }
 
