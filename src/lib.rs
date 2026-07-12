@@ -3,4 +3,5 @@ pub mod data {
     pub mod models;
 }
 
+pub mod status;
 pub mod updater;

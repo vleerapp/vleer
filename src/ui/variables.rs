@@ -13,6 +13,7 @@ pub struct Variables {
     pub text_secondary: Rgba,
     pub text_muted: Rgba,
     pub destructive: Rgba,
+    pub warning: Rgba,
 
     pub padding_8: f32,
     pub padding_16: f32,
@@ -34,6 +35,7 @@ impl Default for Variables {
             text_secondary: rgb(0xABABAB),
             text_muted: rgb(0x303030),
             destructive: rgb(0xFF5858),
+            warning: rgb(0xFFAA2A),
 
             padding_8: 8.0,
             padding_16: 16.0,

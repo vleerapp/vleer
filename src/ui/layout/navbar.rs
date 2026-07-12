@@ -1,9 +1,8 @@
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use parking_lot::RwLock;
-use std::collections::BTreeMap;
-use std::sync::OnceLock;
 use std::time::Duration;
+
+pub use crate::status::status;
 
 use crate::ui::{
     components::{
@@ -14,43 +13,6 @@ use crate::ui::{
     variables::Variables,
     views::AppView,
 };
-
-#[derive(Clone)]
-pub struct ProgressEntry {
-    pub text: String,
-    pub ratio: Option<f32>,
-}
-
-#[derive(Default)]
-pub struct ProgressReporter {
-    entries: RwLock<BTreeMap<String, ProgressEntry>>,
-}
-
-impl ProgressReporter {
-    pub fn set(&self, key: &str, text: impl Into<String>, ratio: Option<f32>) {
-        self.entries.write().insert(
-            key.to_string(),
-            ProgressEntry {
-                text: text.into(),
-                ratio,
-            },
-        );
-    }
-
-    pub fn clear(&self, key: &str) {
-        self.entries.write().remove(key);
-    }
-
-    pub fn entries(&self) -> Vec<ProgressEntry> {
-        self.entries.read().values().cloned().collect()
-    }
-}
-
-static PROGRESS: OnceLock<ProgressReporter> = OnceLock::new();
-
-pub fn progress() -> &'static ProgressReporter {
-    PROGRESS.get_or_init(ProgressReporter::default)
-}
 
 pub struct Navbar {
     _refresh_task: Task<()>,
@@ -99,7 +61,7 @@ impl NavbarProgressBar {
 impl Render for Navbar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
-        let entries = progress().entries();
+        let entries = status().entries();
 
         flex_row()
             .h_full()
@@ -113,9 +75,14 @@ impl Render for Navbar {
             .child({
                 let mut row = flex_row().items_center().gap(px(variables.padding_16));
                 for entry in entries {
+                    let color = match entry.color {
+                        crate::status::StatusColor::Accent => variables.accent,
+                        crate::status::StatusColor::Warning => variables.warning,
+                        crate::status::StatusColor::Destructive => variables.destructive,
+                    };
                     row = row.child(
                         div()
-                            .text_color(variables.accent)
+                            .text_color(color)
                             .font_weight(FontWeight(500.0))
                             .child(entry.text),
                     );
@@ -133,19 +100,29 @@ impl Render for Navbar {
 impl Render for NavbarProgressBar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
-        let ratio = progress()
-            .entries()
+        let entries = status().entries();
+        let bar_color = entries
+            .iter()
+            .filter_map(|e| e.ratio.map(|r| (r, e.color)))
+            .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(_, c)| c)
+            .unwrap_or(crate::status::StatusColor::Accent);
+        let ratio = entries
             .iter()
             .filter_map(|e| e.ratio)
             .fold(0.0_f32, f32::max);
+
+        let bg = match bar_color {
+            crate::status::StatusColor::Accent => variables.accent,
+            crate::status::StatusColor::Warning => variables.warning,
+            crate::status::StatusColor::Destructive => variables.destructive,
+        };
 
         div()
             .absolute()
             .left_0()
             .bottom_0()
             .h(px(2.0))
-            .when(ratio > 0.0, |this| {
-                this.w(relative(ratio)).bg(variables.accent)
-            })
+            .when(ratio > 0.0, |this| this.w(relative(ratio)).bg(bg))
     }
 }
