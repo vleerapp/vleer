@@ -24,7 +24,7 @@ use crate::{
         global_actions::register_actions,
         layout::{
             library::{Library, Search},
-            navbar::{Navbar, NavbarProgressBar},
+            navbar::{self, Navbar, NavbarProgressBar},
             player::Player,
             queue::{QueuePane, QueueVisible},
         },
@@ -56,7 +56,7 @@ impl MainWindow {
         }
         self.current_view = view;
         if view == AppView::Settings {
-            crate::ui::layout::navbar::progress().clear("telemetry.consent");
+            navbar::status().clear("telemetry.consent");
         }
         cx.update_global::<ActiveView, _>(|active, _cx| {
             active.0 = view;
@@ -297,30 +297,33 @@ pub async fn run() -> anyhow::Result<()> {
             cx.set_global(QueueVisible::default());
             cx.set_global(QueueChanged);
 
+            let is_first_launch = Telemetry::is_first_launch(&data_dir);
+
             Config::init(cx, &config_dir).expect("failed to initialize settings");
-            let is_first_launch = crate::data::telemetry::Telemetry::is_first_launch(&data_dir);
             Playback::init(cx).expect("failed to initialize playback context");
             DiscordPresence::init(cx);
             Queue::init(cx);
             Variables::init(cx);
             Telemetry::init(cx, data_dir.clone());
+            Updater::init(cx, navbar::status());
+            MediaController::init(cx);
+
+            if let Some(warning) = cx.global::<Config>().parse_warning.clone() {
+                navbar::status().set(
+                    "config.parse_error",
+                    warning,
+                    None,
+                    crate::status::StatusColor::Destructive,
+                );
+            }
             if is_first_launch {
-                crate::ui::layout::navbar::progress().set(
+                navbar::status().set(
                     "telemetry.consent",
                     "Enable telemetry in Settings: only OS, app version & song count →",
                     None,
+                    crate::status::StatusColor::Accent,
                 );
             }
-            Updater::init(cx);
-            {
-                use std::sync::Arc;
-                let reporter = crate::ui::layout::navbar::progress();
-                cx.global::<Updater>().set_progress_reporter(
-                    Arc::new(|key, text, ratio| reporter.set(key, text, ratio)),
-                    Arc::new(|key| reporter.clear(key)),
-                );
-            }
-            MediaController::init(cx);
 
             {
                 let cfg = cx.global::<Config>().get().updater.clone();

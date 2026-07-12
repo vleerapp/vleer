@@ -74,6 +74,45 @@ fn reload_config(_: &ReloadConfig, cx: &mut App) {
             error!("Failed to reload config: {}", e);
         }
     });
+
+    use crate::status::StatusColor;
+    let warning = cx.global::<Config>().parse_warning.clone();
+    if let Some(warning) = warning {
+        crate::ui::layout::navbar::status().set(
+            "config.parse_error",
+            warning,
+            None,
+            StatusColor::Destructive,
+        );
+    } else {
+        crate::ui::layout::navbar::status().clear("config.parse_error");
+    }
+
+    let db = cx.global::<Database>().clone();
+    let scanner = cx.global::<Scanner>().clone();
+
+    cx.spawn(async move |_cx| match scanner.scan(&db).await {
+        Ok(stats) => {
+            if stats.missing > 0 {
+                crate::ui::layout::navbar::status().set(
+                    "scanner.missing",
+                    format!(
+                        "{} song{} missing from disk",
+                        stats.missing,
+                        if stats.missing == 1 { "" } else { "s" }
+                    ),
+                    None,
+                    StatusColor::Warning,
+                );
+            } else {
+                crate::ui::layout::navbar::status().clear("scanner.missing");
+            }
+        }
+        Err(e) => {
+            error!("Scan after config reload failed: {}", e);
+        }
+    })
+    .detach();
 }
 
 fn scan(_: &Scan, cx: &mut App) {
@@ -81,7 +120,23 @@ fn scan(_: &Scan, cx: &mut App) {
     let scanner = cx.global::<Scanner>().clone();
 
     cx.spawn(async move |_cx| match scanner.scan(&db).await {
-        Ok(_) => {}
+        Ok(stats) => {
+            use crate::status::StatusColor;
+            if stats.missing > 0 {
+                crate::ui::layout::navbar::status().set(
+                    "scanner.missing",
+                    format!(
+                        "{} song{} missing from disk",
+                        stats.missing,
+                        if stats.missing == 1 { "" } else { "s" }
+                    ),
+                    None,
+                    StatusColor::Warning,
+                );
+            } else {
+                crate::ui::layout::navbar::status().clear("scanner.missing");
+            }
+        }
         Err(e) => {
             error!("Manual scan failed: {}", e);
         }
@@ -100,10 +155,21 @@ fn force_scan(_: &ForceScan, cx: &mut App) {
 
     cx.spawn(async move |_cx| match scanner.force_scan(&db).await {
         Ok(stats) => {
-            info!(
-                "Manual Full scan complete - Scanned: {}, Added: {}, Updated: {}",
-                stats.scanned, stats.added, stats.updated
-            );
+            use crate::status::StatusColor;
+            if stats.missing > 0 {
+                crate::ui::layout::navbar::status().set(
+                    "scanner.missing",
+                    format!(
+                        "{} song{} missing from disk",
+                        stats.missing,
+                        if stats.missing == 1 { "" } else { "s" }
+                    ),
+                    None,
+                    StatusColor::Warning,
+                );
+            } else {
+                crate::ui::layout::navbar::status().clear("scanner.missing");
+            }
         }
         Err(e) => {
             error!("Manual Full scan failed: {}", e);
