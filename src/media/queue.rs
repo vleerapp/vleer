@@ -46,10 +46,21 @@ impl Queue {
     }
 
     pub fn add_song(&mut self, song_id: Cuid) {
+        let new_idx = self.items.len();
         self.items.push(song_id);
 
         if self.current_index.is_none() {
             self.current_index = Some(0);
+        }
+
+        if self.shuffle {
+            if let Some(pos) = self.shuffle_position {
+                let tail: Vec<usize> = self.shuffle_order.drain(pos + 1..).collect();
+                self.shuffle_order.push(new_idx);
+                self.shuffle_order.extend(tail);
+            } else {
+                self.shuffle_order.push(new_idx);
+            }
         }
 
         debug!("Added song to queue. Queue size: {}", self.items.len());
@@ -63,6 +74,20 @@ impl Queue {
             && position <= current
         {
             self.current_index = Some(current + 1);
+        }
+
+        if self.shuffle {
+            for idx in self.shuffle_order.iter_mut() {
+                if *idx >= position {
+                    *idx += 1;
+                }
+            }
+            if let Some(pos) = self.shuffle_position {
+                let insert_at = (pos + 1).min(self.shuffle_order.len());
+                self.shuffle_order.insert(insert_at, position);
+            } else {
+                self.shuffle_order.push(position);
+            }
         }
 
         debug!(
@@ -288,6 +313,46 @@ impl Queue {
         debug!("Moved to previous song. Index: {:?}", self.current_index);
         *self.current_song.borrow_mut() = None;
         self.get_current_song_id()
+    }
+
+    pub fn display_to_items_index(&self, display_idx: usize) -> usize {
+        if self.shuffle && !self.shuffle_order.is_empty() {
+            self.shuffle_order
+                .get(display_idx)
+                .copied()
+                .unwrap_or(display_idx)
+        } else {
+            display_idx
+        }
+    }
+
+    pub fn set_current_index_display(&mut self, display_idx: usize, cx: &App) -> Option<Song> {
+        let real_idx = self.display_to_items_index(display_idx);
+        self.set_current_index(real_idx, cx)
+    }
+
+    pub fn remove_at_display(&mut self, display_idx: usize) -> Option<Cuid> {
+        let real_idx = self.display_to_items_index(display_idx);
+        self.remove_at(real_idx)
+    }
+
+    pub fn move_song_display(&mut self, from_display: usize, to_display: usize) {
+        if !self.shuffle || self.shuffle_order.is_empty() {
+            self.move_song(from_display, to_display);
+            return;
+        }
+        let from_real = self.display_to_items_index(from_display);
+        let to_real = self.display_to_items_index(to_display);
+        self.move_song(from_real, to_real);
+        let from_shuffle = self.shuffle_order.iter().position(|&x| x == from_real);
+        let to_shuffle = self.shuffle_order.iter().position(|&x| x == to_real);
+        if let (Some(from_s), Some(to_s)) = (from_shuffle, to_shuffle) {
+            let item = self.shuffle_order.remove(from_s);
+            self.shuffle_order.insert(to_s, item);
+        }
+        if let Some(pos) = self.shuffle_position {
+            self.current_index = self.shuffle_order.get(pos).copied();
+        }
     }
 
     pub fn set_current_index(&mut self, index: usize, cx: &App) -> Option<Song> {

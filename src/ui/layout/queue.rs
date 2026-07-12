@@ -201,7 +201,6 @@ fn build_display_order(len: usize, from: usize, to: usize) -> Vec<usize> {
 
 struct RowState<'a> {
     display_idx: usize,
-    real_idx: usize,
     song: &'a Song,
     is_current: bool,
     spectrum: [f32; 4],
@@ -215,7 +214,6 @@ fn render_row(
 ) -> impl IntoElement {
     let RowState {
         display_idx,
-        real_idx,
         song,
         is_current,
         spectrum,
@@ -233,7 +231,7 @@ fn render_row(
     };
 
     let drag_payload = QueueDragPayload {
-        from_index: real_idx,
+        from_index: display_idx,
         song: song.clone(),
         position: Point::default(),
     };
@@ -281,7 +279,7 @@ fn render_row(
                         this.drag_over = None;
                         if from != display_idx {
                             cx.update_global::<Queue, _>(|q, _| {
-                                q.move_song(from, display_idx);
+                                q.move_song_display(from, display_idx);
                             });
                             cx.set_global(QueueChanged);
                         } else {
@@ -308,7 +306,7 @@ fn render_row(
                         .on_mouse_down(MouseButton::Left, move |_event, _window, cx| {
                             cx.stop_propagation();
                             cx.update_global::<Queue, _>(|q, cx| {
-                                q.set_current_index(real_idx, cx);
+                                q.set_current_index_display(display_idx, cx);
                             });
                             cx.update_global::<Playback, _>(|p, cx| {
                                 p.play_queue(cx);
@@ -377,7 +375,7 @@ fn render_row(
                                 .cursor_pointer()
                                 .on_mouse_down(MouseButton::Left, move |_event, _window, cx| {
                                     cx.update_global::<Queue, _>(|q, _| {
-                                        q.remove_at(real_idx);
+                                        q.remove_at_display(display_idx);
                                     });
                                     cx.set_global(QueueChanged);
                                 })
@@ -426,7 +424,7 @@ fn render_drop_slot(
                 this.drag_over = None;
                 if from != display_idx {
                     cx.update_global::<Queue, _>(|q, _| {
-                        q.move_song(from, display_idx);
+                        q.move_song_display(from, display_idx);
                     });
                     cx.set_global(QueueChanged);
                 } else {
@@ -544,7 +542,7 @@ impl Render for QueuePane {
                                                     .map(|id| id == &song.id)
                                                     .unwrap_or(false);
 
-                                                let is_slot = drag_from == Some(real_idx);
+                                                let is_slot = drag_from == Some(display_idx);
 
                                                 if is_slot {
                                                     render_drop_slot(
@@ -558,7 +556,6 @@ impl Render for QueuePane {
                                                         &view_handle,
                                                         RowState {
                                                             display_idx,
-                                                            real_idx,
                                                             song,
                                                             is_current,
                                                             spectrum,
