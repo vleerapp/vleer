@@ -22,6 +22,7 @@ use crate::data::metadata::{
 use crate::data::models::Cuid;
 use crate::data::telemetry::Telemetry;
 use crate::ui::components::context_menu::{BackgroundUiEvent, BackgroundUiNotifier};
+use crate::ui::layout::navbar;
 
 type FsWatcher = Debouncer<notify::RecommendedWatcher, RecommendedCache>;
 
@@ -82,6 +83,7 @@ pub struct ScanStats {
     pub added: usize,
     pub updated: usize,
     pub removed: usize,
+    pub missing: usize,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -205,10 +207,16 @@ impl Scanner {
     }
 
     fn update_scan_progress(&self, progress: ScanProgress) {
-        let reporter = crate::ui::layout::navbar::progress();
+        use crate::status::StatusColor;
+        let reporter = crate::ui::layout::navbar::status();
         match progress.phase {
             ScanPhase::Idle => reporter.clear("library.scan"),
-            ScanPhase::Completed => reporter.set("library.scan", "Scanning: done", Some(1.0)),
+            ScanPhase::Completed => reporter.set(
+                "library.scan",
+                "Scanning: done",
+                Some(1.0),
+                StatusColor::Accent,
+            ),
             ScanPhase::Scanning => {
                 if progress.total == 0 {
                     reporter.clear("library.scan");
@@ -223,6 +231,7 @@ impl Scanner {
                             ratio * 100.0
                         ),
                         Some(ratio),
+                        StatusColor::Accent,
                     );
                 }
             }
@@ -285,41 +294,22 @@ impl Scanner {
             cx.background_executor()
                 .spawn(async move {
                     let observer_start = std::time::Instant::now();
-                    let mut pre_removed = 0usize;
                     if !removed_paths.is_empty() {
-                        let prefixes: Vec<String> = removed_paths
-                            .iter()
-                            .map(|p| p.to_string_lossy().to_string())
-                            .collect();
-                        let del_start = std::time::Instant::now();
-                        match db_clone.delete_songs_under_prefixes(&prefixes) {
-                            Ok(n) => {
-                                pre_removed = n;
-                                info!(
-                                    "Path-change: bulk-deleted {} songs in {:?} for prefixes {:?}",
-                                    n,
-                                    del_start.elapsed(),
-                                    removed_paths
-                                );
-                                if n > 0 && let Some(background_ui) = &background_ui_clone {
-                                    background_ui
-                                        .notify(BackgroundUiEvent::LibraryDataChanged);
-                                }
-                            }
-                            Err(e) => {
-                                error!("Bulk-delete under removed prefixes failed: {}", e);
-                            }
-                        }
+                        warn!(
+                            "{} scan path(s) removed from config — songs under them were kept in the library. Remove them manually in Settings if no longer needed: {:?}",
+                            removed_paths.len(),
+                            removed_paths
+                        );
                     }
 
                     let scan_start = std::time::Instant::now();
                     match scanner_clone.scan(&db_clone).await {
                         Ok(stats) => {
                             info!(
-                                "Path-change rescan in {:?} (observer total {:?}) - Scanned: {}, Added: {}, Updated: {}, Removed: {} (+ {} pre-removed)",
+                                "Path-change rescan in {:?} (observer total {:?}) - Scanned: {}, Added: {}, Updated: {}, Missing: {}",
                                 scan_start.elapsed(),
                                 observer_start.elapsed(),
-                                stats.scanned, stats.added, stats.updated, stats.removed, pre_removed
+                                stats.scanned, stats.added, stats.updated, stats.missing
                             );
                             if (stats.added > 0 || stats.updated > 0 || stats.removed > 0)
                                 && let Some(background_ui) = &background_ui_clone
@@ -345,14 +335,27 @@ impl Scanner {
                         let telemetry_clone = telemetry.clone();
                         let config_clone = config.clone();
                         let background_ui_clone = background_ui.clone();
+                        let scanner_for_missing = scanner.clone();
 
                         exec.clone()
                             .spawn(async move {
                                 while let Some(stats) = rx.next().await {
                                     info!(
-                                        "Library scan completed - Scanned: {}, Added: {}, Updated: {}, Removed: {}",
-                                        stats.scanned, stats.added, stats.updated, stats.removed
+                                        "Library scan completed - Scanned: {}, Added: {}, Updated: {}, Missing: {}",
+                                        stats.scanned, stats.added, stats.updated, stats.missing
                                     );
+
+                                    let missing = scanner_for_missing.count_missing_songs(&db_clone).await;
+                                    if missing > 0 {
+                                        navbar::status().set(
+                                            "scanner.missing",
+                                            format!("{} song{} missing from disk", missing, if missing == 1 { "" } else { "s" }),
+                                            None,
+                                            crate::status::StatusColor::Warning,
+                                        );
+                                    } else {
+                                        navbar::status().clear("scanner.missing");
+                                    }
 
                                     if stats.scanned > 0 || stats.removed > 0 {
                                         telemetry_clone.submit(&db_clone, &config_clone);
@@ -376,6 +379,17 @@ impl Scanner {
                         exec.spawn(async move {
                                 match scanner.scan(&db_clone).await {
                                 Ok(stats) => {
+
+                                    if stats.missing > 0 {
+                                        navbar::status().set(
+                                            "scanner.missing",
+                                            format!("{} song{} missing from disk", stats.missing, if stats.missing == 1 { "" } else { "s" }),
+                                            None,
+                                            crate::status::StatusColor::Warning,
+                                        );
+                                    } else {
+                                        navbar::status().clear("scanner.missing");
+                                    }
 
                                     if stats.scanned > 0 || stats.removed > 0 {
                                         telemetry_clone.submit(&db_clone, &config_clone);
@@ -451,11 +465,7 @@ impl Scanner {
                 .executor
                 .spawn(async move {
                     let mut files = Vec::new();
-                    for entry in WalkDir::new(&root)
-                        .follow_links(true)
-                        .into_iter()
-                        .filter_map(|e| e.ok())
-                    {
+                    for entry in WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
                         if cancel_flag.load(Ordering::Acquire) {
                             break;
                         }
@@ -485,31 +495,53 @@ impl Scanner {
             .collect())
     }
 
+    fn find_missing_songs(
+        &self,
+        db: &Database,
+        scanned_files: &HashSet<String>,
+    ) -> Result<Vec<String>> {
+        let paths = self.collect_song_paths(db)?;
+        Ok(paths
+            .into_iter()
+            .filter(|p| !scanned_files.contains(p))
+            .collect())
+    }
+
     fn remove_missing_songs(
         &self,
         db: &Database,
         scanned_files: &HashSet<String>,
     ) -> Result<usize> {
-        let paths = self.collect_song_paths(db)?;
-
-        let stale_paths: Vec<String> = paths
-            .into_iter()
-            .filter(|p| !scanned_files.contains(p))
-            .collect();
+        let stale_paths = self.find_missing_songs(db, scanned_files)?;
 
         if stale_paths.is_empty() {
             return Ok(0);
         }
 
-        let removed = match db.delete_songs_by_paths(&stale_paths) {
-            Ok(n) => n,
-            Err(e) => {
-                error!("Failed to remove {} stale songs: {}", stale_paths.len(), e);
-                0
-            }
-        };
+        warn!(
+            "{} songs are missing from disk but were kept in the library. Remove them manually in Settings if no longer needed.",
+            stale_paths.len()
+        );
+        for p in &stale_paths {
+            warn!("Missing: {}", p);
+        }
 
-        Ok(removed)
+        Ok(stale_paths.len())
+    }
+
+    pub async fn count_missing_songs(&self, db: &Database) -> usize {
+        let audio_files = match self.collect_audio_files().await {
+            Ok(f) => f,
+            Err(_) => return 0,
+        };
+        let scanned_files: HashSet<String> = audio_files
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
+        match self.find_missing_songs(db, &scanned_files) {
+            Ok(paths) => paths.len(),
+            Err(_) => 0,
+        }
     }
 
     async fn scan_with_options(&self, db: &Database, options: ScanOptions) -> Result<ScanStats> {
@@ -528,6 +560,7 @@ impl Scanner {
                 added: 0,
                 updated: 0,
                 removed: 0,
+                missing: 0,
             });
         }
         let existing_track_state = Arc::new(self.collect_existing_track_state(db)?);
@@ -633,14 +666,15 @@ impl Scanner {
                 added,
                 updated,
                 removed: 0,
+                missing: 0,
             });
         }
 
-        let removed = self.remove_missing_songs(db, &scanned_files)?;
+        let missing = self.remove_missing_songs(db, &scanned_files)?;
 
         info!(
-            "Scan complete: {} scanned, {} added, {} updated, {} skipped, {} failed, {} removed",
-            scanned, added, updated, skipped, failed, removed
+            "Scan complete: {} scanned, {} added, {} updated, {} skipped, {} failed, {} missing",
+            scanned, added, updated, skipped, failed, missing
         );
 
         self.update_scan_progress(ScanProgress {
@@ -654,7 +688,8 @@ impl Scanner {
             scanned,
             added,
             updated,
-            removed,
+            removed: 0,
+            missing,
         })
     }
 
@@ -674,6 +709,7 @@ impl Scanner {
                 added: 0,
                 updated: 0,
                 removed: 0,
+                missing: 0,
             });
         }
 
@@ -785,6 +821,7 @@ impl Scanner {
             added,
             updated,
             removed: 0,
+            missing: 0,
         })
     }
 
@@ -850,8 +887,8 @@ impl Scanner {
                     match scanner.process_changed_files_inner(&db, batch) {
                         Ok(stats) => {
                             info!(
-                                "Incremental scan complete - Scanned: {}, Added: {}, Updated: {}, Removed: {}",
-                                stats.scanned, stats.added, stats.updated, stats.removed
+                                "Incremental scan complete - Scanned: {}, Added: {}, Updated: {}, Missing: {}",
+                                stats.scanned, stats.added, stats.updated, stats.missing
                             );
                             let _ = tx.unbounded_send(stats);
                         }
@@ -969,7 +1006,7 @@ fn process_one_file(
         Ok(result) => result,
         Err(e) => {
             warn!("Failed to read metadata for {}: {}", file_path, e);
-            return Some((None, true, false));
+            return Some((None, false, true));
         }
     };
 
@@ -1019,6 +1056,7 @@ impl MusicWatcher {
                 Ok(events) => {
                     let mut changed_audio_files: Vec<PathBuf> = Vec::new();
                     let mut removed_files: Vec<PathBuf> = Vec::new();
+                    let mut removed_dirs: Vec<String> = Vec::new();
 
                     for event in events {
                         debug!("File event: {:?} - {:?}", event.kind, event.paths);
@@ -1028,12 +1066,14 @@ impl MusicWatcher {
                             EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
                         ) {
                             for path in &event.paths {
-                                if Scanner::is_audio_file(path) {
-                                    if path.exists() {
+                                if path.exists() {
+                                    if Scanner::is_audio_file(path) {
                                         changed_audio_files.push(path.clone());
-                                    } else {
-                                        removed_files.push(path.clone());
                                     }
+                                } else if Scanner::is_audio_file(path) {
+                                    removed_files.push(path.clone());
+                                } else {
+                                    removed_dirs.push(path.to_string_lossy().to_string());
                                 }
                             }
                         }
@@ -1047,26 +1087,8 @@ impl MusicWatcher {
 
                     for path in removed_files {
                         let path_str = path.to_string_lossy().to_string();
-                        let db = db_clone.clone();
-                        let tx = tx.clone();
-                        exec_clone
-                            .spawn(async move {
-                                if db.delete_song_by_path(&path_str).is_ok() {
-                                    let stats = ScanStats {
-                                        scanned: 0,
-                                        added: 0,
-                                        updated: 0,
-                                        removed: 1,
-                                    };
-                                    let _ = tx.unbounded_send(stats);
-                                } else {
-                                    error!(
-                                        "Failed to remove deleted track {}: (error logged above)",
-                                        path_str
-                                    );
-                                }
-                            })
-                            .detach();
+                        warn!("File removed from disk, keeping in library: {}", path_str);
+                        let _ = tx;
                     }
 
                     let changed_audio_files: Vec<PathBuf> = changed_audio_files

@@ -229,144 +229,6 @@ impl Database {
         Ok(())
     }
 
-    pub fn delete_song_by_path(&self, file_path: &str) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute("DELETE FROM songs WHERE file_path = ?1", params![file_path])?;
-        Ok(())
-    }
-
-    pub fn delete_songs_by_paths(&self, file_paths: &[String]) -> Result<usize> {
-        if file_paths.is_empty() {
-            return Ok(0);
-        }
-
-        const CHUNK: usize = 500;
-        let mut conn = self.conn.lock();
-        let tx = conn.transaction()?;
-        let mut total = 0usize;
-        for chunk in file_paths.chunks(CHUNK) {
-            let placeholders = (1..=chunk.len())
-                .map(|i| format!("?{i}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let sql = format!("DELETE FROM songs WHERE file_path IN ({placeholders})");
-            let params: Vec<&dyn ToSql> = chunk.iter().map(|p| p as &dyn ToSql).collect();
-            total += tx.execute(&sql, params.as_slice())?;
-        }
-        tx.commit()?;
-        Ok(total)
-    }
-
-    pub fn delete_songs_under_prefixes(&self, prefixes: &[String]) -> Result<usize> {
-        if prefixes.is_empty() {
-            return Ok(0);
-        }
-
-        let total_start = std::time::Instant::now();
-        let mut conn = self.conn.lock();
-        let tx = conn.transaction()?;
-
-        const MAINTENANCE_TRIGGERS: &[&str] = &[
-            "songs_ad",
-            "delete_album_trigger",
-            "delete_unused_song_image",
-            "delete_artist_trigger",
-            "delete_unused_album_image",
-            "albums_ad",
-            "delete_unused_artist_image",
-            "artists_ad",
-        ];
-
-        let mut saved_triggers: Vec<String> = Vec::with_capacity(MAINTENANCE_TRIGGERS.len());
-        {
-            let mut stmt =
-                tx.prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name = ?1")?;
-            for name in MAINTENANCE_TRIGGERS {
-                if let Ok(sql) = stmt.query_row(params![name], |row| row.get::<_, String>(0)) {
-                    saved_triggers.push(sql);
-                }
-            }
-        }
-
-        for name in MAINTENANCE_TRIGGERS {
-            tx.execute_batch(&format!("DROP TRIGGER IF EXISTS {}", name))?;
-        }
-
-        let mut total = 0usize;
-        for prefix in prefixes {
-            let mut start = prefix.clone();
-            if !start.ends_with('/') && !start.ends_with('\\') {
-                start.push(std::path::MAIN_SEPARATOR);
-            }
-            let mut end_bytes = start.as_bytes().to_vec();
-            if let Some(last) = end_bytes.last_mut() {
-                *last = last.saturating_add(1);
-            }
-            let end = match String::from_utf8(end_bytes) {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
-            let stmt_start = std::time::Instant::now();
-            let count = tx.execute(
-                "DELETE FROM songs WHERE file_path >= ?1 AND file_path < ?2",
-                params![start, end],
-            )?;
-            tracing::info!(
-                "delete_songs_under_prefixes: deleted {} rows for prefix={:?} in {:?}",
-                count,
-                prefix,
-                stmt_start.elapsed()
-            );
-            total += count;
-        }
-
-        let cleanup_start = std::time::Instant::now();
-        let fts_removed = tx.execute(
-            "DELETE FROM songs_fts WHERE song_id NOT IN (SELECT id FROM songs)",
-            [],
-        )?;
-        let albums_removed = tx.execute(
-            "DELETE FROM albums WHERE NOT EXISTS (SELECT 1 FROM songs WHERE songs.album_id = albums.id)",
-            [],
-        )?;
-        let artists_removed = tx.execute(
-            "DELETE FROM artists
-             WHERE NOT EXISTS (SELECT 1 FROM songs_artists WHERE songs_artists.artist_id = artists.id)
-               AND NOT EXISTS (SELECT 1 FROM albums_artists WHERE albums_artists.artist_id = artists.id)",
-            [],
-        )?;
-        let images_removed = tx.execute(
-            "DELETE FROM images
-             WHERE NOT EXISTS (SELECT 1 FROM songs WHERE songs.image_id = images.id)
-               AND NOT EXISTS (SELECT 1 FROM albums WHERE albums.image_id = images.id)
-               AND NOT EXISTS (SELECT 1 FROM artists WHERE artists.image_id = images.id)
-               AND NOT EXISTS (SELECT 1 FROM playlists WHERE playlists.image_id = images.id)",
-            [],
-        )?;
-        tracing::info!(
-            "delete_songs_under_prefixes: bulk cleanup in {:?} - {} fts, {} albums, {} artists, {} images",
-            cleanup_start.elapsed(),
-            fts_removed,
-            albums_removed,
-            artists_removed,
-            images_removed
-        );
-
-        for sql in &saved_triggers {
-            tx.execute_batch(sql)?;
-        }
-
-        let commit_start = std::time::Instant::now();
-        tx.commit()?;
-        tracing::info!(
-            "delete_songs_under_prefixes: commit took {:?}, total {:?} for {} rows",
-            commit_start.elapsed(),
-            total_start.elapsed(),
-            total
-        );
-        Ok(total)
-    }
-
     pub fn get_song_paths(&self) -> Result<Vec<String>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare_cached("SELECT file_path FROM songs")?;
@@ -722,11 +584,32 @@ impl Database {
                  RETURNING id",
             )?
             .query_row(params![id, title, image_id], |row| row.get(0))?;
-        tx.execute(
-            "DELETE FROM albums_artists WHERE album_id = ?1",
-            params![album_id],
-        )?;
-        for (position, artist_name) in artists.iter().enumerate() {
+
+        let existing_names: Vec<String> = {
+            let mut stmt = tx.prepare_cached(
+                "SELECT a.name FROM artists a
+                 JOIN albums_artists aa ON a.id = aa.artist_id
+                 WHERE aa.album_id = ?1",
+            )?;
+            stmt.query_map(params![album_id], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+
+        let existing_set: std::collections::HashSet<&str> =
+            existing_names.iter().map(|s| s.as_str()).collect();
+
+        let max_position: i64 = tx
+            .prepare_cached(
+                "SELECT COALESCE(MAX(position), -1) FROM albums_artists WHERE album_id = ?1",
+            )?
+            .query_row(params![album_id], |row| row.get(0))
+            .unwrap_or(-1);
+
+        let mut next_position = max_position + 1;
+        for artist_name in artists {
+            if existing_set.contains(artist_name) {
+                continue;
+            }
             let artist_id = Cuid::new();
             let actual_artist_id: Cuid = tx
                 .prepare_cached(
@@ -739,7 +622,8 @@ impl Database {
                 "INSERT INTO albums_artists (album_id, artist_id, position) VALUES (?1, ?2, ?3)
                  ON CONFLICT(album_id, artist_id) DO UPDATE SET position = excluded.position",
             )?
-            .execute(params![album_id, actual_artist_id, position as i64])?;
+            .execute(params![album_id, actual_artist_id, next_position])?;
+            next_position += 1;
         }
         tx.commit()?;
         Ok(album_id)
@@ -1155,7 +1039,7 @@ impl Database {
 
     pub fn get_recently_added_items(&self, limit: i64) -> Result<Vec<RecentItem>> {
         let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare_cached(
             r#"
             WITH recent_songs AS (
                 SELECT s.id, s.title, s.album_id, s.image_id, s.date_added, s.date
@@ -1199,7 +1083,7 @@ impl Database {
 
     pub fn get_recently_played_items(&self, limit: i64) -> Result<Vec<RecentItem>> {
         let conn = self.conn.lock();
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare_cached(
             r#"
             WITH recent_song_plays AS (
                 SELECT ec.song_id, MAX(e.timestamp) AS most_recent_date
