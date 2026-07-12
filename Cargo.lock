@@ -8245,6 +8245,7 @@ dependencies = [
  "interprocess",
  "itertools 0.15.0",
  "lazy_static",
+ "libc",
  "lofty",
  "lru",
  "mpris-server",
