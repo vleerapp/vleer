@@ -31,12 +31,41 @@ pub struct VisualizerState {
     pub bands: Arc<Mutex<[f32; 4]>>,
 }
 
+struct BandDetector {
+    value: f32,
+    attack: f32,
+    release: f32,
+}
+
+impl BandDetector {
+    fn new(attack: f32, release: f32) -> Self {
+        Self {
+            value: 0.0,
+            attack,
+            release,
+        }
+    }
+
+    fn update(&mut self, energy: f32) -> f32 {
+        let target = energy.clamp(0.0, 1.0);
+        let alpha = if target > self.value {
+            self.attack
+        } else {
+            self.release
+        };
+        self.value = self.value * (1.0 - alpha) + target * alpha;
+        self.value.clamp(0.0, 1.0)
+    }
+}
+
 pub struct VisualizerSource<I> {
     input: I,
     buffer: Vec<f32>,
     state: VisualizerState,
     _channels: u16,
     sample_rate: u32,
+    bands: [BandDetector; 4],
+    peak_ref: [f32; 4],
 }
 
 impl<I> VisualizerSource<I>
@@ -52,46 +81,62 @@ where
             state,
             _channels: channels,
             sample_rate,
+            bands: [
+                BandDetector::new(0.45, 0.12),
+                BandDetector::new(0.35, 0.10),
+                BandDetector::new(0.25, 0.08),
+                BandDetector::new(0.40, 0.11),
+            ],
+            peak_ref: [10.0; 4],
         }
     }
 
     fn process_spectrum(&mut self) {
+        let effective_sample_rate = self.sample_rate * self._channels as u32;
         let spectrum = samples_fft_to_spectrum(
             &self.buffer,
-            self.sample_rate,
+            effective_sample_rate,
             FrequencyLimit::All,
             Some(&divide_by_N_sqrt),
         );
 
         if let Ok(spec) = spectrum {
-            let b1 = spec.freq_val_exact(40.0).val() + spec.freq_val_exact(80.0).val();
-            let b2 = spec.freq_val_exact(120.0).val() + spec.freq_val_exact(250.0).val();
-            let b3 = spec.freq_val_exact(400.0).val() + spec.freq_val_exact(800.0).val();
-            let b4 = spec.freq_val_exact(1200.0).val() + spec.freq_val_exact(2400.0).val();
+            let band_peak = |low: f32, high: f32| -> f32 {
+                let mut peak = 0.0f32;
+                for (freq, val) in spec.data().iter() {
+                    let f = freq.val();
+                    if f >= low && f <= high {
+                        peak = peak.max(val.val());
+                    }
+                }
+                peak
+            };
 
-            let gains: [f32; 4] = [0.3, 0.7, 0.9, 1.0];
-
-            let base_mul: f32 = 0.07;
-
-            let alphas: [f32; 4] = [0.08, 0.18, 0.28, 0.35];
-
-            let targets: [f32; 4] = [
-                (b1 * gains[0] * base_mul).clamp(0.02, 1.0),
-                (b2 * gains[1] * base_mul).clamp(0.02, 1.0),
-                (b3 * gains[2] * base_mul).clamp(0.02, 1.0),
-                (b4 * gains[3] * base_mul).clamp(0.02, 1.0),
+            let raw = [
+                band_peak(20.0, 150.0),
+                band_peak(150.0, 2000.0),
+                band_peak(2000.0, 8000.0),
+                band_peak(8000.0, 20000.0),
             ];
 
-            let mut bands_guard = self.state.bands.lock();
-            let prev = *bands_guard;
-
-            let mut new_bands = [0.0_f32; 4];
+            let mut energies = [0.0f32; 4];
             for i in 0..4 {
-                let alpha = alphas[i];
-                new_bands[i] = prev[i] * (1.0 - alpha) + targets[i] * alpha;
+                if raw[i] > self.peak_ref[i] {
+                    self.peak_ref[i] = raw[i];
+                } else {
+                    self.peak_ref[i] *= 0.9985;
+                }
+                energies[i] = if self.peak_ref[i] > 1e-4 {
+                    (raw[i] / self.peak_ref[i]).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
             }
 
-            *bands_guard = new_bands;
+            let mut bands_guard = self.state.bands.lock();
+            for i in 0..4 {
+                bands_guard[i] = self.bands[i].update(energies[i]);
+            }
         }
     }
 }
@@ -105,9 +150,9 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         let sample = self.input.next()?;
 
-        if self.buffer.len() < 1024 {
-            self.buffer.push(sample);
-        } else {
+        self.buffer.push(sample);
+
+        if self.buffer.len() >= 1024 {
             self.process_spectrum();
             self.buffer.clear();
         }
