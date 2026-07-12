@@ -10,6 +10,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 mod data;
 mod media;
 mod single_instance;
+mod status;
 mod ui;
 mod updater;
 
@@ -21,10 +22,14 @@ fn main() -> anyhow::Result<()> {
     std::fs::create_dir_all(&data_dir).ok();
 
     let log_path = data_dir.join("vleer.log");
+    if let Ok(meta) = std::fs::metadata(&log_path)
+        && meta.len() > 5 * 1024 * 1024
+    {
+        let _ = std::fs::rename(&log_path, data_dir.join("vleer.log.old"));
+    }
     let log_file = std::fs::OpenOptions::new()
         .create(true)
-        .write(true)
-        .truncate(true)
+        .append(true)
         .open(&log_path)?;
 
     tracing_subscriber::registry()
