@@ -236,7 +236,13 @@ impl Updater {
         let total = asset.size.unwrap_or(0);
         self.report_download(0, total);
 
-        let mut file = std::fs::File::create(&target).context("creating update file")?;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .read(true)
+            .create(true)
+            .truncate(true)
+            .open(&target)
+            .context("creating update file")?;
         let mut reader = response.into_body().into_reader();
         let mut buf = [0u8; 64 * 1024];
         let mut current: u64 = 0;
