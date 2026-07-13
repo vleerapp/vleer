@@ -26,6 +26,7 @@ const DEFAULT_TARGET_LUFS: f32 = -14.0;
 
 #[derive(Debug, Clone)]
 pub enum PlaybackCommand {
+    #[allow(dead_code)]
     PlayPause,
     Play,
     Pause,

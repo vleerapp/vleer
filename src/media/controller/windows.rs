@@ -35,8 +35,6 @@ struct SmtcState {
     controls: SystemMediaTransportControls,
     display_updater: SystemMediaTransportControlsDisplayUpdater,
     timeline_properties: SystemMediaTransportControlsTimelineProperties,
-    button_handler_token: Option<i64>,
-    position_handler_token: Option<i64>,
     artwork_cache: ArtworkCache,
 }
 
@@ -203,15 +201,13 @@ fn init_smtc(
 
     let timeline_properties = SystemMediaTransportControlsTimelineProperties::new()?;
 
-    let button_handler_token = attach_button_handler(&controls, playback_tx.clone())?;
-    let position_handler_token = attach_position_handler(&controls, playback_tx)?;
+    attach_button_handler(&controls, playback_tx.clone())?;
+    attach_position_handler(&controls, playback_tx)?;
 
     Ok(SmtcState {
         controls,
         display_updater,
         timeline_properties,
-        button_handler_token: Some(button_handler_token),
-        position_handler_token: Some(position_handler_token),
         artwork_cache: ArtworkCache::default(),
     })
 }
@@ -317,6 +313,13 @@ fn apply_metadata(smtc: &mut SmtcState, metadata: ResolvedMetadata) -> Result<()
             .SetEndTime(TimeSpan::from(duration))?;
         smtc.timeline_properties
             .SetMaxSeekTime(TimeSpan::from(duration))?;
+    }
+
+    if let Some(position_ms) = metadata.position_ms {
+        smtc.timeline_properties
+            .SetPosition(TimeSpan::from(std::time::Duration::from_millis(
+                position_ms,
+            )))?;
     }
 
     if let Some(artwork) = metadata
