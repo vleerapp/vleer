@@ -298,7 +298,7 @@ foreach ($root in $roots) {{
     if ($exe) {{ break }}
     Get-ChildItem $root -ErrorAction SilentlyContinue |
         Get-ItemProperty |
-        Where-Object {{ $_.DisplayName -like '*leer*' }} |
+        Where-Object {{ $_.DisplayName -eq 'Vleer' }} |
         ForEach-Object {{
             if ($_.InstallLocation) {{
                 $c = Join-Path $_.InstallLocation 'vleer.exe'
