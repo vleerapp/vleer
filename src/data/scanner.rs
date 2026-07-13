@@ -465,7 +465,11 @@ impl Scanner {
                 .executor
                 .spawn(async move {
                     let mut files = Vec::new();
-                    for entry in WalkDir::new(&root).follow_links(false).into_iter().filter_map(|e| e.ok()) {
+                    for entry in WalkDir::new(&root)
+                        .follow_links(false)
+                        .into_iter()
+                        .filter_map(|e| e.ok())
+                    {
                         if cancel_flag.load(Ordering::Acquire) {
                             break;
                         }
@@ -1137,12 +1141,12 @@ impl MusicWatcher {
         scanner.install_watcher(debouncer);
 
         let sync_paths = scanner.get_scan_paths();
-        if let Ok(mut watcher_slot) = scanner.watcher.lock() {
-            if let Some(w) = watcher_slot.as_mut() {
-                for path in &sync_paths {
-                    if path.exists() {
-                        let _ = w.watch(path, RecursiveMode::Recursive);
-                    }
+        if let Ok(mut watcher_slot) = scanner.watcher.lock()
+            && let Some(w) = watcher_slot.as_mut()
+        {
+            for path in &sync_paths {
+                if path.exists() {
+                    let _ = w.watch(path, RecursiveMode::Recursive);
                 }
             }
         }

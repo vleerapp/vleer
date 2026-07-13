@@ -4,11 +4,11 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 
-use interprocess::local_socket::prelude::*;
 #[cfg(unix)]
 use interprocess::local_socket::GenericFilePath;
 #[cfg(not(unix))]
 use interprocess::local_socket::GenericNamespaced;
+use interprocess::local_socket::prelude::*;
 use interprocess::local_socket::{ListenerOptions, Stream};
 
 const APP_ID: &str = "vleer";
