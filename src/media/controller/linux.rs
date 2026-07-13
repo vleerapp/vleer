@@ -18,6 +18,7 @@ pub struct LinuxController {
 
 enum Command {
     UpdateMetadata(ResolvedMetadata),
+    ClearMetadata,
     SetState(PlaybackState),
     SetPosition(u64),
     SetCanGoNext(bool),
@@ -40,6 +41,12 @@ impl LinuxController {
     pub fn update_metadata(&self, metadata: ResolvedMetadata) -> Result<()> {
         self.tx
             .send(Command::UpdateMetadata(metadata))
+            .map_err(|_| anyhow!("mpris command channel closed"))
+    }
+
+    pub fn clear_metadata(&self) -> Result<()> {
+        self.tx
+            .send(Command::ClearMetadata)
             .map_err(|_| anyhow!("mpris command channel closed"))
     }
 
@@ -200,6 +207,13 @@ fn run_mpris(
                     }
 
                     player.set_metadata(builder.build()).await?;
+                }
+                Command::ClearMetadata => {
+                    position_ms.set(0);
+                    player.set_position(Time::from_millis(0));
+                    player
+                        .set_metadata(Metadata::builder().trackid(TrackId::NO_TRACK).build())
+                        .await?;
                 }
                 Command::SetState(state) => {
                     let status = match state {

@@ -108,6 +108,21 @@ impl WindowsController {
         }
     }
 
+    pub fn clear_metadata(&self) -> Result<()> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| anyhow!("windows controller lock poisoned"))?;
+        if let Some(smtc) = state.smtc.as_mut() {
+            smtc.display_updater.ClearAll()?;
+            smtc.display_updater.SetType(MediaPlaybackType::Music)?;
+            smtc.display_updater.Update()?;
+        } else {
+            state.pending.metadata = None;
+        }
+        Ok(())
+    }
+
     pub fn set_state(&self, state_value: PlaybackState) -> Result<()> {
         let mut state = self
             .state

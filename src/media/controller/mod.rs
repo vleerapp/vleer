@@ -28,7 +28,6 @@ use windows::WindowsController as PlatformController;
 pub enum PlaybackState {
     Playing,
     Paused,
-    #[allow(dead_code)]
     Stopped,
 }
 
@@ -111,6 +110,10 @@ impl MediaController {
         };
 
         self.inner.platform.update_metadata(metadata)
+    }
+
+    pub fn clear_song(&self) -> Result<()> {
+        self.inner.platform.clear_metadata()
     }
 
     pub fn set_position_ms(&self, position_ms: u64) -> Result<()> {

@@ -30,6 +30,7 @@ pub struct MacosController {
 
 enum Command {
     UpdateMetadata(ResolvedMetadata),
+    ClearMetadata,
     SetState(PlaybackState),
     SetPosition(u64),
     SetCanGoNext(bool),
@@ -70,6 +71,12 @@ impl MacosController {
             .map_err(|_| anyhow!("macos command channel closed"))
     }
 
+    pub fn clear_metadata(&self) -> Result<()> {
+        self.tx
+            .send(Command::ClearMetadata)
+            .map_err(|_| anyhow!("macos command channel closed"))
+    }
+
     pub fn set_state(&self, state: PlaybackState) -> Result<()> {
         self.tx
             .send(Command::SetState(state))
@@ -104,6 +111,7 @@ fn run_macos(
     while let Some(cmd) = rx.blocking_recv() {
         match cmd {
             Command::UpdateMetadata(metadata) => state.update_metadata(metadata)?,
+            Command::ClearMetadata => state.clear_metadata()?,
             Command::SetState(state_value) => state.set_state(state_value)?,
             Command::SetPosition(position_ms) => state.set_position(position_ms)?,
             Command::SetCanGoNext(can_go_next) => state.set_can_go_next(can_go_next)?,
@@ -133,6 +141,10 @@ impl MacosState {
 
         let handler = make_command_handler(playback_tx.clone(), PlaybackCommand::Pause);
         command_center.pause_cmd().register(&handler);
+        handlers.push(handler);
+
+        let handler = make_command_handler(playback_tx.clone(), PlaybackCommand::Stop);
+        command_center.stop_cmd().register(&handler);
         handlers.push(handler);
 
         let handler = make_command_handler(playback_tx.clone(), PlaybackCommand::Next);
@@ -198,6 +210,17 @@ impl MacosState {
             }
 
             self.now_playing_center.apply_dict(&dict);
+            Ok(())
+        })
+    }
+
+    fn clear_metadata(&mut self) -> Result<()> {
+        autoreleasepool(|_| {
+            if let Ok(mut state) = self.artwork.lock() {
+                state.image = None;
+                state.handler = None;
+            }
+            self.now_playing_center.clear();
             Ok(())
         })
     }
@@ -351,6 +374,7 @@ trait CommandCenterExt {
     fn toggle_play_pause_cmd(&self) -> Retained<MPRemoteCommand>;
     fn play_cmd(&self) -> Retained<MPRemoteCommand>;
     fn pause_cmd(&self) -> Retained<MPRemoteCommand>;
+    fn stop_cmd(&self) -> Retained<MPRemoteCommand>;
     fn next_track_cmd(&self) -> Retained<MPRemoteCommand>;
     fn previous_track_cmd(&self) -> Retained<MPRemoteCommand>;
     fn change_position_cmd(&self) -> Retained<MPChangePlaybackPositionCommand>;
@@ -365,6 +389,9 @@ impl CommandCenterExt for MPRemoteCommandCenter {
     }
     fn pause_cmd(&self) -> Retained<MPRemoteCommand> {
         unsafe { self.pauseCommand() }
+    }
+    fn stop_cmd(&self) -> Retained<MPRemoteCommand> {
+        unsafe { self.stopCommand() }
     }
     fn next_track_cmd(&self) -> Retained<MPRemoteCommand> {
         unsafe { self.nextTrackCommand() }
@@ -398,6 +425,7 @@ trait NowPlayingCenterExt {
     fn apply_dict(&self, dict: &NSMutableDictionary<NSString, AnyObject>);
     fn current_dict(&self) -> Option<Retained<NSDictionary<NSString, AnyObject>>>;
     fn apply_state(&self, state: MPNowPlayingPlaybackState);
+    fn clear(&self);
 }
 
 impl NowPlayingCenterExt for MPNowPlayingInfoCenter {
@@ -409,5 +437,8 @@ impl NowPlayingCenterExt for MPNowPlayingInfoCenter {
     }
     fn apply_state(&self, state: MPNowPlayingPlaybackState) {
         unsafe { self.setPlaybackState(state) }
+    }
+    fn clear(&self) {
+        unsafe { self.setNowPlayingInfo(None) }
     }
 }
