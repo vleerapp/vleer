@@ -443,8 +443,8 @@ impl Render for QueuePane {
 
         if current_song_id != self.last_current_song_id {
             self.last_current_song_id = current_song_id.clone();
-            if let Some(ref song_id) = current_song_id
-                && let Some(display_idx) = self.songs.iter().position(|s| &s.id == song_id)
+            if let Some(display_idx) = cx.global::<Queue>().get_current_display_index()
+                && display_idx < self.songs.len()
             {
                 self.scroll_handle
                     .scroll_to_item_strict(display_idx, ScrollStrategy::Top);

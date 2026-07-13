@@ -241,8 +241,10 @@ impl Playback {
 
                 debug!("Song cached in queue");
 
-                if let Some(mc) = cx.try_global::<MediaController>() {
-                    mc.update_song(song.clone()).ok();
+                if let Some(mc) = cx.try_global::<MediaController>().cloned() {
+                    cx.background_executor()
+                        .spawn(async move { mc.update_song(song).ok(); })
+                        .detach();
                 }
             });
 
@@ -322,13 +324,7 @@ impl Playback {
                     }
                     PlaybackCommand::Stop => {
                         cx.update_global::<Playback, _>(|playback, cx| {
-                            if let Some(sink) = &playback.sink {
-                                sink.stop();
-                            }
-                            playback.paused = true;
-                            if let Some(mc) = cx.try_global::<MediaController>() {
-                                mc.set_state(PlaybackState::Paused).ok();
-                            }
+                            playback.stop(cx);
                         });
                     }
                     PlaybackCommand::Next => {
@@ -378,6 +374,39 @@ impl Playback {
                 mc.set_state(PlaybackState::Paused).ok();
             }
         }
+    }
+
+    pub fn stop(&mut self, cx: &mut App) {
+        let song_id = cx.global::<Queue>().get_current_song_id();
+        if song_id.is_some() {
+            Self::log_event(cx, EventType::Stop, song_id);
+        }
+
+        self.load_token = self.load_token.wrapping_add(1);
+        self.loading = false;
+
+        if let Some(sink) = &self.sink {
+            sink.stop();
+        }
+        self.sink = None;
+        self.current_file = None;
+        self.current_lufs = None;
+        self.position = 0.0;
+        self.paused = true;
+        *self.visualizer_state.bands.lock() = [0.0; 4];
+
+        cx.update_global::<Queue, _>(|queue, _cx| {
+            queue.clear();
+            queue.current_playlist_id = None;
+        });
+        cx.set_global(QueueChanged);
+
+        if let Some(mc) = cx.try_global::<MediaController>() {
+            mc.set_state(PlaybackState::Stopped).ok();
+            mc.clear_song().ok();
+        }
+
+        debug!("Stopped playback and cleared queue");
     }
 
     pub fn play_pause(&mut self, cx: &mut App) {
@@ -522,6 +551,25 @@ impl Playback {
         if current.is_some() {
             Self::log_event(cx, EventType::Stop, current);
         }
+        let song_id = cx.update_global::<Queue, _>(|queue, _| queue.next_manual());
+        if let Some(song_id) = song_id {
+            self.load_song_by_id(cx, song_id);
+        } else {
+            if let Some(sink) = &self.sink {
+                sink.stop();
+            }
+            self.paused = true;
+            if let Some(mc) = cx.try_global::<MediaController>() {
+                mc.set_state(PlaybackState::Paused).ok();
+            }
+        }
+    }
+
+    pub fn advance_auto(&mut self, cx: &mut App) {
+        let current = cx.global::<Queue>().get_current_song_id();
+        if current.is_some() {
+            Self::log_event(cx, EventType::Stop, current);
+        }
         let song_id = cx.update_global::<Queue, _>(|queue, _| queue.next());
         if let Some(song_id) = song_id {
             self.load_song_by_id(cx, song_id);
@@ -541,7 +589,7 @@ impl Playback {
         if current.is_some() {
             Self::log_event(cx, EventType::Stop, current);
         }
-        let song_id = cx.update_global::<Queue, _>(|queue, _| queue.previous());
+        let song_id = cx.update_global::<Queue, _>(|queue, _| queue.previous_manual());
         if let Some(song_id) = song_id {
             self.load_song_by_id(cx, song_id);
         } else {
@@ -575,7 +623,7 @@ impl Playback {
                     if should_advance {
                         cx.update(|_window, cx| {
                             cx.update_global::<Playback, _>(|playback, cx| {
-                                playback.next(cx);
+                                playback.advance_auto(cx);
                             });
                         })
                         .ok();

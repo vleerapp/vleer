@@ -67,6 +67,10 @@ impl Queue {
     }
 
     pub fn add_song_at(&mut self, song_id: Cuid, position: usize) {
+        self.add_song_at_offset(song_id, position, 0);
+    }
+
+    fn add_song_at_offset(&mut self, song_id: Cuid, position: usize, shuffle_offset: usize) {
         let position = position.min(self.items.len());
         self.items.insert(position, song_id);
 
@@ -83,7 +87,7 @@ impl Queue {
                 }
             }
             if let Some(pos) = self.shuffle_position {
-                let insert_at = (pos + 1).min(self.shuffle_order.len());
+                let insert_at = (pos + 1 + shuffle_offset).min(self.shuffle_order.len());
                 self.shuffle_order.insert(insert_at, position);
             } else {
                 self.shuffle_order.push(position);
@@ -111,7 +115,7 @@ impl Queue {
             None => 0,
         };
         for (i, song_id) in song_ids.into_iter().enumerate() {
-            self.add_song_at(song_id, insert_pos + i);
+            self.add_song_at_offset(song_id, insert_pos + i, i);
         }
     }
 
@@ -341,18 +345,40 @@ impl Queue {
             self.move_song(from_display, to_display);
             return;
         }
-        let from_real = self.display_to_items_index(from_display);
-        let to_real = self.display_to_items_index(to_display);
-        self.move_song(from_real, to_real);
-        let from_shuffle = self.shuffle_order.iter().position(|&x| x == from_real);
-        let to_shuffle = self.shuffle_order.iter().position(|&x| x == to_real);
-        if let (Some(from_s), Some(to_s)) = (from_shuffle, to_shuffle) {
-            let item = self.shuffle_order.remove(from_s);
-            self.shuffle_order.insert(to_s, item);
+        if from_display == to_display
+            || from_display >= self.shuffle_order.len()
+            || to_display >= self.shuffle_order.len()
+        {
+            return;
         }
+
+        let entry = self.shuffle_order.remove(from_display);
+        self.shuffle_order.insert(to_display, entry);
+
         if let Some(pos) = self.shuffle_position {
-            self.current_index = self.shuffle_order.get(pos).copied();
+            self.shuffle_position = Some(if pos == from_display {
+                to_display
+            } else if from_display < to_display {
+                if pos > from_display && pos <= to_display {
+                    pos - 1
+                } else {
+                    pos
+                }
+            } else {
+                if pos >= to_display && pos < from_display {
+                    pos + 1
+                } else {
+                    pos
+                }
+            });
         }
+
+        debug!(
+            "Moved song from display {} to {}. Queue size: {}",
+            from_display,
+            to_display,
+            self.items.len()
+        );
     }
 
     pub fn set_current_index(&mut self, index: usize, cx: &App) -> Option<Song> {
@@ -532,6 +558,38 @@ impl Queue {
         } else {
             None
         };
+    }
+
+    pub fn next_manual(&mut self) -> Option<Cuid> {
+        if self.repeat_mode == RepeatMode::One {
+            let saved = self.repeat_mode;
+            self.repeat_mode = RepeatMode::Off;
+            let result = self.next();
+            self.repeat_mode = saved;
+            result
+        } else {
+            self.next()
+        }
+    }
+
+    pub fn previous_manual(&mut self) -> Option<Cuid> {
+        if self.repeat_mode == RepeatMode::One {
+            let saved = self.repeat_mode;
+            self.repeat_mode = RepeatMode::Off;
+            let result = self.previous();
+            self.repeat_mode = saved;
+            result
+        } else {
+            self.previous()
+        }
+    }
+
+    pub fn get_current_display_index(&self) -> Option<usize> {
+        if self.shuffle {
+            self.shuffle_position
+        } else {
+            self.current_index
+        }
     }
 
     pub fn get_shuffle(&self) -> bool {
