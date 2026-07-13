@@ -55,8 +55,12 @@ impl DiscordPresence {
                 });
 
                 if !discord_enabled {
-                    let mut client = client.lock();
-                    if client.clear_activity().is_err() {
+                    let client = Arc::clone(&client);
+                    let ok = cx
+                        .background_executor()
+                        .spawn(async move { client.lock().clear_activity().is_ok() })
+                        .await;
+                    if !ok {
                         *connected.lock() = false;
                     }
                     continue;
@@ -97,46 +101,44 @@ impl DiscordPresence {
                         .unwrap_or((0.0f32, true))
                 });
 
-                let mut client = client.lock();
-
-                let Some(song) = cached_song_info.as_ref() else {
-                    if client.clear_activity().is_err() {
-                        drop(client);
-                        *connected.lock() = false;
+                let desired = match cached_song_info.as_ref() {
+                    Some(song) if !is_paused => {
+                        let total_secs = song.duration as i64;
+                        let elapsed_secs = position as i64;
+                        let remaining_secs = total_secs.saturating_sub(elapsed_secs);
+                        let end = unix_now_i64() + remaining_secs;
+                        let start = end - total_secs;
+                        Some((song.title.clone(), song.artist_name.clone(), start, end))
                     }
-                    continue;
+                    _ => None,
                 };
 
-                if is_paused {
-                    if client.clear_activity().is_err() {
-                        drop(client);
-                        *connected.lock() = false;
-                    }
-                    continue;
-                }
+                let client = Arc::clone(&client);
+                let ok = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let mut client = client.lock();
+                        match &desired {
+                            Some((title, artist_name, start, end)) => {
+                                let mut act = activity::Activity::new()
+                                    .details(title)
+                                    .activity_type(activity::ActivityType::Listening)
+                                    .timestamps(
+                                        activity::Timestamps::new().start(*start).end(*end),
+                                    );
 
-                let total_secs = song.duration as f64;
-                let elapsed_secs = position as i64;
-                let remaining_secs = (total_secs as i64).saturating_sub(elapsed_secs);
-                let end = unix_now_i64() + remaining_secs;
-                let start = end - total_secs as i64;
+                                if let Some(name) = artist_name {
+                                    act = act.state(name);
+                                }
 
-                let mut act = activity::Activity::new()
-                    .details(&song.title)
-                    .activity_type(activity::ActivityType::Listening)
-                    .timestamps(activity::Timestamps::new().start(start).end(end));
+                                client.set_activity(act).is_ok()
+                            }
+                            None => client.clear_activity().is_ok(),
+                        }
+                    })
+                    .await;
 
-                match &song.artist_name {
-                    Some(name) => {
-                        act = act.state(name);
-                    }
-                    None => {
-                        act = act.state("Playing");
-                    }
-                }
-
-                if client.set_activity(act).is_err() {
-                    drop(client);
+                if !ok {
                     *connected.lock() = false;
                 }
             }
