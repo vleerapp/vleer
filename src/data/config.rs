@@ -1,10 +1,36 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use gpui::{App, Global};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
+
+type SaveJob = (PathBuf, String);
+
+fn save_worker() -> &'static std::sync::mpsc::Sender<SaveJob> {
+    static TX: OnceLock<std::sync::mpsc::Sender<SaveJob>> = OnceLock::new();
+    TX.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<SaveJob>();
+        std::thread::Builder::new()
+            .name("vleer-config-save".to_string())
+            .spawn(move || {
+                while let Ok(mut job) = rx.recv() {
+                    while let Ok(next) = rx.try_recv() {
+                        job = next;
+                    }
+                    if let Err(e) = fs::write(&job.0, &job.1) {
+                        warn!("Failed to write config file: {}", e);
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            })
+            .expect("failed to spawn config save thread");
+        tx
+    })
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EqualizerSettings {
@@ -213,7 +239,18 @@ impl Config {
             self.config.scan.paths = scan_paths;
         }
         Self::validate_equalizer(&mut self.config.equalizer);
-        self.save().ok();
+        self.save_in_background();
+    }
+
+    fn save_in_background(&self) {
+        let mut config = self.config.clone();
+        Self::validate_equalizer(&mut config.equalizer);
+        match toml::to_string_pretty(&config) {
+            Ok(content) => {
+                let _ = save_worker().send((self.config_path.clone(), content));
+            }
+            Err(e) => warn!("Failed to serialize config: {}", e),
+        }
     }
 
     pub fn save(&self) -> Result<()> {
