@@ -75,6 +75,20 @@ fn reload_config(_: &ReloadConfig, cx: &mut App) {
         }
     });
 
+    let config = cx.global::<Config>().clone();
+    let (eq_enabled, gains, q_values) = {
+        let eq = &config.get().equalizer;
+        (eq.enabled, eq.gains.clone(), eq.q_values.clone())
+    };
+    cx.update_global::<Playback, _>(|playback, _cx| {
+        playback.apply_config(&config);
+        if eq_enabled {
+            playback.apply_eq_settings(&gains, &q_values);
+        } else {
+            playback.set_eq_enabled(false);
+        }
+    });
+
     use crate::status::StatusColor;
     let warning = cx.global::<Config>().parse_warning.clone();
     if let Some(warning) = warning {
