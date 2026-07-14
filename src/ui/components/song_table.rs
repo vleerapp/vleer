@@ -1,3 +1,4 @@
+use crate::data::config::Config;
 use crate::data::models::Cuid;
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
@@ -282,7 +283,8 @@ impl Render for SongTableItem {
                 .is_some_and(|s| s.id == data.id);
             let is_playing = is_current && cx.global::<Playback>().get_playing();
 
-            if is_playing && !self.is_animating {
+            let visualizer_enabled_for_anim = cx.global::<Config>().get().audio.visualizer;
+            if is_playing && visualizer_enabled_for_anim && !self.is_animating {
                 self.is_animating = true;
 
                 cx.spawn_in(
@@ -329,7 +331,8 @@ impl Render for SongTableItem {
                 .detach();
             }
 
-            let spectrum = if is_playing {
+            let visualizer_enabled = cx.global::<Config>().get().audio.visualizer;
+            let spectrum = if is_playing && visualizer_enabled {
                 cx.global::<Playback>().get_spectrum()
             } else {
                 [0.1, 0.1, 0.1, 0.1]
@@ -396,7 +399,7 @@ impl Render for SongTableItem {
                                         .gap(px(3.0))
                                         .p(px(5.0))
                                         .bg(black().opacity(0.5))
-                                        .when(!is_current, |s| s.invisible())
+                                        .when(!is_current || !visualizer_enabled, |s| s.invisible())
                                         .group_hover("cover-container", |s| s.invisible())
                                         .children((0..4).map(|i| {
                                             let height_pct =
@@ -569,7 +572,7 @@ impl Render for SongTableItem {
                             .child(
                                 div()
                                     .text_color(variables.text_secondary)
-                                    .when(is_current, |s| s.invisible())
+                                    .when(is_current && visualizer_enabled, |s| s.invisible())
                                     .group_hover("number-cell", |s| s.invisible())
                                     .child(number_value),
                             )
@@ -581,7 +584,7 @@ impl Render for SongTableItem {
                                     .items_center()
                                     .justify_center()
                                     .gap(px(3.0))
-                                    .when(!is_current, |s| s.invisible())
+                                    .when(!is_current || !visualizer_enabled, |s| s.invisible())
                                     .children((0..4).map(|i| {
                                         let height_pct = (spectrum[i] * 100.0).clamp(10.0, 80.0);
                                         let height_px = COVER_SIZE * (height_pct / 100.0);
@@ -635,7 +638,7 @@ impl Render for SongTableItem {
                                     .flex()
                                     .items_center()
                                     .gap(px(3.0))
-                                    .when(is_current, |s| {
+                                    .when(is_current && visualizer_enabled, |s| {
                                         s.child(div().flex().items_center().gap(px(3.0)).children(
                                             (0..4).map(|i| {
                                                 let height_pct =
@@ -645,7 +648,9 @@ impl Render for SongTableItem {
                                             }),
                                         ))
                                     })
-                                    .when(!is_current, |s| s.child(number_value)),
+                                    .when(!is_current || !visualizer_enabled, |s| {
+                                        s.child(number_value)
+                                    }),
                             );
                     }
                 } else {

@@ -264,8 +264,29 @@ pub struct SettingsView {
 
 impl SettingsView {
     pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
-        cx.observe_global::<Config>(|_this, cx| cx.notify())
-            .detach();
+        cx.observe_global::<Config>(|this, cx| {
+            let eq = cx.global::<Config>().get().equalizer.clone();
+            for (i, input) in this.gain_inputs.iter().enumerate() {
+                let gain = eq.gains.get(i).copied().unwrap_or(0.0);
+                input.update(cx, |inp, cx| {
+                    inp.set_text(format!("{:.1}", gain), cx);
+                });
+            }
+            for (i, input) in this.freq_inputs.iter().enumerate() {
+                let freq = eq.frequencies.get(i).copied().unwrap_or(0);
+                input.update(cx, |inp, cx| {
+                    inp.set_text(format!("{}", freq), cx);
+                });
+            }
+            for (i, input) in this.q_inputs.iter().enumerate() {
+                let q = eq.q_values.get(i).copied().unwrap_or(1.461);
+                input.update(cx, |inp, cx| {
+                    inp.set_text(format!("{:.2}", q), cx);
+                });
+            }
+            cx.notify();
+        })
+        .detach();
 
         let eq = cx.global::<Config>().get().equalizer.clone();
         let element_hover = cx.global::<Variables>().element_hover;
@@ -424,6 +445,7 @@ impl Render for SettingsView {
         let variables = cx.global::<Variables>();
         let telemetry = cx.global::<Config>().get().telemetry;
         let discord_rpc = cx.global::<Config>().get().discord_rpc;
+        let visualizer_enabled = cx.global::<Config>().get().audio.visualizer;
         let eq_enabled = cx.global::<Config>().get().equalizer.enabled;
 
         div()
@@ -524,6 +546,26 @@ impl Render for SettingsView {
                                     .text_xl()
                                     .font_weight(FontWeight::BOLD)
                                     .child("Audio"),
+                            )
+                            .child(
+                                flex_row()
+                                    .gap(px(variables.padding_8))
+                                    .child(
+                                        Switch::new("visualizer-enabled-switch", visualizer_enabled)
+                                            .on_change(move |value, _window, cx| {
+                                                cx.update_global::<Config, _>(|config, _cx| {
+                                                    config.set(|s| s.audio.visualizer = value);
+                                                });
+                                                cx.update_global::<Playback, _>(|playback, _cx| {
+                                                    playback.set_visualizer_enabled(value);
+                                                });
+                                            }),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_color(variables.text_secondary)
+                                            .child("Visualizer"),
+                                    ),
                             )
                             .child(
                                 flex_row()

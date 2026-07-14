@@ -538,7 +538,13 @@ impl Playback {
         let mut eq = self.equalizer.lock();
         eq.apply_settings(&settings.equalizer);
 
+        self.visualizer_state.set_enabled(settings.audio.visualizer);
+
         debug!("Applied config to playback");
+    }
+
+    pub fn set_visualizer_enabled(&mut self, enabled: bool) {
+        self.visualizer_state.set_enabled(enabled);
     }
 
     pub fn play_queue(&mut self, cx: &mut App) {

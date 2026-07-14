@@ -3,6 +3,7 @@ use rodio::Source;
 use spectrum_analyzer::scaling::divide_by_N_sqrt;
 use spectrum_analyzer::{FrequencyLimit, samples_fft_to_spectrum};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub trait ToF32 {
     fn to_f32_sample(&self) -> f32;
@@ -26,9 +27,28 @@ impl ToF32 for u16 {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct VisualizerState {
     pub bands: Arc<Mutex<[f32; 4]>>,
+    pub enabled: Arc<AtomicBool>,
+}
+
+impl Default for VisualizerState {
+    fn default() -> Self {
+        Self {
+            bands: Arc::new(Mutex::new([0.0; 4])),
+            enabled: Arc::new(AtomicBool::new(true)),
+        }
+    }
+}
+
+impl VisualizerState {
+    pub fn set_enabled(&self, enabled: bool) {
+        self.enabled.store(enabled, Ordering::Relaxed);
+        if !enabled {
+            *self.bands.lock() = [0.0; 4];
+        }
+    }
 }
 
 struct BandDetector {
@@ -149,6 +169,13 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         let sample = self.input.next()?;
+
+        if !self.state.enabled.load(Ordering::Relaxed) {
+            if !self.buffer.is_empty() {
+                self.buffer.clear();
+            }
+            return Some(sample);
+        }
 
         self.buffer.push(sample);
 

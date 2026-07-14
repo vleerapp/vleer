@@ -1,6 +1,7 @@
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 
+use crate::data::config::Config;
 use crate::data::db::repo::Database;
 use crate::data::models::{Cuid, Song};
 use crate::media::playback::Playback;
@@ -204,6 +205,7 @@ struct RowState<'a> {
     song: &'a Song,
     is_current: bool,
     spectrum: [f32; 4],
+    visualizer_enabled: bool,
 }
 
 fn render_row(
@@ -217,6 +219,7 @@ fn render_row(
         song,
         is_current,
         spectrum,
+        visualizer_enabled,
     } = state;
     let song = song.clone();
     let variables = *variables;
@@ -320,7 +323,7 @@ fn render_row(
                                 .gap(px(3.0))
                                 .p(px(5.0))
                                 .bg(black().opacity(0.5))
-                                .when(!is_current, |s| s.invisible())
+                                .when(!is_current || !visualizer_enabled, |s| s.invisible())
                                 .group_hover("cover-container", |s| s.invisible())
                                 .children((0..4).map(move |i| {
                                     let height_pct = (spectrum[i] * 100.0).clamp(10.0, 80.0);
@@ -452,7 +455,8 @@ impl Render for QueuePane {
         }
 
         let is_globally_playing = cx.global::<Playback>().get_playing();
-        let spectrum = if is_globally_playing {
+        let visualizer_enabled = cx.global::<Config>().get().audio.visualizer;
+        let spectrum = if is_globally_playing && visualizer_enabled {
             cx.global::<Playback>().get_spectrum()
         } else {
             [0.1, 0.1, 0.1, 0.1]
@@ -559,6 +563,7 @@ impl Render for QueuePane {
                                                             song,
                                                             is_current,
                                                             spectrum,
+                                                            visualizer_enabled,
                                                         },
                                                         &variables,
                                                         context_menu.clone(),

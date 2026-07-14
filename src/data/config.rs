@@ -69,12 +69,16 @@ impl Default for ScanSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AudioSettings {
+    pub visualizer: bool,
     pub volume: f32,
 }
 
 impl Default for AudioSettings {
     fn default() -> Self {
-        Self { volume: 0.5 }
+        Self {
+            visualizer: true,
+            volume: 0.5,
+        }
     }
 }
 
@@ -95,6 +99,7 @@ pub struct SettingsConfig {
     pub version: u32,
     pub telemetry: bool,
     pub discord_rpc: bool,
+    #[serde(default)]
     pub equalizer: EqualizerSettings,
     pub scan: ScanSettings,
     pub audio: AudioSettings,
