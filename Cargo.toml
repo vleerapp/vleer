@@ -10,26 +10,26 @@ license = "AGPL-3.0"
 categories = ["multimedia::audio"]
 
 [dependencies]
-gpui = { git = "https://github.com/vleerapp/zed", rev = "6997d92cbfd35c1fc4059571af71269a8bd7b4a4" }
-gpui_macros = { git = "https://github.com/vleerapp/zed", rev = "6997d92cbfd35c1fc4059571af71269a8bd7b4a4" }
-gpui_platform = { git = "https://github.com/vleerapp/zed", rev = "6997d92cbfd35c1fc4059571af71269a8bd7b4a4", features = [
+gpui = { git = "https://github.com/vleerapp/zed", rev = "bbb8d582433856b9b9c334ebb715c738fc7eaf2b" }
+gpui_macros = { git = "https://github.com/vleerapp/zed", rev = "bbb8d582433856b9b9c334ebb715c738fc7eaf2b" }
+gpui_platform = { git = "https://github.com/vleerapp/zed", rev = "bbb8d582433856b9b9c334ebb715c738fc7eaf2b", features = [
   "font-kit",
   "x11",
   "wayland",
   "runtime_shaders",
 ] }
-anyhow = "1.0.103"
+anyhow = "1.0.104"
 dirs = "6.0.0"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-tokio = { version = "1.52.3", features = ["sync"] }
-futures = "0.3.32"
+tokio = { version = "1.53.1", features = ["sync"] }
+futures = "0.3.33"
 rusqlite = { version = "0.40.1", features = ["bundled", "chrono"] }
 rusqlite_migration = { version = "2.6.0", features = ["from-directory"] }
 parking_lot = "0.12.5"
-serde = { version = "1.0.228", features = ["derive"] }
+serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.3"
-rodio = { git = "https://github.com/vleerapp/rodio", rev = "bc15e3456c2ca6d419c335590bee2e190c1a0fba", features = [
+rodio = { git = "https://github.com/vleerapp/rodio", rev = "b28bbf23d9cbc72e7f54310f36f90d6ca9bb5b88", features = [
   "symphonia",
   "symphonia-all",
 ] }
@@ -52,7 +52,7 @@ lru = "0.18.1"
 lazy_static = "1.5.0"
 dashmap = "6.2.1"
 ureq = { version = "3.3.0", features = ["json"] }
-uuid = { version = "1.23.5", features = ["serde", "v4"] }
+uuid = { version = "1.24.0", features = ["serde", "v4"] }
 semver = "1.0.28"
 sequoia-openpgp = { version = "2.4.1", default-features = false, features = ["crypto-rust", "allow-experimental-crypto", "allow-variable-time-crypto"] }
 souvlaki = "0.8.3"
@@ -62,17 +62,17 @@ chrono = "0.4.45"
 base64 = "0.22.1"
 itertools = "0.15.0"
 rand = "0.10.2"
-async-trait = "0.1.89"
+async-trait = "0.1.91"
 raw-window-handle = "0.6.2"
 interprocess = "2.4.2"
-libc = "0.2.186"
+libc = "0.2.188"
 
 [dev-dependencies]
-serde_json = "1.0.150"
+serde_json = "1.0.151"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 mpris-server = "0.10.0"
-zbus = "5.17.0"
+zbus = "5.18.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6.2"
