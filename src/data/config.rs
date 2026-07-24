@@ -34,9 +34,13 @@ fn save_worker() -> &'static std::sync::mpsc::Sender<SaveJob> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EqualizerSettings {
+    #[serde(default)]
     pub enabled: bool,
+    #[serde(default)]
     pub frequencies: Vec<i32>,
+    #[serde(default)]
     pub gains: Vec<f32>,
+    #[serde(default)]
     pub q_values: Vec<f32>,
 }
 
@@ -53,6 +57,7 @@ impl Default for EqualizerSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanSettings {
+    #[serde(default)]
     pub paths: Vec<String>,
 }
 
@@ -69,7 +74,9 @@ impl Default for ScanSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AudioSettings {
+    #[serde(default = "defaults::visualizer")]
     pub visualizer: bool,
+    #[serde(default = "defaults::volume")]
     pub volume: f32,
 }
 
@@ -84,6 +91,7 @@ impl Default for AudioSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdaterSettings {
+    #[serde(default = "defaults::auto_check")]
     pub auto_check: bool,
 }
 
@@ -95,26 +103,33 @@ impl Default for UpdaterSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsConfig {
-    #[serde(default = "default_version")]
+    #[serde(default = "defaults::version")]
     pub version: u32,
+    #[serde(default)]
     pub telemetry: bool,
+    #[serde(default)]
     pub discord_rpc: bool,
     #[serde(default)]
     pub equalizer: EqualizerSettings,
+    #[serde(default)]
     pub scan: ScanSettings,
+    #[serde(default)]
     pub audio: AudioSettings,
     #[serde(default)]
     pub updater: UpdaterSettings,
 }
 
-fn default_version() -> u32 {
-    1
+mod defaults {
+    pub fn version() -> u32 { 1 }
+    pub fn visualizer() -> bool { true }
+    pub fn volume() -> f32 { 0.5 }
+    pub fn auto_check() -> bool { true }
 }
 
 impl Default for SettingsConfig {
     fn default() -> Self {
         Self {
-            version: default_version(),
+            version: defaults::version(),
             telemetry: false,
             discord_rpc: false,
             equalizer: EqualizerSettings::default(),
@@ -172,7 +187,7 @@ impl Config {
         };
 
         Self::validate_equalizer(&mut config.equalizer);
-        let needs_save = config.version < default_version();
+        let needs_save = config.version < defaults::version();
         Self::migrate_config(&mut config);
 
         let config = Self {
