@@ -120,10 +120,18 @@ pub struct SettingsConfig {
 }
 
 mod defaults {
-    pub fn version() -> u32 { 1 }
-    pub fn visualizer() -> bool { true }
-    pub fn volume() -> f32 { 0.5 }
-    pub fn auto_check() -> bool { true }
+    pub fn version() -> u32 {
+        1
+    }
+    pub fn visualizer() -> bool {
+        true
+    }
+    pub fn volume() -> f32 {
+        0.5
+    }
+    pub fn auto_check() -> bool {
+        true
+    }
 }
 
 impl Default for SettingsConfig {
