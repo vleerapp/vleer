@@ -59,13 +59,13 @@ souvlaki = "0.8.3"
 spectrum-analyzer = "1.8.0"
 discord-rich-presence = "1.1.0"
 chrono = "0.4.45"
-base64 = "0.22.1"
+base64 = "0.23.0"
 itertools = "0.15.0"
 rand = "0.10.2"
 async-trait = "0.1.91"
 raw-window-handle = "0.6.2"
 interprocess = "2.4.2"
-libc = "0.2.188"
+libc = "0.2.189"
 
 [dev-dependencies]
 serde_json = "1.0.151"
@@ -135,3 +135,6 @@ formats = ["dmg", "wix", "appimage", "deb"]
 
 [package.metadata.packager.macos]
 signing_identity = "-"
+
+[patch.crates-io]
+xcb = { git = "https://github.com/rust-x-bindings/rust-xcb" }

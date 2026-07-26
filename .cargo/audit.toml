@@ -1,0 +1,8 @@
+[advisories]
+ignore = [
+    # rsa: Marvin timing attack, no fix available upstream (RUSTSEC advisory
+    # itself lists patched = []). Only reachable via sequoia-openpgp's
+    # crypto-rust backend; vleer only ever verifies ed25519 signatures on
+    # update binaries, so the RSA code path is never executed.
+    "RUSTSEC-2023-0071",
+]
