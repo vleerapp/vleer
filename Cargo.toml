@@ -10,9 +10,8 @@ license = "AGPL-3.0"
 categories = ["multimedia::audio"]
 
 [dependencies]
-gpui = { git = "https://github.com/vleerapp/zed", rev = "bbb8d582433856b9b9c334ebb715c738fc7eaf2b" }
-gpui_macros = { git = "https://github.com/vleerapp/zed", rev = "bbb8d582433856b9b9c334ebb715c738fc7eaf2b" }
-gpui_platform = { git = "https://github.com/vleerapp/zed", rev = "bbb8d582433856b9b9c334ebb715c738fc7eaf2b", features = [
+gpui = { package = "gpui-unofficial", version = "1.14.2" }
+gpui_platform = { package = "gpui-platform-gpui-unofficial", version = "1.14.2", features = [
   "font-kit",
   "x11",
   "wayland",
