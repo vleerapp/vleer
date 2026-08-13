@@ -240,16 +240,13 @@ fn spawn_page_fetch(
 
     cx.spawn(async move |cx: &mut AsyncApp| {
         let q = query.clone();
-        let items = match bg
+        let items = bg
             .spawn(async move { db.get_songs(Some(&q), sort, ascending, offset, limit) })
             .await
-        {
-            Ok(items) => items,
-            Err(e) => {
+            .unwrap_or_else(|e| {
                 error!("songs page query failed: {}", e);
                 Vec::new()
-            }
-        };
+            });
         let entries: Vec<Arc<SongEntry>> =
             items.into_iter().map(song_entry_from_list_item).collect();
 

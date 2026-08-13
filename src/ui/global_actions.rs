@@ -43,7 +43,7 @@ fn quit(_: &Quit, cx: &mut App) {
 
     cx.update_global::<Config, _>(|config, _| {
         if let Err(e) = config.save() {
-            tracing::error!("Failed to save config: {}", e);
+            error!("Failed to save config: {}", e);
         }
     });
 

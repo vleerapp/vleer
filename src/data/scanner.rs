@@ -208,7 +208,7 @@ impl Scanner {
 
     fn update_scan_progress(&self, progress: ScanProgress) {
         use crate::status::StatusColor;
-        let reporter = crate::ui::layout::navbar::status();
+        let reporter = navbar::status();
         match progress.phase {
             ScanPhase::Idle => reporter.clear("library.scan"),
             ScanPhase::Completed => reporter.set(

@@ -20,7 +20,7 @@ impl Asset for VleerImageLoader {
     fn load(
         source: Self::Source,
         cx: &mut App,
-    ) -> impl std::future::Future<Output = Self::Output> + Send + 'static {
+    ) -> impl Future<Output = Self::Output> + Send + 'static {
         let image_conn = cx.global::<Database>().image_conn.clone();
         let executor = cx.background_executor().clone();
 

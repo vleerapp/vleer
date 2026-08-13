@@ -619,7 +619,7 @@ impl Playback {
             let executor = executor;
             async move {
                 loop {
-                    executor.timer(std::time::Duration::from_millis(100)).await;
+                    executor.timer(Duration::from_millis(100)).await;
 
                     let should_advance = cx
                         .update(|_window, cx| {

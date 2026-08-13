@@ -241,7 +241,7 @@ impl Render for ContextMenu {
                             .hover(|s| s.bg(variables.element_hover))
                             .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
                                 if !has_submenu {
-                                    (handler)(window, cx);
+                                    handler(window, cx);
                                     entity_item
                                         .update(cx, |this, cx| {
                                             this.hide(cx);
@@ -353,7 +353,7 @@ impl Render for ContextMenu {
                                 .text_color(variables.text)
                                 .hover(|s| s.bg(variables.element_hover))
                                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                    (action)(pl_id.clone(), cx);
+                                    action(pl_id.clone(), cx);
                                     entity_close
                                         .update(cx, |this, cx| {
                                             this.hide(cx);
@@ -381,7 +381,7 @@ impl Render for ContextMenu {
                                 let new_id = Cuid::new();
                                 let db = cx.global::<Database>().clone();
                                 if let Err(e) = db.upsert_playlist(&new_id, "", None, None, false) {
-                                    tracing::error!("Failed to create playlist: {}", e);
+                                    error!("Failed to create playlist: {}", e);
                                     return;
                                 }
                                 cx.update_global::<SelectedPlaylist, _>(|sel, _| {

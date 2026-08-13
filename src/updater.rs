@@ -358,9 +358,6 @@ elseif (Test-Path '{fallback}') {{ Start-Process '{fallback}' }}
             replace_appimage(path)?;
             std::process::exit(0);
         }
-
-        #[allow(unreachable_code)]
-        Ok(())
     }
 }
 

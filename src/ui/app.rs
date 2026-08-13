@@ -252,7 +252,7 @@ impl Render for MainWindow {
     }
 }
 
-pub fn find_fonts(cx: &mut App) -> gpui::Result<()> {
+pub fn find_fonts(cx: &mut App) -> Result<()> {
     let paths = cx.asset_source().list("!bundled:fonts")?;
     let mut fonts = vec![];
     for path in paths {
@@ -268,7 +268,7 @@ pub fn find_fonts(cx: &mut App) -> gpui::Result<()> {
     results
 }
 
-pub async fn run() -> anyhow::Result<()> {
+pub async fn run() -> Result<()> {
     let data_dir = dirs::data_dir()
         .expect("couldn't get data directory")
         .join("vleer");
@@ -361,7 +361,7 @@ pub async fn run() -> anyhow::Result<()> {
                         traffic_light_position: None,
                     }),
                     app_id: Some("vleer".to_string()),
-                    kind: gpui::WindowKind::Normal,
+                    kind: WindowKind::Normal,
                     window_min_size: Some(Size::new(px(754.0), px(443.0))),
                     ..Default::default()
                 },

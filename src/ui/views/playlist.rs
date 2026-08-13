@@ -285,7 +285,7 @@ impl PlaylistView {
 }
 
 impl Render for PlaylistView {
-    fn render(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = *cx.global::<Variables>();
         let context_menu = self.context_menu.clone();
 

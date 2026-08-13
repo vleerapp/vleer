@@ -31,7 +31,7 @@ fn open_connection(path: &Path, busy_timeout_ms: u32) -> Result<Connection> {
     Ok(conn)
 }
 
-fn run_migrations(conn: &mut rusqlite::Connection) -> Result<()> {
+fn run_migrations(conn: &mut Connection) -> Result<()> {
     let mut files: Vec<(String, String)> = MigrationFiles::iter()
         .filter_map(|name| {
             let sql = MigrationFiles::get(&name)?;
@@ -51,7 +51,7 @@ fn run_migrations(conn: &mut rusqlite::Connection) -> Result<()> {
 }
 
 fn collect_mapped<T, U, F>(
-    conn: &rusqlite::Connection,
+    conn: &Connection,
     sql: &str,
     params: impl rusqlite::Params,
     mapper: F,
@@ -854,7 +854,7 @@ impl Database {
             return Ok(Vec::new());
         };
 
-        let per_type_limit = (limit.saturating_mul(2)).max(20);
+        let per_type_limit = limit.saturating_mul(2).max(20);
         let conn = self.conn.lock();
 
         collect_mapped::<SearchResultRow, SearchResultRow, _>(

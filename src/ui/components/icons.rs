@@ -63,7 +63,7 @@ impl InteractiveElement for Icon {
 impl StatefulInteractiveElement for Icon {}
 
 impl RenderOnce for Icon {
-    fn render(mut self, _: &mut gpui::Window, cx: &mut gpui::App) -> impl gpui::IntoElement {
+    fn render(mut self, _: &mut Window, cx: &mut App) -> impl gpui::IntoElement {
         let variables = cx.global::<Variables>();
 
         if self.svg.text_style().color.is_none() {

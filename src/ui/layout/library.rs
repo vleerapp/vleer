@@ -278,7 +278,7 @@ fn pinned_item(
                                 let bg = cx.background_executor().clone();
 
                                 cx.spawn(async move |cx: &mut AsyncApp| {
-                                    let song_ids = match bg
+                                    let song_ids = bg
                                         .spawn(async move {
                                             match item_type.as_str() {
                                                 "Album" => Ok::<Vec<Cuid>, anyhow::Error>(
@@ -298,13 +298,10 @@ fn pinned_item(
                                             }
                                         })
                                         .await
-                                    {
-                                        Ok(song_ids) => song_ids,
-                                        Err(e) => {
+                                        .unwrap_or_else(|e| {
                                             error!("pinned item songs query failed: {}", e);
                                             Vec::new()
-                                        }
-                                    };
+                                        });
 
                                     if !song_ids.is_empty() {
                                         cx.update(|cx| {
@@ -475,7 +472,7 @@ impl Render for Library {
                                                             if let Err(e) = db.upsert_playlist(
                                                                 &new_id, "", None, None, false,
                                                             ) {
-                                                                tracing::error!(
+                                                                error!(
                                                                     "Failed to create playlist: {}",
                                                                     e
                                                                 );

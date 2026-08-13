@@ -444,12 +444,7 @@ impl Render for SongTableItem {
                                         cx.set_global(QueueChanged);
 
                                         if let Some(get_queue) = &get_queue {
-                                            (get_queue)(
-                                                cx,
-                                                data.id.clone(),
-                                                row_index,
-                                                sort_method,
-                                            );
+                                            get_queue(cx, data.id.clone(), row_index, sort_method);
                                         }
                                     }
                                 }),
@@ -624,7 +619,7 @@ impl Render for SongTableItem {
                                 cx.set_global(QueueChanged);
 
                                 if let Some(get_queue) = &get_queue {
-                                    (get_queue)(cx, data.id.clone(), row_index, sort_method);
+                                    get_queue(cx, data.id.clone(), row_index, sort_method);
                                 }
                             });
                         row = row.child(number_cell);
@@ -671,7 +666,7 @@ impl Render for SongTableItem {
 
 pub enum SongTableEvent {
     NewRows,
-    InvalidateRange(std::ops::Range<usize>),
+    InvalidateRange(Range<usize>),
 }
 
 #[derive(Clone)]
@@ -748,7 +743,7 @@ impl SongTable {
             cx.subscribe_self(move |this, event: &SongTableEvent, cx| match event {
                 SongTableEvent::NewRows => {
                     let sort_method = *this.sort_method.read(cx);
-                    let row_count = (get_row_count_for_event)(cx, sort_method);
+                    let row_count = get_row_count_for_event(cx, sort_method);
                     let should_reset_scroll = row_count < this.row_count;
 
                     this.views.update(cx, |v, _| v.clear());

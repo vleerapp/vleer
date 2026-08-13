@@ -225,7 +225,10 @@ impl PlaylistsView {
         }
 
         let start_item = range.start.saturating_mul(items_per_row);
-        let end_item = (range.end.saturating_mul(items_per_row)).min(self.total_count);
+        let end_item = range
+            .end
+            .saturating_mul(items_per_row)
+            .min(self.total_count);
         if start_item >= end_item {
             return;
         }
@@ -302,7 +305,7 @@ fn playlist_tile(
 }
 
 impl Render for PlaylistsView {
-    fn render(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
         let queue_visible = cx.global::<QueueVisible>();
 

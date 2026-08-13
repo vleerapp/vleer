@@ -47,9 +47,9 @@ fn main() -> anyhow::Result<()> {
     let _instance_guard = if skip_single_instance {
         None
     } else {
-        match crate::single_instance::try_acquire()? {
-            crate::single_instance::AcquireResult::Acquired(guard) => Some(guard),
-            crate::single_instance::AcquireResult::AlreadyRunning => {
+        match single_instance::try_acquire()? {
+            single_instance::AcquireResult::Acquired(guard) => Some(guard),
+            single_instance::AcquireResult::AlreadyRunning => {
                 tracing::warn!("Another Vleer instance is already running. Exiting.");
                 return Ok(());
             }
@@ -58,5 +58,5 @@ fn main() -> anyhow::Result<()> {
 
     tracing::info!("Starting application");
 
-    futures::executor::block_on(crate::ui::app::run())
+    futures::executor::block_on(ui::app::run())
 }

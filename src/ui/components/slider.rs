@@ -72,6 +72,10 @@ impl Element for Slider {
         self.id.clone()
     }
 
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
     fn request_layout(
         &mut self,
         _: Option<&GlobalElementId>,
@@ -82,10 +86,6 @@ impl Element for Slider {
         let mut style = Style::default();
         style.refine(&self.style);
         (window.request_layout(style, [], cx), ())
-    }
-
-    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
-        None
     }
 
     fn prepaint(
@@ -161,8 +161,8 @@ impl Element for Slider {
                         cx.stop_propagation();
 
                         let value = compute_value(ev.position, bounds, orientation);
-                        (func.borrow_mut())(value, window, cx);
-                        (*mouse_in_1.borrow_mut()) = true;
+                        func.borrow_mut()(value, window, cx);
+                        *mouse_in_1.borrow_mut() = true;
                     });
 
                     let mouse_in_2 = mouse_in.clone();
@@ -170,14 +170,14 @@ impl Element for Slider {
                     cx.on_mouse_event(move |ev: &MouseMoveEvent, _, window, cx| {
                         if *mouse_in_2.borrow() {
                             let value = compute_value(ev.position, bounds, orientation);
-                            (func_copy.borrow_mut())(value, window, cx);
+                            func_copy.borrow_mut()(value, window, cx);
                         }
                     });
 
                     let mouse_in_3 = mouse_in.clone();
 
                     cx.on_mouse_event(move |_: &MouseUpEvent, _, _, _| {
-                        (*mouse_in_3.borrow_mut()) = false;
+                        *mouse_in_3.borrow_mut() = false;
                     });
 
                     ((), Some(mouse_in))
