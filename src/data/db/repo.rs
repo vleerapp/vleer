@@ -5,6 +5,9 @@ use crate::data::{
         PinnedItem, Playlist, PlaylistListItem, PlaylistTrack, RecentItem, Song, SongListItem,
         SongSort,
     },
+    search::{
+        AlbumSearchEntry, ArtistSearchEntry, PlaylistSearchEntry, SearchIndex, SongSearchEntry,
+    },
 };
 use anyhow::Result;
 use gpui::Global;
@@ -12,6 +15,7 @@ use parking_lot::Mutex;
 use rusqlite::{Connection, OptionalExtension, ToSql, params};
 use rusqlite_migration::Migrations;
 use rust_embed::RustEmbed;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -71,6 +75,7 @@ where
 pub struct Database {
     conn: Arc<Mutex<Connection>>,
     pub image_conn: Arc<Mutex<Connection>>,
+    search_index: Arc<Mutex<SearchIndex>>,
 }
 
 impl Global for Database {}
@@ -83,9 +88,107 @@ impl Database {
 
         let conn = open_connection(path, 3000)?;
         let image_conn = open_connection(path, 5000)?;
-        Ok(Self {
+        let db = Self {
             conn: Arc::new(Mutex::new(conn)),
             image_conn: Arc::new(Mutex::new(image_conn)),
+            search_index: Arc::new(Mutex::new(SearchIndex::default())),
+        };
+        db.rebuild_search_index();
+        Ok(db)
+    }
+
+    pub fn rebuild_search_index(&self) {
+        match self.load_search_index_data() {
+            Ok(index) => *self.search_index.lock() = index,
+            Err(e) => tracing::error!("rebuild_search_index failed: {e}"),
+        }
+    }
+
+    fn load_search_index_data(&self) -> Result<SearchIndex> {
+        let conn = self.conn.lock();
+
+        let songs = {
+            let mut stmt = conn.prepare(
+                "SELECT s.id, s.title,
+                        COALESCE((SELECT GROUP_CONCAT(name, ', ')
+                                  FROM (SELECT ar.name FROM songs_artists sa
+                                        JOIN artists ar ON sa.artist_id = ar.id
+                                        WHERE sa.song_id = s.id ORDER BY sa.position)), '') AS artist,
+                        COALESCE(al.title, '') AS album,
+                        s.image_id
+                 FROM songs s
+                 LEFT JOIN albums al ON s.album_id = al.id",
+            )?;
+            stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, Cuid>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .map(|(id, title, artist, album, image_id)| {
+                SongSearchEntry::new(id, title, artist, album, image_id)
+            })
+            .collect()
+        };
+
+        let artists = {
+            let mut stmt = conn.prepare("SELECT id, name, image_id FROM artists")?;
+            stmt.query_map([], |row| {
+                Ok(ArtistSearchEntry {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    image_id: row.get(2)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        let albums = {
+            let mut stmt = conn.prepare(
+                "SELECT al.id, al.title,
+                        COALESCE((SELECT GROUP_CONCAT(name, ', ')
+                                  FROM (SELECT ar.name FROM albums_artists aa
+                                        JOIN artists ar ON aa.artist_id = ar.id
+                                        WHERE aa.album_id = al.id ORDER BY aa.position)), '') AS artist,
+                        al.image_id
+                 FROM albums al",
+            )?;
+            stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, Cuid>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .map(|(id, title, artist, image_id)| AlbumSearchEntry::new(id, title, artist, image_id))
+            .collect()
+        };
+
+        let playlists = {
+            let mut stmt = conn.prepare("SELECT id, name, image_id FROM playlists")?;
+            stmt.query_map([], |row| {
+                Ok(PlaylistSearchEntry {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    image_id: row.get(2)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        Ok(SearchIndex {
+            songs,
+            artists,
+            albums,
+            playlists,
         })
     }
 
@@ -155,77 +258,110 @@ impl Database {
     ) -> Result<()> {
         let year_str = year.map(|y| y.to_string());
         let id = Cuid::new();
-        let mut conn = self.conn.lock();
-        let tx = conn.transaction()?;
+        let (song_id, artist_entries, album_title) = {
+            let mut conn = self.conn.lock();
+            let tx = conn.transaction()?;
 
-        let song_id: Cuid = tx
-            .prepare_cached(
-                "INSERT INTO songs (id, title, album_id, file_path, file_size, file_modified, date, duration, image_id, track_number, lufs)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-                 ON CONFLICT(file_path) DO UPDATE SET
-                    title = excluded.title,
-                    album_id = excluded.album_id,
-                    file_size = excluded.file_size,
-                    file_modified = excluded.file_modified,
-                    date = excluded.date,
-                    duration = excluded.duration,
-                    image_id = excluded.image_id,
-                    track_number = excluded.track_number,
-                    lufs = excluded.lufs
-                 RETURNING id",
-            )?
-            .query_row(
-                params![id, title, album_id, file_path, file_size, file_modified, year_str, duration, image_id, track_number, lufs],
-                |row| row.get(0),
-            )?;
-
-        tx.execute(
-            "DELETE FROM songs_artists WHERE song_id = ?1",
-            params![song_id],
-        )?;
-        for (position, &artist_name) in artists.iter().enumerate() {
-            let artist_id = Cuid::new();
-            let actual_artist_id: Cuid = tx
+            let song_id: Cuid = tx
                 .prepare_cached(
-                    "INSERT INTO artists (id, name) VALUES (?1, ?2)
-                     ON CONFLICT(name) DO UPDATE SET name = excluded.name
+                    "INSERT INTO songs (id, title, album_id, file_path, file_size, file_modified, date, duration, image_id, track_number, lufs)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                     ON CONFLICT(file_path) DO UPDATE SET
+                        title = excluded.title,
+                        album_id = excluded.album_id,
+                        file_size = excluded.file_size,
+                        file_modified = excluded.file_modified,
+                        date = excluded.date,
+                        duration = excluded.duration,
+                        image_id = excluded.image_id,
+                        track_number = excluded.track_number,
+                        lufs = excluded.lufs
                      RETURNING id",
                 )?
-                .query_row(params![artist_id, artist_name], |row| row.get(0))?;
-            tx.execute(
-                "INSERT INTO songs_artists (song_id, artist_id, position) VALUES (?1, ?2, ?3)
-                 ON CONFLICT(song_id, artist_id) DO UPDATE SET position = excluded.position",
-                params![song_id, actual_artist_id, position as i64],
-            )?;
-        }
+                .query_row(
+                    params![id, title, album_id, file_path, file_size, file_modified, year_str, duration, image_id, track_number, lufs],
+                    |row| row.get(0),
+                )?;
 
-        tx.execute(
-            "DELETE FROM songs_genres WHERE song_id = ?1",
-            params![song_id],
-        )?;
-        for &genre_name in genres {
-            let genre_id = Cuid::new();
-            let actual_genre_id: Cuid = tx
-                .prepare_cached(
-                    "INSERT INTO genres (id, name) VALUES (?1, ?2)
-                     ON CONFLICT(name) DO UPDATE SET name = excluded.name
-                     RETURNING id",
-                )?
-                .query_row(params![genre_id, genre_name], |row| row.get(0))?;
             tx.execute(
-                "INSERT INTO songs_genres (song_id, genre_id) VALUES (?1, ?2)
-                 ON CONFLICT(song_id, genre_id) DO NOTHING",
-                params![song_id, actual_genre_id],
+                "DELETE FROM songs_artists WHERE song_id = ?1",
+                params![song_id],
             )?;
-        }
+            let mut artist_entries: Vec<(Cuid, String)> = Vec::with_capacity(artists.len());
+            for (position, &artist_name) in artists.iter().enumerate() {
+                let artist_id = Cuid::new();
+                let actual_artist_id: Cuid = tx
+                    .prepare_cached(
+                        "INSERT INTO artists (id, name) VALUES (?1, ?2)
+                         ON CONFLICT(name) DO UPDATE SET name = excluded.name
+                         RETURNING id",
+                    )?
+                    .query_row(params![artist_id, artist_name], |row| row.get(0))?;
+                tx.execute(
+                    "INSERT INTO songs_artists (song_id, artist_id, position) VALUES (?1, ?2, ?3)
+                     ON CONFLICT(song_id, artist_id) DO UPDATE SET position = excluded.position",
+                    params![song_id, actual_artist_id, position as i64],
+                )?;
+                artist_entries.push((actual_artist_id, artist_name.to_string()));
+            }
 
-        tx.commit()?;
+            tx.execute(
+                "DELETE FROM songs_genres WHERE song_id = ?1",
+                params![song_id],
+            )?;
+            for &genre_name in genres {
+                let genre_id = Cuid::new();
+                let actual_genre_id: Cuid = tx
+                    .prepare_cached(
+                        "INSERT INTO genres (id, name) VALUES (?1, ?2)
+                         ON CONFLICT(name) DO UPDATE SET name = excluded.name
+                         RETURNING id",
+                    )?
+                    .query_row(params![genre_id, genre_name], |row| row.get(0))?;
+                tx.execute(
+                    "INSERT INTO songs_genres (song_id, genre_id) VALUES (?1, ?2)
+                     ON CONFLICT(song_id, genre_id) DO NOTHING",
+                    params![song_id, actual_genre_id],
+                )?;
+            }
+
+            let album_title: String = if let Some(aid) = album_id {
+                tx.prepare_cached("SELECT title FROM albums WHERE id = ?1")?
+                    .query_row(params![aid], |row| row.get(0))
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+
+            tx.commit()?;
+            (song_id, artist_entries, album_title)
+        };
+
+        let artist_joined = artist_entries
+            .iter()
+            .map(|(_, n)| n.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut index = self.search_index.lock();
+        for (aid, name) in artist_entries {
+            index.upsert_artist(aid, name);
+        }
+        index.upsert_song(
+            song_id,
+            title.to_string(),
+            artist_joined,
+            album_title,
+            image_id.map(String::from),
+        );
         Ok(())
     }
 
     pub fn delete_song(&self, id: &Cuid) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute("DELETE FROM songs WHERE id = ?1", params![id])?;
+        {
+            let conn = self.conn.lock();
+            conn.execute("DELETE FROM songs WHERE id = ?1", params![id])?;
+        }
+        self.rebuild_search_index();
         Ok(())
     }
 
@@ -255,33 +391,16 @@ impl Database {
     }
 
     pub fn get_songs_count(&self, query: Option<&str>) -> Result<i64> {
-        let conn = self.conn.lock();
         let trimmed = query.map(|q| q.trim()).filter(|q| !q.is_empty());
-
-        let Some(query) = trimmed else {
+        let Some(q) = trimmed else {
+            let conn = self.conn.lock();
             let count: i64 = conn
                 .prepare_cached("SELECT COUNT(*) FROM songs")?
                 .query_row([], |row| row.get(0))?;
             return Ok(count);
         };
-
-        let Some(fts_query) = to_fts_query(query) else {
-            return Ok(0);
-        };
-
-        let count: i64 = conn
-            .prepare_cached(
-                "SELECT COUNT(*)
-                 FROM (
-                     SELECT song_id
-                     FROM songs_fts
-                     WHERE songs_fts MATCH ?1
-                     GROUP BY song_id
-                 ) matched",
-            )?
-            .query_row(params![fts_query], |row| row.get(0))?;
-
-        Ok(count)
+        let index = self.search_index.lock();
+        Ok(index.fuzzy_song_ids(q).len() as i64)
     }
 
     pub fn get_songs(
@@ -293,10 +412,9 @@ impl Database {
         limit: i64,
     ) -> Result<Vec<SongListItem>> {
         let has_query = query.map(|q| !q.trim().is_empty()).unwrap_or(false);
-        let order_clause = song_order(sort, ascending, has_query);
-        let conn = self.conn.lock();
 
         if !has_query {
+            let order_clause = song_order(sort, ascending, false);
             let sql = format!(
                 "SELECT s.id, s.title,
                         (SELECT GROUP_CONCAT(name, ', ') FROM (SELECT ar.name FROM songs_artists sa JOIN artists ar ON sa.artist_id = ar.id WHERE sa.song_id = s.id ORDER BY sa.position)) AS artist_name,
@@ -308,6 +426,7 @@ impl Database {
                  ORDER BY {order_clause}
                  LIMIT ?1 OFFSET ?2"
             );
+            let conn = self.conn.lock();
             return collect_mapped::<SongListRow, SongListItem, _>(
                 &conn,
                 &sql,
@@ -316,34 +435,19 @@ impl Database {
             );
         }
 
-        let Some(query) = query.map(str::trim) else {
-            return Ok(Vec::new());
+        let q = query.unwrap().trim();
+        let page_ids: Vec<Cuid> = {
+            let index = self.search_index.lock();
+            index
+                .fuzzy_song_ids(q)
+                .into_iter()
+                .skip(offset as usize)
+                .take(limit as usize)
+                .map(|(_, id)| id)
+                .collect()
         };
-        let Some(fts_query) = to_fts_query(query) else {
-            return Ok(Vec::new());
-        };
-
-        let sql = format!(
-            "SELECT s.id, s.title,
-                    (SELECT GROUP_CONCAT(name, ', ') FROM (SELECT ar.name FROM songs_artists sa JOIN artists ar ON sa.artist_id = ar.id WHERE sa.song_id = s.id ORDER BY sa.position)) AS artist_name,
-                    al.title AS album_title,
-                    s.album_id, s.duration, s.image_id,
-                    (SELECT GROUP_CONCAT(g.name, ', ') FROM songs_genres sg JOIN genres g ON sg.genre_id = g.id WHERE sg.song_id = s.id) AS genres
-             FROM songs_fts
-             JOIN songs s ON s.id = songs_fts.song_id
-             LEFT JOIN albums al ON s.album_id = al.id
-             WHERE songs_fts MATCH ?2
-             GROUP BY s.id, s.title, al.title, s.album_id, s.duration, s.image_id, genres
-             ORDER BY {order_clause}
-             LIMIT ?3 OFFSET ?4"
-        );
-
-        collect_mapped::<SongListRow, SongListItem, _>(
-            &conn,
-            &sql,
-            params![query, fts_query, limit, offset],
-            SongListRow::from_row,
-        )
+        let conn = self.conn.lock();
+        fetch_songs_by_ids(&conn, &page_ids)
     }
 
     pub fn get_song_ids_from_offset(
@@ -355,10 +459,9 @@ impl Database {
     ) -> Result<Vec<Cuid>> {
         let query = query.trim();
         let has_query = !query.is_empty();
-        let order_clause = song_order(sort, ascending, has_query);
-        let conn = self.conn.lock();
 
         if !has_query {
+            let order_clause = song_order(sort, ascending, false);
             let sql = format!(
                 "SELECT s.id
                  FROM songs s
@@ -366,6 +469,7 @@ impl Database {
                  ORDER BY {order_clause}
                  LIMIT -1 OFFSET ?1"
             );
+            let conn = self.conn.lock();
             let mut stmt = conn.prepare_cached(&sql)?;
             let rows = stmt
                 .query_map(params![offset], |row| row.get::<_, Cuid>(0))?
@@ -373,28 +477,13 @@ impl Database {
             return Ok(rows);
         }
 
-        let Some(fts_query) = to_fts_query(query) else {
-            return Ok(Vec::new());
-        };
-
-        let sql = format!(
-            "SELECT s.id
-             FROM songs_fts
-             JOIN songs s ON s.id = songs_fts.song_id
-             LEFT JOIN albums al ON s.album_id = al.id
-             WHERE songs_fts MATCH ?2
-             GROUP BY s.id, s.title, al.title, s.duration
-             ORDER BY {order_clause}
-             LIMIT -1 OFFSET ?3"
-        );
-
-        let mut stmt = conn.prepare_cached(&sql)?;
-        let rows = stmt
-            .query_map(params![query, fts_query, offset], |row| {
-                row.get::<_, Cuid>(0)
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
+        let index = self.search_index.lock();
+        Ok(index
+            .fuzzy_song_ids(query)
+            .into_iter()
+            .skip(offset as usize)
+            .map(|(_, id)| id)
+            .collect())
     }
 
     pub fn get_album_songs(&self, album_id: &Cuid) -> Result<Vec<Song>> {
@@ -425,28 +514,22 @@ impl Database {
     }
 
     pub fn get_artists_count(&self, query: &str) -> Result<usize> {
-        let conn = self.conn.lock();
         let query = query.trim();
         if query.is_empty() {
+            let conn = self.conn.lock();
             let count: i64 = conn
                 .prepare_cached("SELECT COUNT(*) FROM artists")?
                 .query_row([], |row| row.get(0))?;
             return Ok(count.max(0) as usize);
         }
-
-        let count: i64 = conn
-            .prepare_cached(
-                "SELECT COUNT(*) FROM artists ar
-                 WHERE ar.name LIKE '%' || ?1 || '%' COLLATE NOCASE",
-            )?
-            .query_row(params![query], |row| row.get(0))?;
-        Ok(count.max(0) as usize)
+        let index = self.search_index.lock();
+        Ok(index.fuzzy_artist_ids(query).len())
     }
 
     pub fn get_artists(&self, query: &str, offset: i64, limit: i64) -> Result<Vec<ArtistListItem>> {
-        let conn = self.conn.lock();
         let query = query.trim();
         if query.is_empty() {
+            let conn = self.conn.lock();
             return collect_mapped::<ArtistListRow, ArtistListItem, _>(
                 &conn,
                 "SELECT ar.id, ar.name, ar.image_id
@@ -458,16 +541,18 @@ impl Database {
             );
         }
 
-        collect_mapped::<ArtistListRow, ArtistListItem, _>(
-            &conn,
-            "SELECT ar.id, ar.name, ar.image_id
-             FROM artists ar
-             WHERE ar.name LIKE '%' || ?1 || '%' COLLATE NOCASE
-             ORDER BY ar.name COLLATE NOCASE ASC
-             LIMIT ?2 OFFSET ?3",
-            params![query, limit, offset],
-            ArtistListRow::from_row,
-        )
+        let page_ids: Vec<Cuid> = {
+            let index = self.search_index.lock();
+            index
+                .fuzzy_artist_ids(query)
+                .into_iter()
+                .skip(offset as usize)
+                .take(limit as usize)
+                .map(|(_, id)| id)
+                .collect()
+        };
+        let conn = self.conn.lock();
+        fetch_artists_by_ids(&conn, &page_ids)
     }
 
     pub fn get_album(&self, id: &Cuid) -> Result<Option<Album>> {
@@ -494,37 +579,22 @@ impl Database {
     }
 
     pub fn get_albums_count(&self, query: &str) -> Result<usize> {
-        let conn = self.conn.lock();
         let query = query.trim();
         if query.is_empty() {
+            let conn = self.conn.lock();
             let count: i64 = conn
                 .prepare_cached("SELECT COUNT(*) FROM albums")?
                 .query_row([], |row| row.get(0))?;
             return Ok(count.max(0) as usize);
         }
-
-        let count: i64 = conn
-            .prepare_cached(
-                "SELECT COUNT(*)
-                 FROM albums al
-                 WHERE
-                     al.title LIKE '%' || ?1 || '%' COLLATE NOCASE
-                     OR EXISTS (
-                         SELECT 1
-                         FROM albums_artists aa
-                         JOIN artists ar ON aa.artist_id = ar.id
-                         WHERE aa.album_id = al.id
-                           AND ar.name LIKE '%' || ?1 || '%' COLLATE NOCASE
-                     )",
-            )?
-            .query_row(params![query], |row| row.get(0))?;
-        Ok(count.max(0) as usize)
+        let index = self.search_index.lock();
+        Ok(index.fuzzy_album_ids(query).len())
     }
 
     pub fn get_albums(&self, query: &str, offset: i64, limit: i64) -> Result<Vec<AlbumListItem>> {
-        let conn = self.conn.lock();
         let query = query.trim();
         if query.is_empty() {
+            let conn = self.conn.lock();
             return collect_mapped::<AlbumListRow, AlbumListItem, _>(
                 &conn,
                 "SELECT al.id, al.title,
@@ -541,29 +611,18 @@ impl Database {
             );
         }
 
-        collect_mapped::<AlbumListRow, AlbumListItem, _>(
-            &conn,
-            "SELECT al.id, al.title,
-                    (SELECT GROUP_CONCAT(name, ', ')
-                     FROM (SELECT ar.name FROM albums_artists aa JOIN artists ar ON aa.artist_id = ar.id WHERE aa.album_id = al.id ORDER BY aa.position)) AS artist_name,
-                    al.image_id, MIN(s.date) AS year
-             FROM albums al
-             LEFT JOIN songs s ON s.album_id = al.id
-             WHERE
-                 al.title LIKE '%' || ?1 || '%' COLLATE NOCASE
-                 OR EXISTS (
-                     SELECT 1
-                     FROM albums_artists aa
-                     JOIN artists ar ON aa.artist_id = ar.id
-                     WHERE aa.album_id = al.id
-                       AND ar.name LIKE '%' || ?1 || '%' COLLATE NOCASE
-                 )
-             GROUP BY al.id
-             ORDER BY al.title COLLATE NOCASE ASC
-             LIMIT ?2 OFFSET ?3",
-            params![query, limit, offset],
-            AlbumListRow::from_row,
-        )
+        let page_ids: Vec<Cuid> = {
+            let index = self.search_index.lock();
+            index
+                .fuzzy_album_ids(query)
+                .into_iter()
+                .skip(offset as usize)
+                .take(limit as usize)
+                .map(|(_, id)| id)
+                .collect()
+        };
+        let conn = self.conn.lock();
+        fetch_albums_by_ids(&conn, &page_ids)
     }
 
     pub fn upsert_album(
@@ -572,66 +631,101 @@ impl Database {
         artists: &[&str],
         image_id: Option<&str>,
     ) -> Result<Cuid> {
-        let mut conn = self.conn.lock();
-        let tx = conn.transaction()?;
         let id = Cuid::new();
-        let album_id: Cuid = tx
-            .prepare_cached(
-                "INSERT INTO albums (id, title, image_id)
-                 VALUES (?1, ?2, ?3)
-                 ON CONFLICT(title) DO UPDATE SET
-                    image_id = COALESCE(excluded.image_id, albums.image_id)
-                 RETURNING id",
-            )?
-            .query_row(params![id, title, image_id], |row| row.get(0))?;
-
-        let existing_names: Vec<String> = {
-            let mut stmt = tx.prepare_cached(
-                "SELECT a.name FROM artists a
-                 JOIN albums_artists aa ON a.id = aa.artist_id
-                 WHERE aa.album_id = ?1",
-            )?;
-            stmt.query_map(params![album_id], |row| row.get::<_, String>(0))?
-                .collect::<Result<Vec<_>, _>>()?
-        };
-
-        let existing_set: std::collections::HashSet<&str> =
-            existing_names.iter().map(|s| s.as_str()).collect();
-
-        let max_position: i64 = tx
-            .prepare_cached(
-                "SELECT COALESCE(MAX(position), -1) FROM albums_artists WHERE album_id = ?1",
-            )?
-            .query_row(params![album_id], |row| row.get(0))
-            .unwrap_or(-1);
-
-        let mut next_position = max_position + 1;
-        for artist_name in artists {
-            if existing_set.contains(artist_name) {
-                continue;
-            }
-            let artist_id = Cuid::new();
-            let actual_artist_id: Cuid = tx
+        let (album_id, new_artists, all_artist_names, effective_image) = {
+            let mut conn = self.conn.lock();
+            let tx = conn.transaction()?;
+            let album_id: Cuid = tx
                 .prepare_cached(
-                    "INSERT INTO artists (id, name) VALUES (?1, ?2)
-                     ON CONFLICT(name) DO UPDATE SET name = excluded.name
+                    "INSERT INTO albums (id, title, image_id)
+                     VALUES (?1, ?2, ?3)
+                     ON CONFLICT(title) DO UPDATE SET
+                        image_id = COALESCE(excluded.image_id, albums.image_id)
                      RETURNING id",
                 )?
-                .query_row(params![artist_id, artist_name], |row| row.get(0))?;
-            tx.prepare_cached(
-                "INSERT INTO albums_artists (album_id, artist_id, position) VALUES (?1, ?2, ?3)
-                 ON CONFLICT(album_id, artist_id) DO UPDATE SET position = excluded.position",
-            )?
-            .execute(params![album_id, actual_artist_id, next_position])?;
-            next_position += 1;
+                .query_row(params![id, title, image_id], |row| row.get(0))?;
+
+            let existing_names: Vec<String> = {
+                let mut stmt = tx.prepare_cached(
+                    "SELECT a.name FROM artists a
+                     JOIN albums_artists aa ON a.id = aa.artist_id
+                     WHERE aa.album_id = ?1",
+                )?;
+                stmt.query_map(params![album_id], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?
+            };
+
+            let existing_set: std::collections::HashSet<&str> =
+                existing_names.iter().map(|s| s.as_str()).collect();
+
+            let max_position: i64 = tx
+                .prepare_cached(
+                    "SELECT COALESCE(MAX(position), -1) FROM albums_artists WHERE album_id = ?1",
+                )?
+                .query_row(params![album_id], |row| row.get(0))
+                .unwrap_or(-1);
+
+            let mut next_position = max_position + 1;
+            let mut new_artists: Vec<(Cuid, String)> = Vec::new();
+            for artist_name in artists {
+                if existing_set.contains(artist_name) {
+                    continue;
+                }
+                let artist_id = Cuid::new();
+                let actual_artist_id: Cuid = tx
+                    .prepare_cached(
+                        "INSERT INTO artists (id, name) VALUES (?1, ?2)
+                         ON CONFLICT(name) DO UPDATE SET name = excluded.name
+                         RETURNING id",
+                    )?
+                    .query_row(params![artist_id, artist_name], |row| row.get(0))?;
+                tx.prepare_cached(
+                    "INSERT INTO albums_artists (album_id, artist_id, position) VALUES (?1, ?2, ?3)
+                     ON CONFLICT(album_id, artist_id) DO UPDATE SET position = excluded.position",
+                )?
+                .execute(params![album_id, actual_artist_id, next_position])?;
+                next_position += 1;
+                new_artists.push((actual_artist_id, (*artist_name).to_string()));
+            }
+
+            let all_artist_names: String = tx
+                .prepare_cached(
+                    "SELECT COALESCE((SELECT GROUP_CONCAT(name, ', ')
+                                      FROM (SELECT ar.name FROM albums_artists aa
+                                            JOIN artists ar ON aa.artist_id = ar.id
+                                            WHERE aa.album_id = ?1 ORDER BY aa.position)), '')",
+                )?
+                .query_row(params![album_id], |row| row.get(0))
+                .unwrap_or_default();
+
+            let effective_image: Option<String> = tx
+                .prepare_cached("SELECT image_id FROM albums WHERE id = ?1")?
+                .query_row(params![album_id], |row| row.get(0))
+                .unwrap_or(None);
+
+            tx.commit()?;
+            (album_id, new_artists, all_artist_names, effective_image)
+        };
+
+        let mut index = self.search_index.lock();
+        for (aid, name) in new_artists {
+            index.upsert_artist(aid, name);
         }
-        tx.commit()?;
+        index.upsert_album(
+            album_id.clone(),
+            title.to_string(),
+            all_artist_names,
+            effective_image,
+        );
         Ok(album_id)
     }
 
     pub fn delete_album(&self, id: &Cuid) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute("DELETE FROM albums WHERE id = ?1", params![id])?;
+        {
+            let conn = self.conn.lock();
+            conn.execute("DELETE FROM albums WHERE id = ?1", params![id])?;
+        }
+        self.rebuild_search_index();
         Ok(())
     }
 
@@ -655,24 +749,32 @@ impl Database {
         image_id: Option<&str>,
         pinned: bool,
     ) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
-            "INSERT INTO playlists (id, name, description, image_id, pinned)
-             VALUES (?1, ?2, ?3, ?4, ?5)
-             ON CONFLICT(id) DO UPDATE SET
-                name = excluded.name,
-                description = excluded.description,
-                image_id = excluded.image_id,
-                pinned = excluded.pinned,
-                date_updated = DATETIME('now')",
-            params![id, name, description, image_id, pinned],
-        )?;
+        {
+            let conn = self.conn.lock();
+            conn.execute(
+                "INSERT INTO playlists (id, name, description, image_id, pinned)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(id) DO UPDATE SET
+                    name = excluded.name,
+                    description = excluded.description,
+                    image_id = excluded.image_id,
+                    pinned = excluded.pinned,
+                    date_updated = DATETIME('now')",
+                params![id, name, description, image_id, pinned],
+            )?;
+        }
+        let mut index = self.search_index.lock();
+        index.upsert_playlist(id.clone(), name.to_string(), image_id.map(String::from));
         Ok(())
     }
 
     pub fn delete_playlist(&self, id: &Cuid) -> Result<()> {
-        let conn = self.conn.lock();
-        conn.execute("DELETE FROM playlists WHERE id = ?1", params![id])?;
+        {
+            let conn = self.conn.lock();
+            conn.execute("DELETE FROM playlists WHERE id = ?1", params![id])?;
+        }
+        let mut index = self.search_index.lock();
+        index.remove_playlist(id);
         Ok(())
     }
 
@@ -940,35 +1042,30 @@ impl Database {
     }
 
     pub fn get_search_match_counts(&self, query: &str) -> Result<(usize, usize, usize, usize)> {
-        let songs = self.get_songs_count(Some(query))?;
-        let albums = self.get_albums_count(query)?;
-        let artists = self.get_artists_count(query)?;
-        let playlists = self.get_playlists_count(query)?;
+        let query = query.trim();
+        if query.is_empty() {
+            return Ok((0, 0, 0, 0));
+        }
+        let index = self.search_index.lock();
         Ok((
-            songs.max(0) as usize,
-            albums,
-            artists,
-            playlists.max(0) as usize,
+            index.fuzzy_song_ids(query).len(),
+            index.fuzzy_album_ids(query).len(),
+            index.fuzzy_artist_ids(query).len(),
+            index.fuzzy_playlist_ids(query).len(),
         ))
     }
 
     pub fn get_playlists_count(&self, query: &str) -> Result<i64> {
-        let conn = self.conn.lock();
         let query = query.trim();
         if query.is_empty() {
+            let conn = self.conn.lock();
             let count: i64 = conn
                 .prepare_cached("SELECT COUNT(*) FROM playlists")?
                 .query_row([], |row| row.get(0))?;
             return Ok(count);
         }
-
-        let count: i64 = conn
-            .prepare_cached(
-                "SELECT COUNT(*) FROM playlists p
-                 WHERE p.name LIKE '%' || ?1 || '%' COLLATE NOCASE",
-            )?
-            .query_row(params![query], |row| row.get(0))?;
-        Ok(count)
+        let index = self.search_index.lock();
+        Ok(index.fuzzy_playlist_ids(query).len() as i64)
     }
 
     pub fn get_playlists(
@@ -977,9 +1074,9 @@ impl Database {
         offset: i64,
         limit: i64,
     ) -> Result<Vec<PlaylistListItem>> {
-        let conn = self.conn.lock();
         let query = query.trim();
         if query.is_empty() {
+            let conn = self.conn.lock();
             return collect_mapped::<PlaylistListRow, PlaylistListItem, _>(
                 &conn,
                 "SELECT p.id, p.name, p.image_id, COUNT(pt.id) AS song_count
@@ -992,18 +1089,19 @@ impl Database {
                 PlaylistListRow::from_row,
             );
         }
-        collect_mapped::<PlaylistListRow, PlaylistListItem, _>(
-            &conn,
-            "SELECT p.id, p.name, p.image_id, COUNT(pt.id) AS song_count
-             FROM playlists p
-             LEFT JOIN playlist_songs pt ON pt.playlist_id = p.id
-             WHERE p.name LIKE '%' || ?1 || '%' COLLATE NOCASE
-             GROUP BY p.id, p.name, p.image_id
-             ORDER BY p.name COLLATE NOCASE ASC
-             LIMIT ?2 OFFSET ?3",
-            params![query, limit, offset],
-            PlaylistListRow::from_row,
-        )
+
+        let page_ids: Vec<Cuid> = {
+            let index = self.search_index.lock();
+            index
+                .fuzzy_playlist_ids(query)
+                .into_iter()
+                .skip(offset as usize)
+                .take(limit as usize)
+                .map(|(_, id)| id)
+                .collect()
+        };
+        let conn = self.conn.lock();
+        fetch_playlists_by_ids(&conn, &page_ids)
     }
 
     pub fn upsert_image(&self, id: &str, data: &[u8]) -> Result<()> {
@@ -1144,21 +1242,130 @@ impl Database {
     }
 }
 
-fn to_fts_query(query: &str) -> Option<String> {
-    let terms: Vec<String> = query
-        .split(|c: char| !c.is_alphanumeric() && c != '\'' && c != '_')
-        .filter(|term| !term.is_empty())
-        .map(|term| format!("\"{}\"*", term.replace('"', "\"\"")))
-        .collect();
-
-    if terms.is_empty() {
-        None
-    } else {
-        Some(terms.join(" AND "))
+fn fetch_songs_by_ids(conn: &rusqlite::Connection, ids: &[Cuid]) -> Result<Vec<SongListItem>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
     }
+    let placeholders = (1..=ids.len())
+        .map(|i| format!("?{i}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        "SELECT s.id, s.title,
+                (SELECT GROUP_CONCAT(name, ', ') FROM (SELECT ar.name FROM songs_artists sa JOIN artists ar ON sa.artist_id = ar.id WHERE sa.song_id = s.id ORDER BY sa.position)) AS artist_name,
+                al.title AS album_title,
+                s.album_id, s.duration, s.image_id,
+                (SELECT GROUP_CONCAT(g.name, ', ') FROM songs_genres sg JOIN genres g ON sg.genre_id = g.id WHERE sg.song_id = s.id) AS genres
+         FROM songs s
+         LEFT JOIN albums al ON s.album_id = al.id
+         WHERE s.id IN ({placeholders})"
+    );
+    let params: Vec<&dyn ToSql> = ids.iter().map(|id| id as &dyn ToSql).collect();
+    let mut stmt = conn.prepare(&sql)?;
+    let map: HashMap<Cuid, SongListItem> = stmt
+        .query_map(params.as_slice(), SongListRow::from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .map(|r| {
+            let item: SongListItem = r.into();
+            (item.id.clone(), item)
+        })
+        .collect();
+    Ok(ids.iter().filter_map(|id| map.get(id).cloned()).collect())
 }
 
-fn song_order(sort: SongSort, ascending: bool, has_query: bool) -> &'static str {
+fn fetch_artists_by_ids(conn: &rusqlite::Connection, ids: &[Cuid]) -> Result<Vec<ArtistListItem>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = (1..=ids.len())
+        .map(|i| format!("?{i}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        "SELECT ar.id, ar.name, ar.image_id
+         FROM artists ar
+         WHERE ar.id IN ({placeholders})"
+    );
+    let params: Vec<&dyn ToSql> = ids.iter().map(|id| id as &dyn ToSql).collect();
+    let mut stmt = conn.prepare(&sql)?;
+    let map: HashMap<Cuid, ArtistListItem> = stmt
+        .query_map(params.as_slice(), ArtistListRow::from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .map(|r| {
+            let item: ArtistListItem = r.into();
+            (item.id.clone(), item)
+        })
+        .collect();
+    Ok(ids.iter().filter_map(|id| map.get(id).cloned()).collect())
+}
+
+fn fetch_albums_by_ids(conn: &rusqlite::Connection, ids: &[Cuid]) -> Result<Vec<AlbumListItem>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = (1..=ids.len())
+        .map(|i| format!("?{i}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        "SELECT al.id, al.title,
+                (SELECT GROUP_CONCAT(name, ', ')
+                 FROM (SELECT ar.name FROM albums_artists aa JOIN artists ar ON aa.artist_id = ar.id WHERE aa.album_id = al.id ORDER BY aa.position)) AS artist_name,
+                al.image_id, MIN(s.date) AS year
+         FROM albums al
+         LEFT JOIN songs s ON s.album_id = al.id
+         WHERE al.id IN ({placeholders})
+         GROUP BY al.id"
+    );
+    let params: Vec<&dyn ToSql> = ids.iter().map(|id| id as &dyn ToSql).collect();
+    let mut stmt = conn.prepare(&sql)?;
+    let map: HashMap<Cuid, AlbumListItem> = stmt
+        .query_map(params.as_slice(), AlbumListRow::from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .map(|r| {
+            let item: AlbumListItem = r.into();
+            (item.id.clone(), item)
+        })
+        .collect();
+    Ok(ids.iter().filter_map(|id| map.get(id).cloned()).collect())
+}
+
+fn fetch_playlists_by_ids(
+    conn: &rusqlite::Connection,
+    ids: &[Cuid],
+) -> Result<Vec<PlaylistListItem>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = (1..=ids.len())
+        .map(|i| format!("?{i}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        "SELECT p.id, p.name, p.image_id, COUNT(pt.id) AS song_count
+         FROM playlists p
+         LEFT JOIN playlist_songs pt ON pt.playlist_id = p.id
+         WHERE p.id IN ({placeholders})
+         GROUP BY p.id, p.name, p.image_id"
+    );
+    let params: Vec<&dyn ToSql> = ids.iter().map(|id| id as &dyn ToSql).collect();
+    let mut stmt = conn.prepare(&sql)?;
+    let map: HashMap<Cuid, PlaylistListItem> = stmt
+        .query_map(params.as_slice(), PlaylistListRow::from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .map(|r| {
+            let item: PlaylistListItem = r.into();
+            (item.id.clone(), item)
+        })
+        .collect();
+    Ok(ids.iter().filter_map(|id| map.get(id).cloned()).collect())
+}
+
+fn song_order(sort: SongSort, ascending: bool, _has_query: bool) -> &'static str {
     match sort {
         SongSort::Title => {
             if ascending {
@@ -1188,22 +1395,6 @@ fn song_order(sort: SongSort, ascending: bool, has_query: bool) -> &'static str 
                 "genres COLLATE NOCASE DESC, s.id ASC"
             }
         }
-        SongSort::Default => {
-            if has_query {
-                r#"
-                CASE
-                    WHEN s.title = ?1 COLLATE NOCASE THEN 400
-                    WHEN s.title LIKE ?1 || '%' COLLATE NOCASE THEN 300
-                    WHEN EXISTS (SELECT 1 FROM songs_artists sa3 JOIN artists ar3 ON sa3.artist_id = ar3.id WHERE sa3.song_id = s.id AND ar3.name LIKE ?1 || '%' COLLATE NOCASE) THEN 220
-                    WHEN EXISTS (SELECT 1 FROM albums al3 WHERE al3.id = s.album_id AND al3.title LIKE ?1 || '%' COLLATE NOCASE) THEN 200
-                    ELSE 100
-                END DESC,
-                s.title COLLATE NOCASE ASC,
-                s.id ASC
-                "#
-            } else {
-                "s.date_added DESC, s.id ASC"
-            }
-        }
+        SongSort::Default => "s.date_added DESC, s.id ASC",
     }
 }

@@ -335,17 +335,6 @@ pub struct SearchResultRow {
     pub item_type: String,
 }
 
-impl SearchResultRow {
-    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
-        Ok(Self {
-            id: row.get("id")?,
-            name: row.get("name")?,
-            image: row.get("image")?,
-            item_type: row.get("item_type")?,
-        })
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct RecentItemRow {
     pub song_count: i64,

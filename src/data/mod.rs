@@ -3,4 +3,5 @@ pub mod db;
 pub mod metadata;
 pub mod models;
 pub mod scanner;
+pub mod search;
 pub mod telemetry;
