@@ -10,8 +10,8 @@ license = "AGPL-3.0"
 categories = ["multimedia::audio"]
 
 [dependencies]
-gpui = { package = "gpui-unofficial", version = "1.14.2" }
-gpui_platform = { package = "gpui-platform-gpui-unofficial", version = "1.14.2", features = [
+gpui = { package = "gpui-unofficial", version = "1.15.0" }
+gpui_platform = { package = "gpui-platform-gpui-unofficial", version = "1.15.0", features = [
   "font-kit",
   "x11",
   "wayland",
@@ -22,7 +22,7 @@ dirs = "6.0.0"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tokio = { version = "1.53.1", features = ["sync"] }
-futures = "0.3.33"
+futures = "0.3.34"
 rusqlite = { version = "0.40.2", features = ["bundled", "chrono"] }
 rusqlite_migration = { version = "2.6.0", features = ["from-directory"] }
 parking_lot = "0.12.5"
@@ -33,8 +33,8 @@ rodio = { git = "https://github.com/vleerapp/rodio", rev = "b28bbf23d9cbc72e7f54
   "symphonia-all",
 ] }
 symphonia-adapter-libopus = "0.3.0"
-symphonia-format-isomp4 = "0.6.0"
-symphonia = "0.6.0"
+symphonia-format-isomp4 = "0.6.1"
+symphonia = "0.6.1"
 cuid2 = "0.1.6"
 url = "2.5.8"
 rust-embed = { version = "8.12.0", features = ["include-exclude"] }
