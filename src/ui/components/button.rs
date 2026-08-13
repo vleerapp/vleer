@@ -110,7 +110,7 @@ impl RenderOnce for Button {
             .group_hover(self.group_id, |s| s.text_color(hover_color))
             .when_some(self.on_click, |this, on_click| {
                 this.on_click(move |event, window, cx| {
-                    (on_click)(event, window, cx);
+                    on_click(event, window, cx);
                 })
             })
             .when_some(icon_element, |this, icon_el| this.child(icon_el))

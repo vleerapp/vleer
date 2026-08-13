@@ -205,7 +205,7 @@ impl RenderOnce for Card {
                             .cursor_pointer()
                             .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
                                 cx.stop_propagation();
-                                (on_play)(window, cx);
+                                on_play(window, cx);
                             })
                             .child(
                                 icon(icons::PLAY)

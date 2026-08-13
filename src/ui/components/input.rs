@@ -553,7 +553,7 @@ impl EntityInputHandler for TextInput {
             || self
                 .validator
                 .as_ref()
-                .map(|v| (v.borrow())(&new_content))
+                .map(|v| v.borrow()(&new_content))
                 .unwrap_or(true);
 
         if !is_valid {

@@ -65,7 +65,7 @@ impl RenderOnce for Switch {
             .relative()
             .when_some(self.on_change, |this, on_change| {
                 this.on_click(move |_event, window, cx| {
-                    (on_change)(!checked, window, cx);
+                    on_change(!checked, window, cx);
                 })
             })
             .child(thumb)

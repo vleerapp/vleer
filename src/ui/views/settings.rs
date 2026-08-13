@@ -441,7 +441,7 @@ impl SettingsView {
 }
 
 impl Render for SettingsView {
-    fn render(&mut self, _window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
         let telemetry = cx.global::<Config>().get().telemetry;
         let discord_rpc = cx.global::<Config>().get().discord_rpc;

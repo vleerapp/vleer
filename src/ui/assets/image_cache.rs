@@ -103,8 +103,8 @@ impl ImageCache for VleerImageCache {
         &mut self,
         resource: &Resource,
         window: &mut gpui::Window,
-        cx: &mut gpui::App,
-    ) -> Option<Result<std::sync::Arc<gpui::RenderImage>, gpui::ImageCacheError>> {
+        cx: &mut App,
+    ) -> Option<Result<Arc<gpui::RenderImage>, gpui::ImageCacheError>> {
         let hash = hash(resource);
 
         if let Some(item) = self.cache.get_mut(&hash) {
@@ -142,10 +142,7 @@ impl ImageCache for VleerImageCache {
 
         self.cache.insert(
             hash,
-            (
-                gpui::ImageCacheItem::Loading(task.clone()),
-                resource.clone(),
-            ),
+            (ImageCacheItem::Loading(task.clone()), resource.clone()),
         );
         self.usage_list.push_front(hash);
 

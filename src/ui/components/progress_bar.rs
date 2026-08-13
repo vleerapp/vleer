@@ -67,6 +67,10 @@ impl Element for ProgressSlider {
         self.id.clone()
     }
 
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
     fn request_layout(
         &mut self,
         _: Option<&GlobalElementId>,
@@ -77,10 +81,6 @@ impl Element for ProgressSlider {
         let mut style = Style::default();
         style.refine(&self.style);
         (window.request_layout(style, [], cx), ())
-    }
-
-    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
-        None
     }
 
     fn prepaint(
@@ -343,7 +343,7 @@ impl Element for ProgressSlider {
                 *dragging_down.borrow_mut() = true;
                 *drag_value_down.borrow_mut() = v;
 
-                (func_down.borrow_mut())(v, window, cx);
+                func_down.borrow_mut()(v, window, cx);
             });
 
             let bounds_move = bounds;
@@ -375,7 +375,7 @@ impl Element for ProgressSlider {
                 let v = compute_value(ev.position, bounds_up);
                 *drag_value_up.borrow_mut() = v;
 
-                (func_up.borrow_mut())(v, window, cx);
+                func_up.borrow_mut()(v, window, cx);
             });
         }
     }
