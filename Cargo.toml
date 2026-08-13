@@ -33,8 +33,6 @@ rodio = { git = "https://github.com/vleerapp/rodio", rev = "b28bbf23d9cbc72e7f54
   "symphonia-all",
 ] }
 symphonia-adapter-libopus = "0.3.0"
-symphonia-format-isomp4 = "0.6.1"
-symphonia = "0.6.1"
 cuid2 = "0.1.6"
 url = "2.5.8"
 rust-embed = { version = "8.12.0", features = ["include-exclude"] }
@@ -44,24 +42,15 @@ notify = "8.2.0"
 notify-debouncer-full = "0.7.0"
 image = "0.25.10"
 sha2 = "0.11.0"
-indexmap = "2.14.0"
 rustc-hash = "2.1.3"
 unicode-segmentation = "1.13.3"
-lru = "0.18.2"
-lazy_static = "1.5.0"
-dashmap = "6.2.1"
 ureq = { version = "3.4.0", features = ["json"] }
 uuid = { version = "1.24.0", features = ["serde", "v4"] }
 semver = "1.0.28"
 sequoia-openpgp = { version = "2.4.1", default-features = false, features = ["crypto-rust", "allow-experimental-crypto", "allow-variable-time-crypto"] }
-souvlaki = "0.8.3"
 spectrum-analyzer = "1.8.0"
 discord-rich-presence = "1.1.0"
-chrono = "0.4.45"
-base64 = "0.23.1"
-itertools = "0.15.0"
 rand = "0.10.2"
-async-trait = "0.1.92"
 raw-window-handle = "0.6.2"
 interprocess = "2.4.3"
 libc = "0.2.189"
