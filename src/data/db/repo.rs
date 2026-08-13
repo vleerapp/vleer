@@ -414,7 +414,7 @@ impl Database {
         let has_query = query.map(|q| !q.trim().is_empty()).unwrap_or(false);
 
         if !has_query {
-            let order_clause = song_order(sort, ascending, false);
+            let order_clause = song_order(sort, ascending);
             let sql = format!(
                 "SELECT s.id, s.title,
                         (SELECT GROUP_CONCAT(name, ', ') FROM (SELECT ar.name FROM songs_artists sa JOIN artists ar ON sa.artist_id = ar.id WHERE sa.song_id = s.id ORDER BY sa.position)) AS artist_name,
@@ -461,7 +461,7 @@ impl Database {
         let has_query = !query.is_empty();
 
         if !has_query {
-            let order_clause = song_order(sort, ascending, false);
+            let order_clause = song_order(sort, ascending);
             let sql = format!(
                 "SELECT s.id
                  FROM songs s
@@ -948,97 +948,11 @@ impl Database {
 
     pub fn search_library(&self, query: &str, limit: i64) -> Result<Vec<SearchResultRow>> {
         let query = query.trim();
-        if query.is_empty() {
+        if query.is_empty() || limit <= 0 {
             return Ok(Vec::new());
         }
-
-        let Some(fts_query) = to_fts_query(query) else {
-            return Ok(Vec::new());
-        };
-
-        let per_type_limit = limit.saturating_mul(2).max(20);
-        let conn = self.conn.lock();
-
-        collect_mapped::<SearchResultRow, SearchResultRow, _>(
-            &conn,
-            r#"
-            WITH
-            search_params AS (SELECT ?1 AS query_text),
-            song_matches AS (
-                SELECT DISTINCT
-                    s.id, s.title AS name, s.image_id AS image, 'Song' AS item_type,
-                    CASE
-                        WHEN s.title = sp.query_text COLLATE NOCASE THEN 400
-                        WHEN s.title LIKE sp.query_text || '%' COLLATE NOCASE THEN 300
-                        WHEN EXISTS (SELECT 1 FROM songs_artists sa JOIN artists ar ON sa.artist_id = ar.id WHERE sa.song_id = s.id AND ar.name LIKE sp.query_text || '%' COLLATE NOCASE) THEN 220
-                        WHEN EXISTS (SELECT 1 FROM albums al WHERE al.id = s.album_id AND al.title LIKE sp.query_text || '%' COLLATE NOCASE) THEN 200
-                        ELSE 100
-                    END AS score
-                FROM songs_fts
-                JOIN songs s ON s.id = songs_fts.song_id
-                CROSS JOIN search_params sp
-                WHERE songs_fts MATCH ?2
-                ORDER BY score DESC, s.title COLLATE NOCASE ASC
-                LIMIT ?3
-            ),
-            album_matches AS (
-                SELECT
-                    al.id, al.title AS name, al.image_id AS image, 'Album' AS item_type,
-                    CASE
-                        WHEN al.title = sp.query_text COLLATE NOCASE THEN 350
-                        WHEN al.title LIKE sp.query_text || '%' COLLATE NOCASE THEN 260
-                        WHEN EXISTS (SELECT 1 FROM albums_artists aa JOIN artists ar ON aa.artist_id = ar.id WHERE aa.album_id = al.id AND ar.name LIKE sp.query_text || '%' COLLATE NOCASE) THEN 180
-                        ELSE 90
-                    END AS score
-                FROM albums al
-                CROSS JOIN search_params sp
-                WHERE al.title LIKE '%' || sp.query_text || '%' COLLATE NOCASE
-                   OR EXISTS (SELECT 1 FROM albums_artists aa JOIN artists ar ON aa.artist_id = ar.id WHERE aa.album_id = al.id AND ar.name LIKE '%' || sp.query_text || '%' COLLATE NOCASE)
-                ORDER BY score DESC, al.title COLLATE NOCASE ASC
-                LIMIT ?3
-            ),
-            artist_matches AS (
-                SELECT
-                    ar.id, ar.name AS name, ar.image_id AS image, 'Artist' AS item_type,
-                    CASE
-                        WHEN ar.name = sp.query_text COLLATE NOCASE THEN 320
-                        WHEN ar.name LIKE sp.query_text || '%' COLLATE NOCASE THEN 250
-                        ELSE 80
-                    END AS score
-                FROM artists ar
-                CROSS JOIN search_params sp
-                WHERE ar.name LIKE '%' || sp.query_text || '%' COLLATE NOCASE
-                ORDER BY score DESC, ar.name COLLATE NOCASE ASC
-                LIMIT ?3
-            ),
-            playlist_matches AS (
-                SELECT
-                    p.id, p.name AS name, p.image_id AS image, 'Playlist' AS item_type,
-                    CASE
-                        WHEN p.name = sp.query_text COLLATE NOCASE THEN 300
-                        WHEN p.name LIKE sp.query_text || '%' COLLATE NOCASE THEN 240
-                        ELSE 70
-                    END AS score
-                FROM playlists p
-                CROSS JOIN search_params sp
-                WHERE p.name LIKE '%' || sp.query_text || '%' COLLATE NOCASE
-                ORDER BY score DESC, p.name COLLATE NOCASE ASC
-                LIMIT ?3
-            ),
-            all_matches AS (
-                SELECT * FROM song_matches
-                UNION ALL SELECT * FROM album_matches
-                UNION ALL SELECT * FROM artist_matches
-                UNION ALL SELECT * FROM playlist_matches
-            )
-            SELECT id, name, image, item_type
-            FROM all_matches
-            ORDER BY score DESC, name COLLATE NOCASE ASC
-            LIMIT ?4
-            "#,
-            params![query, fts_query, per_type_limit, limit],
-            SearchResultRow::from_row,
-        )
+        let index = self.search_index.lock();
+        Ok(index.fuzzy_search_all(query, limit as usize))
     }
 
     pub fn get_search_match_counts(&self, query: &str) -> Result<(usize, usize, usize, usize)> {
@@ -1169,7 +1083,6 @@ impl Database {
             FROM image_groups ig
             JOIN songs s ON ig.first_song_id = s.id
             LEFT JOIN albums al ON ig.album_id = al.id
-            LEFT JOIN images img ON ig.image_id = img.id
             ORDER BY ig.most_recent_date DESC
             "#,
         )?;
@@ -1365,7 +1278,7 @@ fn fetch_playlists_by_ids(
     Ok(ids.iter().filter_map(|id| map.get(id).cloned()).collect())
 }
 
-fn song_order(sort: SongSort, ascending: bool, _has_query: bool) -> &'static str {
+fn song_order(sort: SongSort, ascending: bool) -> &'static str {
     match sort {
         SongSort::Title => {
             if ascending {
