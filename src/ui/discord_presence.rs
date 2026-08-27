@@ -3,6 +3,7 @@ use crate::data::db::repo::Database;
 use crate::data::models::Cuid;
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
+use discord_rich_presence::activity::StatusDisplayType;
 use discord_rich_presence::{DiscordIpc, DiscordIpcClient, activity};
 use gpui::App;
 use parking_lot::Mutex;
@@ -121,6 +122,7 @@ impl DiscordPresence {
                         match &desired {
                             Some((title, artist_name, start, end)) => {
                                 let mut act = activity::Activity::new()
+                                    .status_display_type(StatusDisplayType::Details)
                                     .details(title)
                                     .activity_type(activity::ActivityType::Listening)
                                     .timestamps(
