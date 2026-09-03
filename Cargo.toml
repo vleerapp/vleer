@@ -10,7 +10,7 @@ license = "AGPL-3.0"
 categories = ["multimedia::audio"]
 
 [dependencies]
-gpui = { package = "gpui-unofficial", version = "1.15.0" }
+gpui = { package = "gpui-unofficial", version = "1.18.0" }
 gpui_platform = { package = "gpui-platform-gpui-unofficial", version = "1.15.0", features = [
   "font-kit",
   "x11",
@@ -27,8 +27,8 @@ rusqlite = { version = "0.40.2", features = ["bundled", "chrono"] }
 rusqlite_migration = { version = "2.6.0", features = ["from-directory"] }
 parking_lot = "0.12.5"
 serde = { version = "1.0.229", features = ["derive"] }
-toml = "1.1.4"
-rodio = { git = "https://github.com/vleerapp/rodio", rev = "b28bbf23d9cbc72e7f54310f36f90d6ca9bb5b88", features = [
+toml = "1.1.5"
+rodio = { git = "https://github.com/vleerapp/rodio", rev = "e0d876738aa6ee39446b5909a6e7e4fe6fbaa51b", features = [
   "symphonia",
   "symphonia-all",
 ] }
@@ -36,17 +36,17 @@ symphonia-adapter-libopus = "0.3.0"
 cuid2 = "0.1.6"
 url = "2.5.8"
 rust-embed = { version = "8.12.0", features = ["include-exclude"] }
-lofty = "0.25.0"
+lofty = "0.25.1"
 walkdir = "2.5.0"
 notify = "8.2.0"
 notify-debouncer-full = "0.7.0"
 image = "0.25.10"
 sha2 = "0.11.0"
 rustc-hash = "2.1.3"
-nucleo-matcher = "0.3"
+nucleo-matcher = "0.3.1"
 unicode-segmentation = "1.13.3"
 ureq = { version = "3.4.0", features = ["json"] }
-uuid = { version = "1.24.0", features = ["serde", "v4"] }
+uuid = { version = "1.26.0", features = ["serde", "v4"] }
 semver = "1.0.28"
 sequoia-openpgp = { version = "2.4.1", default-features = false, features = ["crypto-rust", "allow-experimental-crypto", "allow-variable-time-crypto"] }
 spectrum-analyzer = "1.8.0"
@@ -101,8 +101,8 @@ windows = { version = "0.62.2", features = [
   "Win32_System_Com",
   "Win32_System_WinRT",
 ] }
-windows-future = "0.3.2"
-windows-result = "0.4.1"
+windows-future = "0.100.0"
+windows-result = "0.100.0"
 
 [package.metadata.packager]
 product_name = "Vleer"
