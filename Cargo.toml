@@ -101,8 +101,7 @@ windows = { version = "0.62.2", features = [
   "Win32_System_Com",
   "Win32_System_WinRT",
 ] }
-windows-future = "0.100.0"
-windows-result = "0.100.0"
+windows-future = "0.3"
 
 [package.metadata.packager]
 product_name = "Vleer"
@@ -120,10 +119,13 @@ icons = [
   "assets/images/icon.icns",
 ]
 out_dir = "target/release/bundles"
-formats = ["dmg", "wix", "appimage", "deb"]
+formats = ["dmg", "wix", "appimage"]
 
 [package.metadata.packager.macos]
 signing_identity = "-"
+
+[package.metadata.packager.wix]
+template = "assets/windows/main.wxs"
 
 [patch.crates-io]
 xcb = { git = "https://github.com/rust-x-bindings/rust-xcb" }

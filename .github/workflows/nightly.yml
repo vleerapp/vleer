@@ -9,9 +9,75 @@ on:
     - cron: "0 0 * * *"
   workflow_dispatch:
 
+env:
+  S3_REGION: us-east-1
+
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      base: ${{ steps.version.outputs.base }}
+      full: ${{ steps.version.outputs.full }}
+      pkg: ${{ steps.version.outputs.pkg }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Compute nightly version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=$(grep -m 1 '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          FULL="${BASE}-nightly.$(date -u +%Y%m%d).${{ github.run_number }}"
+          PKG="$(echo "$BASE" | cut -d. -f1).$(echo "$BASE" | cut -d. -f2).${{ github.run_number }}"
+          echo "base=$BASE" >> $GITHUB_OUTPUT
+          echo "full=$FULL" >> $GITHUB_OUTPUT
+          echo "pkg=$PKG" >> $GITHUB_OUTPUT
+          echo "building $FULL (installer version $PKG)"
+
+      - name: Check S3 credentials are configured
+        env:
+          S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
+          S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+        run: |
+          missing=""
+          for name in S3_ENDPOINT S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY; do
+            eval "value=\${$name:-}"
+            [ -n "$value" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "missing repository secrets:$missing"
+            exit 1
+          fi
+
+          echo "vleer preflight" > preflight.txt
+          if ! body=$(curl --silent --show-error --fail-with-body \
+              --aws-sigv4 "aws:amz:${S3_REGION}:s3" \
+              --user "${S3_ACCESS_KEY_ID}:${S3_SECRET_ACCESS_KEY}" \
+              --upload-file preflight.txt \
+              "${S3_ENDPOINT}/nightly/.preflight" 2>&1); then
+            echo "S3 preflight upload failed. Server said:"
+            echo "$body"
+            echo
+            echo "SignatureDoesNotMatch -> wrong access key or secret."
+            echo "AccessDenied          -> key cannot write to this bucket."
+            echo "NoSuchBucket          -> S3_ENDPOINT points at a missing bucket."
+            exit 1
+          fi
+
+          curl --silent --show-error --fail-with-body -X DELETE \
+            --aws-sigv4 "aws:amz:${S3_REGION}:s3" \
+            --user "${S3_ACCESS_KEY_ID}:${S3_SECRET_ACCESS_KEY}" \
+            "${S3_ENDPOINT}/nightly/.preflight" >/dev/null || true
+
+          echo "S3 preflight ok"
+
   build:
+    needs: version
+
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -26,28 +92,58 @@ jobs:
             target: aarch64-apple-darwin
             os_name: macOS
             arch: aarch64
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            os_name: macOS
+            arch: x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             os_name: Windows
             arch: x86_64
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            os_name: Windows
+            arch: aarch64
 
     runs-on: ${{ matrix.os }}
+
+    env:
+      S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
+      S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+      S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
 
     steps:
       - uses: actions/checkout@v5
 
-      - name: Extract version from Cargo.toml
-        id: version
+      - name: Stamp nightly version into Cargo.toml
         shell: bash
         run: |
-          VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
-          MAJOR=$(echo $VERSION | cut -d '.' -f 1)
-          MINOR=$(echo $VERSION | cut -d '.' -f 2)
-          PATCH=$(echo $VERSION | cut -d '.' -f 3)
-          echo "full=$VERSION" >> $GITHUB_OUTPUT
-          echo "major=$MAJOR" >> $GITHUB_OUTPUT
-          echo "minor=$MINOR" >> $GITHUB_OUTPUT
-          echo "patch=$PATCH" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          python3 - "${{ needs.version.outputs.full }}" "${{ needs.version.outputs.pkg }}" <<'PY'
+          import re, sys
+
+          version, pkg_version = sys.argv[1], sys.argv[2]
+          with open("Cargo.toml", encoding="utf-8") as f:
+              content = f.read()
+
+          content, n = re.subn(
+              r'^version = ".*"$', f'version = "{version}"', content, count=1, flags=re.M
+          )
+          assert n == 1, "could not find the package version"
+
+          content, n = re.subn(
+              r'^\[package\.metadata\.packager\]$',
+              f'[package.metadata.packager]\nversion = "{pkg_version}"',
+              content,
+              count=1,
+              flags=re.M,
+          )
+          assert n == 1, "could not find [package.metadata.packager]"
+
+          with open("Cargo.toml", "w", encoding="utf-8") as f:
+              f.write(content)
+          PY
+          grep -n '^version = ' Cargo.toml
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
@@ -69,28 +165,34 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          choco install wixtoolset --version=3.14.1 -y --no-progress
-          $candidatePaths = @(
-            "${env:ProgramFiles(x86)}\WiX Toolset v3.14\bin",
-            "${env:ProgramFiles}\WiX Toolset v3.14\bin",
-            "C:\Program Files (x86)\WiX Toolset v3.14\bin",
-            "C:\Program Files\WiX Toolset v3.14\bin"
+          $ErrorActionPreference = 'Stop'
+          $wixPath = Join-Path $env:LOCALAPPDATA '.cargo-packager\WixTools'
+          New-Item -ItemType Directory -Force -Path $wixPath | Out-Null
+
+          $zip = Join-Path $env:RUNNER_TEMP 'wix314-binaries.zip'
+          Invoke-WebRequest -Uri 'https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip' -OutFile $zip
+
+          $expected = '6AC824E1642D6F7277D0ED7EA09411A508F6116BA6FAE0AA5F2C7DAA2FF43D31'
+          $actual = (Get-FileHash -Algorithm SHA256 -Path $zip).Hash
+          if ($actual -ne $expected) {
+            throw "WiX 3.14 checksum mismatch: got $actual, expected $expected"
+          }
+
+          Expand-Archive -Path $zip -DestinationPath $wixPath -Force
+          Remove-Item $zip
+
+          $required = @(
+            'candle.exe', 'candle.exe.config', 'darice.cub', 'light.exe',
+            'light.exe.config', 'wconsole.dll', 'winterop.dll', 'wix.dll',
+            'WixUIExtension.dll', 'WixUtilExtension.dll'
           )
-          $wixPath = $candidatePaths | Where-Object { Test-Path (Join-Path $_ 'candle.exe') } | Select-Object -First 1
-          if (-Not $wixPath) {
-            Write-Host "Searching for candle.exe under Program Files..."
-            $found = Get-ChildItem -Path "C:\Program Files (x86)","C:\Program Files" -Filter candle.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($found) { $wixPath = $found.Directory.FullName }
+          $missing = $required | Where-Object { -Not (Test-Path (Join-Path $wixPath $_)) }
+          if ($missing) {
+            throw "WiX 3.14 is missing required files: $($missing -join ', ')"
           }
-          if (-Not $wixPath) {
-            throw "WiX bin path with candle.exe not found"
-          }
-          Write-Host "Using WiX bin path: $wixPath"
-          $wixPath | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          $env:PATH = "$wixPath;$env:PATH"
-          where.exe candle.exe
-          candle.exe -? | Select-Object -First 2
-          light.exe -? | Select-Object -First 2
+
+          Write-Host "Seeded WiX 3.14 into $wixPath"
+          & (Join-Path $wixPath 'candle.exe') -? | Select-Object -First 2
 
       - name: Install cargo-packager
         uses: taiki-e/install-action@v2
@@ -100,22 +202,68 @@ jobs:
 
       - name: Build and Package
         id: package
+        shell: bash
         run: cargo packager --release
 
       - name: Dump WiX diagnostics (Windows)
         if: failure() && runner.os == 'Windows'
         shell: pwsh
         run: |
-          where.exe candle.exe
-          where.exe light.exe
-          Get-ChildItem -Path target/release/bundles/.cargo-packager -Recurse -ErrorAction SilentlyContinue
+          $wixPath = Join-Path $env:LOCALAPPDATA '.cargo-packager\WixTools'
+          $candle = Join-Path $wixPath 'candle.exe'
+          Write-Host "==== WiX in use ===="
+          if (Test-Path $candle) {
+            (Get-Item $candle).VersionInfo | Format-List ProductVersion, FileVersion
+          } else {
+            Write-Host "no candle.exe at $candle"
+          }
+
           $wixRoot = "target/release/bundles/.cargo-packager/wix"
           if (Test-Path $wixRoot) {
             Get-ChildItem -Path $wixRoot -Filter *.wxs -Recurse | ForEach-Object {
               Write-Host "==== $($_.FullName) ===="
               Get-Content -Path $_.FullName
+              Write-Host "==== candle output for $($_.Name) ===="
+              & $candle -arch $(if ("${{ matrix.arch }}" -eq "aarch64") { "arm64" } else { "x64" }) `
+                $_.FullName -out "$env:RUNNER_TEMP\diag\" 2>&1 | Write-Host
             }
           }
+
+      - name: Build tarball (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          NAME="vleer-${{ needs.version.outputs.full }}-${{ matrix.arch }}"
+          ROOT="$RUNNER_TEMP/tarball"
+          TREE="$ROOT/$NAME"
+
+          rm -rf "$ROOT"
+          mkdir -p "$TREE/bin" "$TREE/share/applications" "$TREE/share/vleer"
+
+          install -m 0755 target/release/vleer "$TREE/bin/vleer"
+          install -m 0644 LICENSE "$TREE/share/vleer/LICENSE"
+
+          for size in 128 256 512; do
+            dir="$TREE/share/icons/hicolor/${size}x${size}/apps"
+            mkdir -p "$dir"
+            install -m 0644 "assets/images/icon-${size}.png" "$dir/vleer.png"
+          done
+
+          cat > "$TREE/share/applications/vleer.desktop" <<'DESKTOP'
+          [Desktop Entry]
+          Type=Application
+          Name=Vleer
+          Comment=Music, but without the subscription.
+          Exec=vleer %U
+          Icon=vleer
+          Terminal=false
+          Categories=AudioVideo;Audio;Player;
+          StartupWMClass=vleer
+          DESKTOP
+
+          tar -czf "target/release/bundles/${NAME}.tar.gz" -C "$ROOT" "$NAME"
+          rm -rf "$ROOT"
 
       - name: Locate unsigned Windows MSI
         if: runner.os == 'Windows'
@@ -140,14 +288,14 @@ jobs:
         id: signpath
         uses: signpath/github-action-submit-signing-request@v2
         with:
-          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
-          organization-id: '${{ secrets.SIGNPATH_ORGANIZATION_ID }}'
-          project-slug: '${{ secrets.SIGNPATH_PROJECT_SLUG }}'
-          signing-policy-slug: '${{ secrets.SIGNPATH_SIGNING_POLICY_SLUG }}'
-          github-artifact-id: '${{ steps.upload-unsigned-windows.outputs.artifact-id }}'
+          api-token: "${{ secrets.SIGNPATH_API_TOKEN }}"
+          organization-id: "${{ secrets.SIGNPATH_ORGANIZATION_ID }}"
+          project-slug: "${{ secrets.SIGNPATH_PROJECT_SLUG }}"
+          signing-policy-slug: "${{ secrets.SIGNPATH_SIGNING_POLICY_SLUG }}"
+          github-artifact-id: "${{ steps.upload-unsigned-windows.outputs.artifact-id }}"
           wait-for-completion: true
           skip-decompress: true
-          output-artifact-directory: 'signpath-signed'
+          output-artifact-directory: "signpath-signed"
 
       - name: Replace unsigned MSI with signed (Windows)
         if: runner.os == 'Windows'
@@ -195,7 +343,7 @@ jobs:
         shell: bash
         run: |
           ARCH_LOWER=$(echo "${{ matrix.arch }}" | tr '[:upper:]' '[:lower:]')
-          PREFIX="Vleer-${{ steps.version.outputs.full }}-${ARCH_LOWER}"
+          PREFIX="Vleer-${{ needs.version.outputs.full }}-${ARCH_LOWER}"
           echo "prefix=$PREFIX" >> $GITHUB_OUTPUT
           cd target/release/bundles
           for f in *; do
@@ -239,20 +387,6 @@ jobs:
           path: target/release/bundles/${{ steps.rename.outputs.prefix }}.dmg.sig
           archive: false
 
-      - name: Upload DEB (Linux)
-        if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v7
-        with:
-          path: target/release/bundles/${{ steps.rename.outputs.prefix }}.deb
-          archive: false
-
-      - name: Upload DEB signature (Linux)
-        if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v7
-        with:
-          path: target/release/bundles/${{ steps.rename.outputs.prefix }}.deb.sig
-          archive: false
-
       - name: Upload AppImage (Linux)
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v7
@@ -266,3 +400,62 @@ jobs:
         with:
           path: target/release/bundles/${{ steps.rename.outputs.prefix }}.AppImage.sig
           archive: false
+
+      - name: Upload tarball (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          path: target/release/bundles/${{ steps.rename.outputs.prefix }}.tar.gz
+          archive: false
+
+      - name: Upload tarball signature (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          path: target/release/bundles/${{ steps.rename.outputs.prefix }}.tar.gz.sig
+          archive: false
+
+      - name: Upload to S3
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in target/release/bundles/*; do
+            [ -f "$f" ] || continue
+            name=$(basename "$f")
+            echo "uploading $name"
+            curl --silent --show-error --fail-with-body \
+              --aws-sigv4 "aws:amz:${S3_REGION}:s3" \
+              --user "${S3_ACCESS_KEY_ID}:${S3_SECRET_ACCESS_KEY}" \
+              --upload-file "$f" \
+              "${S3_ENDPOINT}/nightly/${name}"
+          done
+
+  publish:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.full }}
+      S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
+      S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+      S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+    steps:
+      - name: Prune older nightlies
+        run: |
+          set -euo pipefail
+          KEYS=$(curl --silent --show-error --fail-with-body \
+            --aws-sigv4 "aws:amz:${S3_REGION}:s3" \
+            --user "${S3_ACCESS_KEY_ID}:${S3_SECRET_ACCESS_KEY}" \
+            "${S3_ENDPOINT}?list-type=2&prefix=nightly/" \
+            | grep -o '<Key>[^<]*</Key>' | sed 's|</\?Key>||g')
+
+          printf '%s\n' "$KEYS" | while IFS= read -r key; do
+            [ -n "$key" ] || continue
+            case "$key" in
+              *"$VERSION"*) continue ;;
+            esac
+            echo "pruning $key"
+            curl --silent --show-error --fail-with-body -X DELETE \
+              --aws-sigv4 "aws:amz:${S3_REGION}:s3" \
+              --user "${S3_ACCESS_KEY_ID}:${S3_SECRET_ACCESS_KEY}" \
+              "${S3_ENDPOINT}/${key}"
+          done
