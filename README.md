@@ -21,53 +21,68 @@ A free, open-source music app powered by the OpenMusic API Spec the open standar
 
 ## Installation/Testing
 
-<details>
-<summary>Linux</summary>
+<h3>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/readme/linux_dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="./assets/readme/linux_light.svg">
+    <img src="./assets/readme/linux_light.svg" width="24px" align="top" alt="">
+  </picture>
+  <span>Linux</span>
+</h3>
 
-Download the latest nightly build [here](https://github.com/vleerapp/vleer/actions/workflows/nightly.yml).
+Install using the shell script:
 
-**Arch Linux:** 
-```bash
+```sh
+curl -fsSL https://raw.githubusercontent.com/vleerapp/vleer/main/scripts/install.sh | sh
+```
+
+This installs to `~/.local` without root and keeps itself up to date from inside the app. Pass `--system` to install to `/usr/local` instead, or `--channel stable` once 0.1.0 is out.
+
+On Arch Linux, install from the AUR:
+
+```sh
 yay -S vleer-git
 ```
 
-(Optional) Verify downloads with GPG. Import the signing key (fingerprint `7E48 1786 6409 4A19 EF60  EEC8 8524 0717 1261 C8A4`):
+An AppImage is also available with the [latest nightly build](https://github.com/vleerapp/vleer/actions/workflows/nightly.yml). AppImages do not self-update.
 
-```bash
-curl -sSL https://raw.githubusercontent.com/vleerapp/vleer/main/assets/key.asc | gpg --import
-gpg --verify <downloaded_file_name>.sig <downloaded_file_name>
-```
-
-</details>
-
-<details>
-<summary>Windows</summary>
-
-Download the latest nightly build [here](https://github.com/vleerapp/vleer/actions/workflows/nightly.yml).
-
-SmartScreen may block the installer. Click "More info" then "Run anyway".
-
-(Optional) Verify downloads with GPG. Import the signing key (fingerprint `7E48 1786 6409 4A19 EF60  EEC8 8524 0717 1261 C8A4`):
-
-```bash
-curl -sSL https://raw.githubusercontent.com/vleerapp/vleer/main/assets/key.asc | gpg --import
-gpg --verify <downloaded_file_name>.sig <downloaded_file_name>
-```
-
-</details>
-
-<details>
-<summary>macOS</summary>
+<h3>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/readme/apple_dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="./assets/readme/apple_light.svg">
+    <img src="./assets/readme/apple_light.svg" width="24px" align="top" alt="">
+  </picture>
+  <span>macOS</span>
+</h3>
 
 Download the latest nightly build [here](https://github.com/vleerapp/vleer/actions/workflows/nightly.yml).
 
-You may see a warning that the app is damaged. Run `xattr -dr com.apple.quarantine /Applications/Vleer.app` to fix it.
+After copying Vleer to Applications, open Terminal and run:
 
-(Optional) Verify downloads with GPG. Import the signing key (fingerprint `7E48 1786 6409 4A19 EF60  EEC8 8524 0717 1261 C8A4`):
+```sh
+xattr -dr com.apple.quarantine /Applications/Vleer.app
+```
 
-```bash
+This is required because Vleer isn't signed yet. Otherwise, macOS will refuse to open the app.
+
+<h3>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/readme/microsoft_dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="./assets/readme/microsoft_light.svg">
+    <img src="./assets/readme/microsoft_light.svg" width="24px" align="top" alt="">
+  </picture>
+  <span>Windows</span>
+</h3>
+
+Download the latest nightly build [here](https://github.com/vleerapp/vleer/actions/workflows/nightly.yml).
+
+The installer is not signed yet. If Microsoft Defender SmartScreen appears, select **More info**, then **Run anyway**.
+
+### Verifying downloads
+
+Optional. Import the signing key (fingerprint `7E48 1786 6409 4A19 EF60  EEC8 8524 0717 1261 C8A4`):
+
+```sh
 curl -sSL https://raw.githubusercontent.com/vleerapp/vleer/main/assets/key.asc | gpg --import
 gpg --verify <downloaded_file_name>.sig <downloaded_file_name>
 ```
-
-</details>
