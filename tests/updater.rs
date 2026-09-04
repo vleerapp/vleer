@@ -5,7 +5,9 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::thread;
 
-use vleer::updater::{PlatformAsset, UpdateInfo, Updater, is_managed_externally, verify_signature};
+use vleer::updater::{
+    PlatformAsset, UpdateChannel, UpdateInfo, Updater, is_managed_externally, verify_signature,
+};
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
 
@@ -142,8 +144,7 @@ fn not_managed_externally_on_non_linux() {
 
 #[test]
 #[cfg(target_os = "linux")]
-fn managed_externally_without_appimage_env() {
-    unsafe { std::env::remove_var("APPIMAGE") };
+fn managed_externally_without_install_receipt() {
     assert!(is_managed_externally());
 }
 
@@ -169,7 +170,12 @@ fn check_none_when_same_version() {
         current,
         platform()
     );
-    assert!(updater.check(&serve_json(json)).unwrap().is_none());
+    assert!(
+        updater
+            .check(&serve_json(json), UpdateChannel::Stable)
+            .unwrap()
+            .is_none()
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -182,7 +188,12 @@ fn check_none_when_older_version() {
         r#"{{"version":"0.0.1","platforms":{{"{}":{{"url":"https://x.test/f"}}}}}}"#,
         platform()
     );
-    assert!(updater.check(&serve_json(json)).unwrap().is_none());
+    assert!(
+        updater
+            .check(&serve_json(json), UpdateChannel::Stable)
+            .unwrap()
+            .is_none()
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -195,7 +206,10 @@ fn check_some_when_newer_version_with_platform_asset() {
         r#"{{"version":"99.0.0","platforms":{{"{}":{{"url":"https://x.test/f"}}}}}}"#,
         platform()
     );
-    let info = updater.check(&serve_json(json)).unwrap().unwrap();
+    let info = updater
+        .check(&serve_json(json), UpdateChannel::Stable)
+        .unwrap()
+        .unwrap();
     assert_eq!(info.version, "99.0.0");
     std::fs::remove_dir_all(&dir).ok();
 }
@@ -214,7 +228,12 @@ fn check_none_when_newer_version_missing_platform_asset() {
         r#"{{"version":"99.0.0","platforms":{{"{}":{{"url":"https://x.test/f"}}}}}}"#,
         other
     );
-    assert!(updater.check(&serve_json(json)).unwrap().is_none());
+    assert!(
+        updater
+            .check(&serve_json(json), UpdateChannel::Stable)
+            .unwrap()
+            .is_none()
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -223,17 +242,25 @@ fn check_none_when_newer_version_missing_platform_asset() {
 fn check_error_on_invalid_json_response() {
     let dir = tmp_dir();
     let updater = Updater::new();
-    assert!(updater.check(&serve_json("not json".to_string())).is_err());
+    assert!(
+        updater
+            .check(&serve_json("not json".to_string()), UpdateChannel::Stable)
+            .is_err()
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
 #[cfg(target_os = "linux")]
-fn check_none_on_linux_without_appimage_env() {
-    unsafe { std::env::remove_var("APPIMAGE") };
+fn check_none_on_linux_without_install_receipt() {
     let dir = tmp_dir();
     let updater = Updater::new();
-    assert!(updater.check("http://127.0.0.1:1").unwrap().is_none());
+    assert!(
+        updater
+            .check("http://127.0.0.1:1", UpdateChannel::Stable)
+            .unwrap()
+            .is_none()
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 
