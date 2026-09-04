@@ -19,7 +19,7 @@ A free, open-source music app powered by the OpenMusic API Spec the open standar
 - [ ] Stable local music player
 - [ ] OpenMusic API integration
 
-## Installation/Testing
+## Installation
 
 <h3>
   <picture>
@@ -36,7 +36,7 @@ Install using the shell script:
 curl -fsSL https://raw.githubusercontent.com/vleerapp/vleer/main/scripts/install.sh | sh
 ```
 
-This installs to `~/.local` without root and keeps itself up to date from inside the app. Pass `--system` to install to `/usr/local` instead, or `--channel stable` once 0.1.0 is out.
+This installs to `~/.local` without root and keeps itself up to date from inside the app. Pass `--system` to install to `/usr/local` instead.
 
 On Arch Linux, install from the AUR:
 
@@ -44,7 +44,7 @@ On Arch Linux, install from the AUR:
 yay -S vleer-git
 ```
 
-An AppImage is also available with the [latest nightly build](https://github.com/vleerapp/vleer/actions/workflows/nightly.yml). AppImages do not self-update.
+An AppImage is also available for [ARM64](https://api.vleer.app/releases/v1?os=linux&arch=aarch64&format=appimage) or [x64](https://api.vleer.app/releases/v1?os=linux&arch=x86_64&format=appimage). AppImages do not self-update.
 
 <h3>
   <picture>
@@ -55,7 +55,7 @@ An AppImage is also available with the [latest nightly build](https://github.com
   <span>macOS</span>
 </h3>
 
-Download the latest nightly build [here](https://github.com/vleerapp/vleer/actions/workflows/nightly.yml).
+Download the DMG for [Apple silicon](https://api.vleer.app/releases/v1?os=macos&arch=aarch64) or [Intel](https://api.vleer.app/releases/v1?os=macos&arch=x86_64).
 
 After copying Vleer to Applications, open Terminal and run:
 
@@ -74,9 +74,9 @@ This is required because Vleer isn't signed yet. Otherwise, macOS will refuse to
   <span>Windows</span>
 </h3>
 
-Download the latest nightly build [here](https://github.com/vleerapp/vleer/actions/workflows/nightly.yml).
+Download the installer for [ARM64](https://api.vleer.app/releases/v1?os=windows&arch=aarch64) or [x64](https://api.vleer.app/releases/v1?os=windows&arch=x86_64).
 
-The installer is not signed yet. If Microsoft Defender SmartScreen appears, select **More info**, then **Run anyway**.
+If Microsoft Defender SmartScreen appears, select **More info**, then **Run anyway**.
 
 ### Verifying downloads
 
