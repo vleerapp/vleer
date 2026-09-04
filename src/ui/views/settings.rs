@@ -1,6 +1,6 @@
 use gpui::{Context, Entity, IntoElement, Render, prelude::FluentBuilder as _, *};
 
-use crate::data::config::Config;
+use crate::data::config::{Config, UpdateChannel};
 use crate::media::playback::Playback;
 use crate::ui::components::div::{flex_col, flex_row};
 use crate::ui::components::icons::{self, LINK, icon};
@@ -659,7 +659,7 @@ impl RenderOnce for UpdatesSection {
                 col.child(
                     div()
                         .text_color(variables.text_secondary)
-                        .child("Updates are handled by your package manager."),
+                        .child("This install updates outside the app. Use your package manager, or reinstall to update."),
                 )
             })
             .when(!managed_externally, |col| {
@@ -677,6 +677,36 @@ impl RenderOnce for UpdatesSection {
                             div()
                                 .text_color(variables.text_secondary)
                                 .child("Check for updates automatically"),
+                        ),
+                )
+                .child(
+                    flex_row()
+                        .gap(px(variables.padding_8))
+                        .child(
+                            Switch::new("nightly-channel-switch", cfg.channel.is_nightly())
+                                .on_change({
+                                    let updater = updater.clone();
+                                    move |value, _window, cx| {
+                                        let channel = if value {
+                                            UpdateChannel::Nightly
+                                        } else {
+                                            UpdateChannel::Stable
+                                        };
+                                        cx.update_global::<Config, _>(|config, _cx| {
+                                            config.set(|s| s.updater.channel = channel);
+                                        });
+                                        run_check_in_background(
+                                            updater.clone(),
+                                            channel,
+                                            cx.background_executor(),
+                                        );
+                                    }
+                                }),
+                        )
+                        .child(
+                            div()
+                                .text_color(variables.text_secondary)
+                                .child("Nightly update channel"),
                         ),
                 )
                 .child(
@@ -702,8 +732,10 @@ impl RenderOnce for UpdatesSection {
                                 .on_click({
                                     let updater = updater.clone();
                                     move |_event, _window, cx| {
+                                        let channel = cx.global::<Config>().get().updater.channel;
                                         run_check_in_background(
                                             updater.clone(),
+                                            channel,
                                             cx.background_executor(),
                                         );
                                     }

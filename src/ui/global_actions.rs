@@ -160,7 +160,8 @@ fn scan(_: &Scan, cx: &mut App) {
 
 fn check_for_updates(_: &CheckForUpdates, cx: &mut App) {
     let updater = cx.global::<Updater>().clone();
-    run_check_in_background(updater, cx.background_executor());
+    let channel = cx.global::<Config>().get().updater.channel;
+    run_check_in_background(updater, channel, cx.background_executor());
 }
 
 fn force_scan(_: &ForceScan, cx: &mut App) {

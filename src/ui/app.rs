@@ -326,10 +326,14 @@ pub async fn run() -> Result<()> {
             }
 
             {
-                let cfg = cx.global::<Config>().get().updater.clone();
-                if cfg.auto_check && !crate::updater::is_managed_externally() {
+                let config = cx.global::<Config>().get().updater.clone();
+                if config.auto_check && !crate::updater::is_managed_externally() {
                     let updater = cx.global::<Updater>().clone();
-                    crate::updater::run_check_in_background(updater, cx.background_executor());
+                    crate::updater::run_check_in_background(
+                        updater,
+                        config.channel,
+                        cx.background_executor(),
+                    );
                 }
             }
 

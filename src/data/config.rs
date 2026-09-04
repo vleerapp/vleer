@@ -89,15 +89,22 @@ impl Default for AudioSettings {
     }
 }
 
+pub use crate::updater::UpdateChannel;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdaterSettings {
     #[serde(default = "defaults::auto_check")]
     pub auto_check: bool,
+    #[serde(default = "defaults::channel")]
+    pub channel: UpdateChannel,
 }
 
 impl Default for UpdaterSettings {
     fn default() -> Self {
-        Self { auto_check: true }
+        Self {
+            auto_check: true,
+            channel: defaults::channel(),
+        }
     }
 }
 
@@ -131,6 +138,9 @@ mod defaults {
     }
     pub fn auto_check() -> bool {
         true
+    }
+    pub fn channel() -> super::UpdateChannel {
+        super::UpdateChannel::of_running_build()
     }
 }
 

@@ -153,6 +153,13 @@ info "installing to $PREFIX"
 cp -R "$TREE/." "$PREFIX/"
 chmod 0755 "$PREFIX/bin/vleer"
 
+DESKTOP="$PREFIX/share/applications/vleer.desktop"
+if [ -f "$DESKTOP" ]; then
+  sed -e "s#^Exec=vleer\$#Exec=$PREFIX/bin/vleer#" \
+    -e "s#^Exec=vleer\([[:space:]]\)#Exec=$PREFIX/bin/vleer\1#" \
+    "$DESKTOP" > "$DESKTOP.tmp" && mv "$DESKTOP.tmp" "$DESKTOP"
+fi
+
 mkdir -p "$PREFIX/share/vleer"
 cat > "$PREFIX/share/vleer/install-receipt.json" <<RECEIPT
 {

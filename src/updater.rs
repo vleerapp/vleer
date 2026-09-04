@@ -21,6 +21,35 @@ use ureq::Agent;
 const URL: &str = "https://api.vleer.app/update/v1/check";
 const PUBLIC_KEY: &[u8] = include_bytes!("../assets/key.asc");
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdateChannel {
+    Stable,
+    Nightly,
+}
+
+impl UpdateChannel {
+    pub fn of_running_build() -> Self {
+        if env!("CARGO_PKG_VERSION").contains("-nightly") {
+            Self::Nightly
+        } else {
+            Self::Stable
+        }
+    }
+
+    pub fn is_nightly(self) -> bool {
+        matches!(self, Self::Nightly)
+    }
+}
+
+fn check_url(channel: UpdateChannel) -> String {
+    if channel.is_nightly() {
+        format!("{URL}?nightly=true")
+    } else {
+        URL.to_string()
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub enum UpdateStatus {
     #[default]
@@ -153,7 +182,7 @@ impl Updater {
         );
     }
 
-    fn current_platform_key() -> &'static str {
+    fn current_os_key() -> &'static str {
         if cfg!(target_os = "windows") {
             "windows"
         } else if cfg!(target_os = "macos") {
@@ -163,12 +192,18 @@ impl Updater {
         }
     }
 
-    pub fn check(&self, url: &str) -> Result<Option<UpdateInfo>> {
+    fn asset_for_current_platform(info: &UpdateInfo) -> Option<&PlatformAsset> {
+        let os = Self::current_os_key();
+        info.platforms
+            .get(&format!("{os}-{}", std::env::consts::ARCH))
+            .or_else(|| info.platforms.get(os))
+    }
+
+    pub fn check(&self, url: &str, channel: UpdateChannel) -> Result<Option<UpdateInfo>> {
         self.set_status(UpdateStatus::Checking);
 
-        #[cfg(target_os = "linux")]
-        if !is_appimage() {
-            debug!("not running as AppImage; updates disabled (use package manager)");
+        if is_managed_externally() {
+            debug!("install is managed externally; updates disabled");
             self.set_status(UpdateStatus::UpToDate);
             return Ok(None);
         }
@@ -187,17 +222,19 @@ impl Updater {
         let remote = Version::parse(info.version.trim_start_matches('v'))
             .context("parsing remote version")?;
 
-        if remote <= current {
+        let switching_channel = channel != UpdateChannel::of_running_build();
+        if !switching_channel && remote <= current {
             debug!("up to date ({} <= {})", remote, current);
             self.set_status(UpdateStatus::UpToDate);
             return Ok(None);
         }
 
-        if !info.platforms.contains_key(Self::current_platform_key()) {
+        if Self::asset_for_current_platform(&info).is_none() {
             warn!(
-                "remote version {} has no asset for platform {}",
+                "remote version {} has no asset for platform {}-{}",
                 remote,
-                Self::current_platform_key()
+                Self::current_os_key(),
+                std::env::consts::ARCH
             );
             self.set_status(UpdateStatus::UpToDate);
             return Ok(None);
@@ -212,9 +249,7 @@ impl Updater {
 
         self.set_status(UpdateStatus::Downloading);
 
-        let asset = info
-            .platforms
-            .get(Self::current_platform_key())
+        let asset = Self::asset_for_current_platform(info)
             .ok_or_else(|| anyhow!("no asset for current platform"))?;
 
         let file_name = asset
@@ -355,7 +390,7 @@ elseif (Test-Path '{fallback}') {{ Start-Process '{fallback}' }}
 
         #[cfg(target_os = "linux")]
         {
-            replace_appimage(path)?;
+            replace_tarball(path)?;
             std::process::exit(0);
         }
     }
@@ -400,33 +435,53 @@ impl VerificationHelper for Helper {
 }
 
 #[cfg(target_os = "linux")]
-fn is_appimage() -> bool {
-    std::env::var_os("APPIMAGE").is_some()
+fn install_prefix() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let prefix = exe.parent()?.parent()?;
+    prefix
+        .join("share/vleer/install-receipt.json")
+        .is_file()
+        .then(|| prefix.to_path_buf())
 }
 
 #[cfg(target_os = "linux")]
-fn replace_appimage(new_file: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
+fn replace_tarball(archive: &Path) -> Result<()> {
+    let prefix = install_prefix().ok_or_else(|| anyhow!("no install receipt found"))?;
 
-    let current = std::env::var_os("APPIMAGE")
-        .map(PathBuf::from)
-        .ok_or_else(|| anyhow!("APPIMAGE env var not set"))?;
-    let parent = current
-        .parent()
-        .ok_or_else(|| anyhow!("AppImage has no parent dir"))?;
+    let staging = prefix.join("share/vleer/.staging");
+    let _ = std::fs::remove_dir_all(&staging);
+    std::fs::create_dir_all(&staging).context("creating staging directory")?;
 
-    let staged = parent.join(".vleer-new.AppImage");
-    let _ = std::fs::remove_file(&staged);
-    std::fs::copy(new_file, &staged).context("copying new AppImage next to current")?;
-    std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755))?;
-    let _ = std::fs::remove_file(new_file);
+    let status = std::process::Command::new("tar")
+        .arg("-xzf")
+        .arg(archive)
+        .arg("-C")
+        .arg(&staging)
+        .status()
+        .context("extracting update archive")?;
+    if !status.success() {
+        let _ = std::fs::remove_dir_all(&staging);
+        return Err(anyhow!("tar exited with {status}"));
+    }
+
+    let tree = std::fs::read_dir(&staging)
+        .context("reading staging directory")?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .find(|p| p.is_dir() && p.join("bin/vleer").is_file())
+        .ok_or_else(|| anyhow!("update archive has no bin/vleer"))?;
+
+    let _ = std::fs::remove_file(archive);
 
     let pid = std::process::id();
-    let current_s = current.to_string_lossy().replace('\'', "'\"'\"'");
-    let staged_s = staged.to_string_lossy().replace('\'', "'\"'\"'");
+    let quote = |p: &Path| p.to_string_lossy().replace('\'', "'\"'\"'");
+    let prefix_s = quote(&prefix);
+    let staging_s = quote(&staging);
+    let tree_s = quote(&tree);
     let script = format!(
         "for i in $(seq 1 50); do\n  kill -0 {pid} 2>/dev/null || break\n  sleep 0.2\ndone\n\
-mv -f -- '{staged_s}' '{current_s}'\nchmod 0755 -- '{current_s}'\nexec '{current_s}' --skip-single-instance\n"
+cp -R -- '{tree_s}/.' '{prefix_s}/'\nchmod 0755 -- '{prefix_s}/bin/vleer'\n\
+rm -rf -- '{staging_s}'\nexec '{prefix_s}/bin/vleer' --skip-single-instance\n"
     );
 
     let script_path = update_cache_dir()?.join(format!("vleer_update_{pid}.sh"));
@@ -548,7 +603,7 @@ fn update_cache_dir() -> Result<PathBuf> {
 pub fn is_managed_externally() -> bool {
     #[cfg(target_os = "linux")]
     {
-        std::env::var_os("APPIMAGE").is_none()
+        install_prefix().is_none()
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -556,10 +611,14 @@ pub fn is_managed_externally() -> bool {
     }
 }
 
-pub fn run_check_in_background(updater: Updater, executor: &gpui::BackgroundExecutor) {
+pub fn run_check_in_background(
+    updater: Updater,
+    channel: UpdateChannel,
+    executor: &gpui::BackgroundExecutor,
+) {
     executor
         .spawn(async move {
-            match updater.check(URL) {
+            match updater.check(&check_url(channel), channel) {
                 Ok(Some(info)) => info!("update {} available", info.version),
                 Ok(None) => debug!("no update available"),
                 Err(e) => {
