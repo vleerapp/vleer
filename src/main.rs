@@ -14,7 +14,20 @@ mod status;
 mod ui;
 mod updater;
 
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn tune_allocator() {
+    unsafe {
+        libc::mallopt(libc::M_MMAP_THRESHOLD, 128 * 1024);
+        libc::mallopt(libc::M_TRIM_THRESHOLD, 128 * 1024);
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn tune_allocator() {}
+
 fn main() -> anyhow::Result<()> {
+    tune_allocator();
+
     let data_dir = dirs::data_dir()
         .expect("couldn't get data directory")
         .join("vleer");
