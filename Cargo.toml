@@ -103,6 +103,12 @@ windows = { version = "0.62.2", features = [
 ] }
 windows-future = "0.3"
 
+[profile.release]
+strip = true
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
 [package.metadata.packager]
 product_name = "Vleer"
 description = "Music, but without the subscription."
