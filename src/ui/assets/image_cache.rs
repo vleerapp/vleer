@@ -24,8 +24,15 @@ pub fn vleer_cache(id: impl Into<ElementId>, max_items: usize) -> VleerImageCach
     }
 }
 
-pub fn app_image_cache() -> VleerImageCacheProvider {
-    vleer_cache("vleer-app-image-cache", 64)
+pub fn chrome_image_cache() -> VleerImageCacheProvider {
+    vleer_cache("vleer-chrome-image-cache", 24)
+}
+
+pub fn view_image_cache(view: crate::ui::views::AppView) -> VleerImageCacheProvider {
+    vleer_cache(
+        ElementId::Name(format!("vleer-view-image-cache-{}", view.title()).into()),
+        64,
+    )
 }
 
 pub struct VleerImageCacheProvider {

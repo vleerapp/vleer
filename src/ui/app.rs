@@ -9,7 +9,10 @@ use crate::{
     data::{config::Config, db::repo::Database, scanner::Scanner, telemetry::Telemetry},
     media::{controller::MediaController, playback::Playback, queue::Queue},
     ui::{
-        assets::{VleerAssetSource, image_cache::app_image_cache},
+        assets::{
+            VleerAssetSource,
+            image_cache::{chrome_image_cache, view_image_cache},
+        },
         components::{
             context_menu::{
                 BackgroundUiEvent, BackgroundUiNotifier, HomeDataChanged, LibraryDataChanged,
@@ -91,7 +94,7 @@ impl Render for MainWindow {
             .size_full()
             .min_h_0()
             .bg(variables.background)
-            .image_cache(app_image_cache());
+            .image_cache(chrome_image_cache());
 
         if show_titlebar {
             let mut titlebar = flex_row()
@@ -194,6 +197,7 @@ impl Render for MainWindow {
                                         .gap(px(variables.padding_16))
                                         .child(
                                             div()
+                                                .image_cache(view_image_cache(self.current_view))
                                                 .id("current-view-container")
                                                 .flex_1()
                                                 .min_w_0()
