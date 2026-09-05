@@ -311,7 +311,7 @@ impl Render for PlaylistView {
                     .relative()
                     .cursor_pointer()
                     .child(
-                        img(format!("!image://{}", uri))
+                        img(format!("!image://{}?size={}", uri, cover_size as u32))
                             .size_full()
                             .object_fit(ObjectFit::Cover),
                     )

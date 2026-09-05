@@ -48,7 +48,7 @@ impl Render for QueueDragPayload {
             .unwrap_or(false);
 
         let cover = if let Some(ref uri) = song.image_id {
-            img(format!("!image://{}", uri))
+            img(format!("!image://{}?size={}", uri, ROW_HEIGHT as u32))
                 .size_full()
                 .object_fit(ObjectFit::Cover)
                 .into_any_element()
@@ -225,7 +225,7 @@ fn render_row(
     let variables = *variables;
 
     let cover = if let Some(ref uri) = song.image_id {
-        img(format!("!image://{}", uri))
+        img(format!("!image://{}?size={}", uri, ROW_HEIGHT as u32))
             .size_full()
             .object_fit(ObjectFit::Cover)
             .into_any_element()

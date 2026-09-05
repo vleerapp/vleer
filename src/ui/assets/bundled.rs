@@ -5,7 +5,6 @@ use url::Url;
 #[derive(RustEmbed)]
 #[folder = "./assets"]
 #[include = "fonts/*"]
-#[include = "images/*"]
 #[include = "icons/*"]
 #[exclude = "*.DS_Store"]
 pub struct BundledAssets;

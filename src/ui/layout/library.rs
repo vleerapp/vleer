@@ -186,7 +186,7 @@ fn pinned_item(
     let id_for_ctx = id.clone();
 
     let cover_element = if let Some(uri) = image_id {
-        let image = img(format!("!image://{}", uri))
+        let image = img(format!("!image://{}?size=36", uri))
             .size_full()
             .object_fit(ObjectFit::Cover);
         if is_artist {

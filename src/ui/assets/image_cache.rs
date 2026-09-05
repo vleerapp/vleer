@@ -25,7 +25,7 @@ pub fn vleer_cache(id: impl Into<ElementId>, max_items: usize) -> VleerImageCach
 }
 
 pub fn app_image_cache() -> VleerImageCacheProvider {
-    vleer_cache("vleer-app-image-cache", 200)
+    vleer_cache("vleer-app-image-cache", 64)
 }
 
 pub struct VleerImageCacheProvider {

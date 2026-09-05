@@ -13,7 +13,7 @@ use std::time::Duration;
 
 const PROBE_BUFFER_CAPACITY: usize = 64 * 1024;
 
-const COVER_SIZE: u32 = 1024;
+const COVER_SIZE: u32 = 512;
 const JPEG_QUALITY: u8 = 70;
 
 #[derive(Debug, Clone, Default)]

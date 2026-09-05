@@ -321,7 +321,7 @@ impl Render for AlbumView {
         let body = if let Some(album) = self.album.clone() {
             let cover_size = 220.0_f32;
             let image: AnyElement = match album.image_id.clone() {
-                Some(uri) => img(format!("!image://{}", uri))
+                Some(uri) => img(format!("!image://{}?size={}", uri, cover_size as u32))
                     .id("album-cover")
                     .size(px(cover_size))
                     .object_fit(ObjectFit::Cover)
@@ -450,7 +450,7 @@ impl Render for AlbumView {
                                         .relative()
                                         .overflow_hidden()
                                         .child(match image_uri {
-                                            Some(uri) => img(format!("!image://{}", uri))
+                                            Some(uri) => img(format!("!image://{}?size=36", uri))
                                                 .size_full()
                                                 .rounded_full()
                                                 .object_fit(ObjectFit::Cover)

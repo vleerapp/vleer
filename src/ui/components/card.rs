@@ -141,17 +141,21 @@ impl RenderOnce for Card {
 
         let image = match image_uri {
             Some(uri) => match image_shape {
-                CardImageShape::Square => img(format!("!image://{}", uri))
-                    .id(ElementId::Name(format!("{tile_id}-image").into()))
-                    .size(px(image_size))
-                    .object_fit(ObjectFit::Cover)
-                    .into_any_element(),
-                CardImageShape::Circle => img(format!("!image://{}", uri))
-                    .id(ElementId::Name(format!("{tile_id}-image").into()))
-                    .size(px(image_size))
-                    .object_fit(ObjectFit::Cover)
-                    .rounded_full()
-                    .into_any_element(),
+                CardImageShape::Square => {
+                    img(format!("!image://{}?size={}", uri, image_size as u32))
+                        .id(ElementId::Name(format!("{tile_id}-image").into()))
+                        .size(px(image_size))
+                        .object_fit(ObjectFit::Cover)
+                        .into_any_element()
+                }
+                CardImageShape::Circle => {
+                    img(format!("!image://{}?size={}", uri, image_size as u32))
+                        .id(ElementId::Name(format!("{tile_id}-image").into()))
+                        .size(px(image_size))
+                        .object_fit(ObjectFit::Cover)
+                        .rounded_full()
+                        .into_any_element()
+                }
             },
             None => match image_shape {
                 CardImageShape::Square => div()

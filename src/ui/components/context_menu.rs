@@ -331,7 +331,7 @@ impl Render for ContextMenu {
                                     .size(px(32.0))
                                     .flex_shrink_0()
                                     .child(
-                                        img(format!("!image://{}", image_id))
+                                        img(format!("!image://{}?size=32", image_id))
                                             .size_full()
                                             .object_fit(ObjectFit::Cover),
                                     )
