@@ -38,13 +38,23 @@ curl -fsSL https://raw.githubusercontent.com/vleerapp/vleer/main/scripts/install
 
 This installs to `~/.local` without root and keeps itself up to date from inside the app. Pass `--system` to install to `/usr/local` instead.
 
-On Arch Linux, install from the AUR:
+An AppImage is also available for [ARM64](https://api.vleer.app/downloads/v1?os=linux&arch=aarch64&format=appimage&nightly=true) or [x64](https://api.vleer.app/downloads/v1?os=linux&arch=x86_64&format=appimage&nightly=true). AppImages do not self-update.
+
+Install from the AUR:
 
 ```sh
 yay -S vleer-git
 ```
 
-An AppImage is also available for [ARM64](https://api.vleer.app/releases/v1?os=linux&arch=aarch64&format=appimage) or [x64](https://api.vleer.app/releases/v1?os=linux&arch=x86_64&format=appimage). AppImages do not self-update.
+Or via Homebrew:
+
+```sh
+brew install vleerapp/vleer/vleer # stable versions
+```
+
+```sh
+brew install vleerapp/vleer/vleer-nightly # nightly builds
+```
 
 <h3>
   <picture>
@@ -55,7 +65,7 @@ An AppImage is also available for [ARM64](https://api.vleer.app/releases/v1?os=l
   <span>macOS</span>
 </h3>
 
-Download the DMG for [Apple silicon](https://api.vleer.app/releases/v1?os=macos&arch=aarch64) or [Intel](https://api.vleer.app/releases/v1?os=macos&arch=x86_64).
+Download the DMG for [Apple silicon](https://api.vleer.app/downloads/v1?os=macos&arch=aarch64&nightly=true) or [Intel](https://api.vleer.app/downloads/v1?os=macos&arch=x86_64&nightly=true).
 
 After copying Vleer to Applications, open Terminal and run:
 
@@ -64,6 +74,16 @@ xattr -dr com.apple.quarantine /Applications/Vleer.app
 ```
 
 This is required because Vleer isn't signed yet. Otherwise, macOS will refuse to open the app.
+
+Or via Homebrew (handles the quarantine step automatically):
+
+```sh
+brew install --cask vleerapp/vleer/vleer # stable versions
+```
+
+```sh
+brew install --cask vleerapp/vleer/vleer-nightly # nightly builds
+```
 
 <h3>
   <picture>
@@ -74,7 +94,7 @@ This is required because Vleer isn't signed yet. Otherwise, macOS will refuse to
   <span>Windows</span>
 </h3>
 
-Download the installer for [ARM64](https://api.vleer.app/releases/v1?os=windows&arch=aarch64) or [x64](https://api.vleer.app/releases/v1?os=windows&arch=x86_64).
+Download the installer for [ARM64](https://api.vleer.app/downloads/v1?os=windows&arch=aarch64&nightly=true) or [x64](https://api.vleer.app/downloads/v1?os=windows&arch=x86_64&nightly=true).
 
 If Microsoft Defender SmartScreen appears, select **More info**, then **Run anyway**.
 

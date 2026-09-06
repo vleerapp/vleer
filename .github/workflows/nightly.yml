@@ -430,6 +430,29 @@ jobs:
               "${S3_ENDPOINT}/nightly/${name}"
           done
 
+      - name: Compute checksum for homebrew tap
+        if: contains(fromJSON('["x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","aarch64-apple-darwin","x86_64-apple-darwin"]'), matrix.target)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            FILE="${{ steps.rename.outputs.prefix }}.tar.gz"
+          else
+            FILE="${{ steps.rename.outputs.prefix }}.dmg"
+          fi
+          SHA=$(shasum -a 256 "target/release/bundles/$FILE" | cut -d' ' -f1)
+          mkdir -p "$RUNNER_TEMP/brewmeta"
+          cat > "$RUNNER_TEMP/brewmeta/meta.json" <<JSON
+          {"os":"${{ runner.os }}","arch":"${{ matrix.arch }}","file":"$FILE","sha256":"$SHA"}
+          JSON
+
+      - name: Upload checksum metadata
+        if: contains(fromJSON('["x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","aarch64-apple-darwin","x86_64-apple-darwin"]'), matrix.target)
+        uses: actions/upload-artifact@v7
+        with:
+          name: brewmeta-${{ matrix.target }}
+          path: ${{ runner.temp }}/brewmeta/meta.json
+
   publish:
     needs: [version, build]
     runs-on: ubuntu-latest
@@ -459,3 +482,100 @@ jobs:
               --user "${S3_ACCESS_KEY_ID}:${S3_SECRET_ACCESS_KEY}" \
               "${S3_ENDPOINT}/${key}"
           done
+
+      - name: Download checksum metadata
+        uses: actions/download-artifact@v6
+        with:
+          pattern: brewmeta-*
+          path: brewmeta
+
+      - name: Checkout homebrew tap
+        uses: actions/checkout@v5
+        with:
+          repository: vleerapp/homebrew-vleer
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Generate nightly formula + cask
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$VERSION" "$S3_ENDPOINT" <<'PY'
+          import json, glob, sys
+
+          version, s3_endpoint = sys.argv[1], sys.argv[2]
+          meta = {}
+          for f in glob.glob("brewmeta/brewmeta-*/meta.json"):
+              d = json.load(open(f))
+              meta[(d["os"], d["arch"])] = d
+
+          linux_x64 = meta[("Linux", "x86_64")]["sha256"]
+          linux_arm = meta[("Linux", "aarch64")]["sha256"]
+          mac_x64 = meta[("macOS", "x86_64")]["sha256"]
+          mac_arm = meta[("macOS", "aarch64")]["sha256"]
+
+          formula = f'''class VleerATNightly < Formula
+            desc "Vleer nightly build"
+            homepage "https://vleer.app"
+            version "{version}"
+            conflicts_with "vleer"
+
+            on_macos do
+              odie "install macOS nightly via `brew install --cask vleer@nightly` instead"
+            end
+
+            url "{s3_endpoint}/nightly/Vleer-{version}-#{{Hardware::CPU.arm? ? "aarch64" : "x86_64"}}.tar.gz"
+            sha256 Hardware::CPU.arm? ? "{linux_arm}" : "{linux_x64}"
+
+            def install
+              bin.install "bin/vleer" => "vleer-nightly"
+              share.install "share/applications", "share/icons"
+              prefix.install "share/vleer/LICENSE"
+            end
+
+            test do
+              system "#{{bin}}/vleer-nightly", "--version"
+            end
+          end
+          '''
+          open("tap/Formula/vleer@nightly.rb", "w").write(formula)
+
+          cask = f'''cask "vleer@nightly" do
+            arch arm: "aarch64", intel: "x86_64"
+
+            version "{version}"
+            sha256 arm:   "{mac_arm}",
+                   intel: "{mac_x64}"
+
+            url "{s3_endpoint}/nightly/Vleer-{version}-#{{arch}}.dmg"
+            name "Vleer Nightly"
+            desc "Vleer nightly build"
+            homepage "https://vleer.app"
+
+            conflicts_with cask: "vleer"
+            auto_updates true
+
+            app "Vleer.app", target: "Vleer Nightly.app"
+
+            postflight do
+              system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{{appdir}}/Vleer Nightly.app"]
+            end
+          end
+          '''
+          open("tap/Casks/vleer@nightly.rb", "w").write(cask)
+          PY
+
+      - name: Commit + push tap update
+        shell: bash
+        working-directory: tap
+        run: |
+          set -euo pipefail
+          git config user.name "vleer-bot"
+          git config user.email "bot@vleer.app"
+          git add "Formula/vleer@nightly.rb" "Casks/vleer@nightly.rb"
+          if git diff --cached --quiet; then
+            echo "no changes"
+            exit 0
+          fi
+          git commit -m "nightly: $VERSION"
+          git push
