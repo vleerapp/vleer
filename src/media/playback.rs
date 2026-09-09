@@ -190,7 +190,7 @@ impl Playback {
             let prepared = match prepared {
                 Ok(prepared) => prepared,
                 Err(e) => {
-                    error!("Failed to open track: {}", e);
+                    error!("Failed to open track: {:#}", e);
                     cx.update(|cx| {
                         cx.update_global::<Playback, _>(|playback, _cx| {
                             if playback.load_token == token {
