@@ -125,7 +125,7 @@ impl Coeffs {
                 a2: 0.0,
             }
         } else {
-            let a = 10.0f32.powf(gain_db / 20.0);
+            let a = 10.0f32.powf(gain_db / 40.0);
             let omega = 2.0 * std::f32::consts::PI * fc / fs;
             let sn = omega.sin();
             let cs = omega.cos();
