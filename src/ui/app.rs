@@ -1,7 +1,7 @@
 use anyhow::Ok;
 use futures::StreamExt;
 use gpui::*;
-use gpui_platform::application;
+use gpui_platform_gpui_unofficial::application;
 use std::collections::HashMap;
 use tracing::{debug, error};
 
