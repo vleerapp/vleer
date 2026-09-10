@@ -448,7 +448,7 @@ impl Playback {
 
             let eq_source = EqualizerSource::new(source, self.equalizer.clone());
             let vis_source = VisualizerSource::new(eq_source, self.visualizer_state.clone());
-            let gain = self.compute_normalization_gain();
+            let gain = Self::compute_normalization_gain_for(self.current_lufs);
             let normalized = vis_source.amplify(gain);
 
             if let Some(sink) = &self.sink {
@@ -679,16 +679,6 @@ impl Playback {
             }
         }
         amplitude
-    }
-
-    fn compute_normalization_gain(&self) -> f32 {
-        if let Some(lufs) = self.current_lufs {
-            let gain_db = (DEFAULT_TARGET_LUFS - lufs).clamp(-12.0, 12.0);
-            let linear_gain = 10.0f32.powf(gain_db / 20.0);
-            debug!("Normalization: LUFS {:.2}, gain {:.2} dB", lufs, gain_db);
-            return linear_gain;
-        }
-        1.0
     }
 }
 
