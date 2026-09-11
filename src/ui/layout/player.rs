@@ -1,3 +1,4 @@
+use crate::ui::assets::{ImageRequest, cover_uri};
 use gpui::*;
 use std::ops::Range;
 use std::time::Duration;
@@ -96,7 +97,11 @@ impl Render for Player {
             }
 
             let title = song.title.clone();
-            let cover = song.image_id.map(|id| format!("!image://{}", id));
+
+            let cover = Some(cover_uri(
+                song.image_id.as_deref(),
+                ImageRequest::Track(song.id.clone()),
+            ));
 
             let artists_vec = if song.artists.is_empty() {
                 vec!["Unknown Artist".to_string()]
@@ -265,15 +270,17 @@ impl Render for Player {
                             });
                         }
                     })
-                    .child(if let Some(uri) = cover_uri {
-                        img(format!("{}?size=50", uri))
+                    .child(
+                        div()
                             .size(px(36.0))
-                            .object_fit(ObjectFit::Cover)
                             .flex_shrink_0()
-                            .into_any_element()
-                    } else {
-                        div().size(px(36.0)).bg(variables.border).into_any_element()
-                    })
+                            .bg(variables.border)
+                            .children(cover_uri.map(|uri| {
+                                img(format!("{}?size=50", uri))
+                                    .size(px(36.0))
+                                    .object_fit(ObjectFit::Cover)
+                            })),
+                    )
                     .child(
                         flex_col()
                             .gap(px(2.0))

@@ -245,7 +245,7 @@ impl Playback {
                 if let Some(mc) = cx.try_global::<MediaController>().cloned() {
                     cx.background_executor()
                         .spawn(async move {
-                            mc.update_song(song).ok();
+                            mc.update_song(song).await.ok();
                         })
                         .detach();
                 }

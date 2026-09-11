@@ -1,4 +1,5 @@
 use crate::media::playback::{play_album_now, play_song_now};
+use crate::ui::assets::ImageRequest;
 use crate::{
     data::{db::repo::Database, models::RecentItem},
     ui::{
@@ -202,10 +203,19 @@ fn recent_item_tile(
         None
     };
 
+    let fallback = if is_song {
+        ImageRequest::Track(item_id.clone())
+    } else {
+        ImageRequest::Album(item_id.clone())
+    };
+
     Card::new(format!("{id_prefix}-item-{idx}"), title, cover_size)
         .subtitle(subtitle)
         .subtitle_artist_ranges(subtitle_ranges, hovered_artist_idx, on_artist_hover)
-        .image_uri(cover_uri)
+        .image_uri(Some(crate::ui::assets::cover_uri(
+            cover_uri.as_deref(),
+            fallback,
+        )))
         .on_play(move |_window, cx| {
             if is_song {
                 play_song_now(play_item_id.clone(), cx);

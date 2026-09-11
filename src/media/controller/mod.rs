@@ -1,4 +1,5 @@
 use crate::data::db::repo::Database;
+use crate::data::images::resolve_song_image;
 use crate::data::models::Song;
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
@@ -74,7 +75,7 @@ impl MediaController {
         self.inner.platform.set_state(state)
     }
 
-    pub fn update_song(&self, song: Song) -> Result<()> {
+    pub async fn update_song(&self, song: Song) -> Result<()> {
         let db = self.inner.db.clone();
 
         let artist = Some(song.artists.join(", ")).filter(|s| !s.is_empty());
@@ -84,14 +85,19 @@ impl MediaController {
             None => None,
         };
 
-        let artwork_data = match song.image_id.as_deref() {
+        let image_id = match song.image_id.clone() {
+            Some(id) => Some(id),
+            None => resolve_song_image(db.clone(), song.id.clone()).await.ok(),
+        };
+
+        let artwork_data = match image_id.as_deref() {
             Some(id) => db.get_image(id).ok().flatten().map(|i| i.data),
             None => None,
         };
 
         #[cfg(any(target_os = "linux", target_os = "windows"))]
         let artwork_id = if artwork_data.is_some() {
-            song.image_id.clone().or_else(|| Some(song.id.to_string()))
+            image_id.clone().or_else(|| Some(song.id.to_string()))
         } else {
             None
         };

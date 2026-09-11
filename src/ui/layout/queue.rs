@@ -1,3 +1,4 @@
+use crate::ui::assets::{ImageRequest, cover_uri};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 
@@ -47,14 +48,22 @@ impl Render for QueueDragPayload {
             .map(|id| id == song.id)
             .unwrap_or(false);
 
-        let cover = if let Some(ref uri) = song.image_id {
-            img(format!("!image://{}?size={}", uri, ROW_HEIGHT as u32))
+        let cover = div()
+            .bg(variables.border)
+            .size_full()
+            .child(
+                img(format!(
+                    "{}?size={}",
+                    cover_uri(
+                        song.image_id.as_deref(),
+                        ImageRequest::Track(song.id.clone())
+                    ),
+                    ROW_HEIGHT as u32
+                ))
                 .size_full()
-                .object_fit(ObjectFit::Cover)
-                .into_any_element()
-        } else {
-            div().bg(variables.border).size_full().into_any_element()
-        };
+                .object_fit(ObjectFit::Cover),
+            )
+            .into_any_element();
 
         let drag_w = QUEUE_WIDTH - variables.padding_16 * 2.0;
 
@@ -224,14 +233,22 @@ fn render_row(
     let song = song.clone();
     let variables = *variables;
 
-    let cover = if let Some(ref uri) = song.image_id {
-        img(format!("!image://{}?size={}", uri, ROW_HEIGHT as u32))
+    let cover = div()
+        .bg(variables.border)
+        .size_full()
+        .child(
+            img(format!(
+                "{}?size={}",
+                cover_uri(
+                    song.image_id.as_deref(),
+                    ImageRequest::Track(song.id.clone())
+                ),
+                ROW_HEIGHT as u32
+            ))
             .size_full()
-            .object_fit(ObjectFit::Cover)
-            .into_any_element()
-    } else {
-        div().bg(variables.border).size_full().into_any_element()
-    };
+            .object_fit(ObjectFit::Cover),
+        )
+        .into_any_element();
 
     let drag_payload = QueueDragPayload {
         from_index: display_idx,

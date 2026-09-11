@@ -14,6 +14,12 @@ impl Cuid {
     }
 }
 
+impl From<String> for Cuid {
+    fn from(value: String) -> Self {
+        Cuid(value)
+    }
+}
+
 impl rusqlite::ToSql for Cuid {
     fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
         Ok(self.0.as_str().into())

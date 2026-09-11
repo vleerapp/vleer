@@ -141,43 +141,6 @@ impl SearchIndex {
         )
     }
 
-    pub fn upsert_song(
-        &mut self,
-        id: Cuid,
-        title: String,
-        artist: String,
-        album: String,
-        image_id: Option<String>,
-    ) {
-        let entry = SongSearchEntry::new(id.clone(), title, artist, album, image_id);
-        self.songs.retain(|e| e.id != id);
-        self.songs.push(entry);
-    }
-
-    pub fn upsert_artist(&mut self, id: Cuid, name: String) {
-        if let Some(existing) = self.artists.iter_mut().find(|e| e.id == id) {
-            existing.name = name;
-        } else {
-            self.artists.push(ArtistSearchEntry {
-                id,
-                name,
-                image_id: None,
-            });
-        }
-    }
-
-    pub fn upsert_album(
-        &mut self,
-        id: Cuid,
-        title: String,
-        artist: String,
-        image_id: Option<String>,
-    ) {
-        let entry = AlbumSearchEntry::new(id.clone(), title, artist, image_id);
-        self.albums.retain(|e| e.id != id);
-        self.albums.push(entry);
-    }
-
     pub fn upsert_playlist(&mut self, id: Cuid, name: String, image_id: Option<String>) {
         self.playlists.retain(|e| e.id != id);
         self.playlists

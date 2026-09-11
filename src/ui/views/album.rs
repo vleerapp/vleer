@@ -3,6 +3,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::ui::assets::{ImageRequest, cover_uri};
 use crate::{
     data::{
         db::repo::Database,
@@ -67,7 +68,13 @@ fn song_entry_from_song(song: &crate::data::models::Song) -> Arc<SongEntry> {
         album: String::new(),
         album_id: song.album_id.clone(),
         duration: format!("{}:{:02}", minutes, seconds),
-        cover_uri: song.image_id.clone().map(|id| format!("!image://{}", id)),
+        cover_uri: Some(cover_uri(
+            song.image_id.as_deref(),
+            match &song.album_id {
+                Some(album_id) => ImageRequest::Album(album_id.clone()),
+                None => ImageRequest::Track(song.id.clone()),
+            },
+        )),
         track_number: song.track_number,
         genre: String::new(),
     })
@@ -320,18 +327,23 @@ impl Render for AlbumView {
 
         let body = if let Some(album) = self.album.clone() {
             let cover_size = 220.0_f32;
-            let image: AnyElement = match album.image_id.clone() {
-                Some(uri) => img(format!("!image://{}?size={}", uri, cover_size as u32))
-                    .id("album-cover")
+            let image: AnyElement = div()
+                .id("album-cover")
+                .size(px(cover_size))
+                .bg(variables.border)
+                .child(
+                    img(format!(
+                        "{}?size={}",
+                        cover_uri(
+                            album.image_id.as_deref(),
+                            ImageRequest::Album(album.id.clone())
+                        ),
+                        cover_size as u32
+                    ))
                     .size(px(cover_size))
-                    .object_fit(ObjectFit::Cover)
-                    .into_any_element(),
-                None => div()
-                    .id("album-cover-placeholder")
-                    .size(px(cover_size))
-                    .bg(variables.border)
-                    .into_any_element(),
-            };
+                    .object_fit(ObjectFit::Cover),
+                )
+                .into_any_element();
 
             let song_count = self.songs_cache.borrow().len();
             let duration = self.total_duration_string();

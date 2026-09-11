@@ -2,6 +2,8 @@ pub mod bundled;
 pub mod image_cache;
 
 use crate::data::db::repo::Database;
+use crate::data::images::{decode_limit, resolve_album_image, resolve_song_image};
+use crate::data::models::Cuid;
 use crate::ui::assets::bundled::BundledAssets;
 use gpui::{App, Asset, ImageCacheError, RenderImage, Resource};
 use gpui::{AssetSource, Result as GpuiResult};
@@ -9,20 +11,19 @@ use image::imageops::FilterType;
 use image::{Frame, ImageError};
 use rusqlite::{OptionalExtension, params};
 use std::borrow::Cow;
-use std::sync::{Arc, OnceLock};
-use tokio::sync::Semaphore;
+use std::sync::Arc;
 use url::Url;
 
 const RENDER_SCALE: u32 = 2;
 
-fn decode_limit() -> &'static Semaphore {
-    static LIMIT: OnceLock<Semaphore> = OnceLock::new();
-    LIMIT.get_or_init(|| {
-        let permits = std::thread::available_parallelism()
-            .map(|n| (n.get() / 2).max(2))
-            .unwrap_or(2);
-        Semaphore::new(permits)
-    })
+const TRACK_NAMESPACE: &str = "track";
+const ALBUM_NAMESPACE: &str = "album";
+
+#[derive(Debug, PartialEq)]
+pub enum ImageRequest {
+    Stored(String),
+    Track(Cuid),
+    Album(Cuid),
 }
 
 pub enum VleerImageLoader {}
@@ -35,7 +36,8 @@ impl Asset for VleerImageLoader {
         source: Self::Source,
         cx: &mut App,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
-        let image_conn = cx.global::<Database>().image_conn.clone();
+        let db = cx.global::<Database>().clone();
+        let image_conn = db.image_conn.clone();
         let executor = cx.background_executor().clone();
 
         async move {
@@ -48,12 +50,22 @@ impl Asset for VleerImageLoader {
                 }
             };
             let normalized = path.strip_prefix('!').unwrap_or(&path);
-            let (image_id, target) = parse_image_request(normalized).ok_or_else(|| {
+            let (request, target) = parse_image_request(normalized).ok_or_else(|| {
                 ImageCacheError::Asset(format!("invalid image uri: {}", path).into())
             })?;
 
             executor
                 .spawn(async move {
+                    let image_id = match request {
+                        ImageRequest::Stored(id) => id,
+                        ImageRequest::Track(song_id) => resolve_song_image(db, song_id)
+                            .await
+                            .map_err(|e| ImageCacheError::Asset(e.to_string().into()))?,
+                        ImageRequest::Album(album_id) => resolve_album_image(db, album_id)
+                            .await
+                            .map_err(|e| ImageCacheError::Asset(e.to_string().into()))?,
+                    };
+
                     let bytes: Option<Vec<u8>> = {
                         let conn = image_conn.lock();
                         conn.query_row(
@@ -72,6 +84,17 @@ impl Asset for VleerImageLoader {
                 })
                 .await
         }
+    }
+}
+
+pub fn cover_uri(image_id: Option<&str>, fallback: ImageRequest) -> String {
+    match image_id {
+        Some(id) => format!("!image://{id}"),
+        None => match fallback {
+            ImageRequest::Stored(id) => format!("!image://{id}"),
+            ImageRequest::Track(id) => format!("!image://{TRACK_NAMESPACE}/{id}"),
+            ImageRequest::Album(id) => format!("!image://{ALBUM_NAMESPACE}/{id}"),
+        },
     }
 }
 
@@ -114,17 +137,31 @@ fn image_err(e: ImageError) -> ImageCacheError {
     ImageCacheError::Image(Arc::new(e))
 }
 
-fn parse_image_request(path: &str) -> Option<(String, Option<u32>)> {
+fn parse_image_request(path: &str) -> Option<(ImageRequest, Option<u32>)> {
     let rest = path.strip_prefix("image://")?;
     let (before, query) = match rest.split_once('?') {
         Some((before, query)) => (before, Some(query)),
         None => (rest, None),
     };
     let before = before.trim_start_matches('/');
-    let id = before.split('/').next()?;
-    if id.is_empty() {
+    let mut segments = before.split('/');
+    let head = segments.next()?;
+    if head.is_empty() {
         return None;
     }
+
+    let request = match head {
+        TRACK_NAMESPACE | ALBUM_NAMESPACE => {
+            let id = segments.next().filter(|id| !id.is_empty())?;
+            let id = Cuid::from(id.to_string());
+            if head == TRACK_NAMESPACE {
+                ImageRequest::Track(id)
+            } else {
+                ImageRequest::Album(id)
+            }
+        }
+        id => ImageRequest::Stored(id.to_string()),
+    };
 
     let size = query.and_then(|query| {
         query.split('&').find_map(|pair| {
@@ -134,7 +171,7 @@ fn parse_image_request(path: &str) -> Option<(String, Option<u32>)> {
         })
     });
 
-    Some((id.to_string(), size))
+    Some((request, size))
 }
 
 pub struct VleerAssetSource;
@@ -166,17 +203,21 @@ impl AssetSource for VleerAssetSource {
 mod tests {
     use super::*;
 
+    fn request(uri: &str) -> ImageRequest {
+        parse_image_request(uri).unwrap().0
+    }
+
     #[test]
     fn parses_id_without_size() {
         let (id, size) = parse_image_request("image://abc123").unwrap();
-        assert_eq!(id, "abc123");
+        assert_eq!(id, ImageRequest::Stored("abc123".into()));
         assert_eq!(size, None);
     }
 
     #[test]
     fn parses_size_query() {
         let (id, size) = parse_image_request("image://abc123?size=36").unwrap();
-        assert_eq!(id, "abc123");
+        assert_eq!(id, ImageRequest::Stored("abc123".into()));
         assert_eq!(size, Some(36));
     }
 
@@ -184,6 +225,53 @@ mod tests {
     fn ignores_zero_and_invalid_sizes() {
         assert_eq!(parse_image_request("image://a?size=0").unwrap().1, None);
         assert_eq!(parse_image_request("image://a?size=xx").unwrap().1, None);
+    }
+
+    #[test]
+    fn parses_unresolved_requests() {
+        assert_eq!(
+            request("image://track/song1"),
+            ImageRequest::Track(Cuid::from("song1".to_string()))
+        );
+        assert_eq!(
+            request("image://album/album1"),
+            ImageRequest::Album(Cuid::from("album1".to_string()))
+        );
+        assert_eq!(
+            parse_image_request("image://track/song1?size=36")
+                .unwrap()
+                .1,
+            Some(36)
+        );
+    }
+
+    #[test]
+    fn stored_digest_is_not_mistaken_for_a_namespace() {
+        let digest = "a".repeat(64);
+        assert_eq!(
+            request(&format!("image://{digest}")),
+            ImageRequest::Stored(digest)
+        );
+    }
+
+    #[test]
+    fn rejects_namespace_without_id() {
+        assert_eq!(parse_image_request("image://track"), None);
+        assert_eq!(parse_image_request("image://track/"), None);
+        assert_eq!(parse_image_request("image://album/"), None);
+    }
+
+    #[test]
+    fn cover_uri_prefers_the_stored_image() {
+        let song = Cuid::from("song1".to_string());
+        assert_eq!(
+            cover_uri(Some("abc"), ImageRequest::Track(song.clone())),
+            "!image://abc"
+        );
+        assert_eq!(
+            cover_uri(None, ImageRequest::Track(song)),
+            "!image://track/song1"
+        );
     }
 
     fn jpeg(width: u32, height: u32) -> Vec<u8> {

@@ -2,10 +2,11 @@ use anyhow::{Context, Result};
 use image::{DynamicImage, GenericImageView, imageops::FilterType, load_from_memory};
 use lofty::config::ParseOptions;
 use lofty::file::{AudioFile, TaggedFileExt};
-use lofty::picture::{Picture, PictureType};
+use lofty::picture::PictureType;
 use lofty::probe::Probe;
 use lofty::tag::{Accessor, ItemKey, Tag};
 use sha2::{Digest, Sha256};
+use std::fmt::Write as _;
 use std::fs::File;
 use std::io::{BufReader, Cursor};
 use std::path::Path;
@@ -26,12 +27,6 @@ pub struct AudioMetadata {
     pub duration: Duration,
     pub genres: Vec<String>,
     pub lufs: Option<f32>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ImageData {
-    pub id: String,
-    pub data: Vec<u8>,
 }
 
 fn extract_metadata_from_tag(tag: Option<&Tag>, duration: Duration) -> AudioMetadata {
@@ -83,27 +78,14 @@ fn extract_metadata_from_tag(tag: Option<&Tag>, duration: Duration) -> AudioMeta
     }
 }
 
-fn picture_to_image_data(picture: &Picture) -> Option<ImageData> {
-    let original_data = picture.data();
-    if original_data.is_empty() {
-        return None;
-    }
-
+pub(crate) fn image_id_for(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(original_data);
-    let id = hasher
-        .finalize()
-        .iter()
-        .map(|b| format!("{:02x}", b))
-        .collect::<String>();
-
-    let img = load_from_memory(original_data).ok()?;
-    let optimized_data = convert_to_jpeg(img).ok()?;
-
-    Some(ImageData {
-        id,
-        data: optimized_data,
-    })
+    hasher.update(bytes);
+    let mut id = String::with_capacity(64);
+    for byte in hasher.finalize() {
+        let _ = write!(id, "{:02x}", byte);
+    }
+    id
 }
 
 fn open_probe(path: &Path) -> Result<Probe<BufReader<File>>> {
@@ -112,57 +94,48 @@ fn open_probe(path: &Path) -> Result<Probe<BufReader<File>>> {
     Ok(Probe::new(reader))
 }
 
-impl AudioMetadata {
-    pub fn from_path_with_options(path: &Path, read_pictures: bool) -> Result<Self> {
-        let parse_options = if read_pictures {
-            ParseOptions::new()
-        } else {
-            ParseOptions::new().read_cover_art(false)
-        };
-
-        let tagged_file = open_probe(path)?
-            .guess_file_type()?
-            .options(parse_options)
-            .read()?;
-
-        let duration = tagged_file.properties().duration();
-        let tag = tagged_file
-            .primary_tag()
-            .or_else(|| tagged_file.first_tag());
-
-        Ok(extract_metadata_from_tag(tag, duration))
-    }
-}
-
-pub fn read_metadata_and_image(path: &Path) -> Result<(AudioMetadata, Option<ImageData>)> {
-    let tagged_file = open_probe(path)?.guess_file_type()?.read()?;
+pub fn read_metadata(path: &Path) -> Result<AudioMetadata> {
+    let tagged_file = open_probe(path)?
+        .guess_file_type()?
+        .options(ParseOptions::new().read_cover_art(false))
+        .read()?;
 
     let duration = tagged_file.properties().duration();
     let tag = tagged_file
         .primary_tag()
         .or_else(|| tagged_file.first_tag());
 
-    let metadata = extract_metadata_from_tag(tag, duration);
+    Ok(extract_metadata_from_tag(tag, duration))
+}
 
-    let image_data = tag.and_then(|tag| {
+pub(crate) fn read_front_image(path: &Path) -> Result<Option<Vec<u8>>> {
+    let tagged_file = open_probe(path)?
+        .guess_file_type()?
+        .options(ParseOptions::new().read_properties(false))
+        .read()?;
+
+    let tag = tagged_file
+        .primary_tag()
+        .or_else(|| tagged_file.first_tag());
+
+    Ok(tag.and_then(|tag| {
         tag.pictures()
             .iter()
             .find(|p| p.pic_type() == PictureType::CoverFront)
             .or_else(|| tag.pictures().first())
-            .and_then(picture_to_image_data)
-    });
-
-    Ok((metadata, image_data))
+            .map(|picture| picture.data().to_vec())
+            .filter(|data| !data.is_empty())
+    }))
 }
 
-pub fn extract_image_data(audio_path: &Path) -> Result<Option<ImageData>> {
-    Ok(read_metadata_and_image(audio_path)?.1)
+pub(crate) fn encode_cover(bytes: &[u8]) -> Result<Vec<u8>> {
+    convert_to_jpeg(load_from_memory(bytes)?)
 }
 
 fn convert_to_jpeg(img: DynamicImage) -> Result<Vec<u8>> {
     let (w, h) = img.dimensions();
     let resized = if w > COVER_SIZE || h > COVER_SIZE {
-        img.resize(COVER_SIZE, COVER_SIZE, FilterType::Lanczos3)
+        img.resize(COVER_SIZE, COVER_SIZE, FilterType::CatmullRom)
     } else {
         img
     };

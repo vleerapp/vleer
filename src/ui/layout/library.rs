@@ -2,6 +2,7 @@ use crate::data::db::repo::Database;
 use crate::data::models::{Cuid, PinnedItem};
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
+use crate::ui::assets::{ImageRequest, cover_uri};
 use crate::ui::components::context_menu::LibraryDataChanged;
 use crate::ui::components::context_menu::{
     ContextMenu, PinnedItemsChanged, QueueChanged, album_context_menu_items,
@@ -185,21 +186,26 @@ fn pinned_item(
     let id_clone = id.clone();
     let id_for_ctx = id.clone();
 
-    let cover_element = if let Some(uri) = image_id {
-        let image = img(format!("!image://{}?size=36", uri))
+    let uri = match (image_id.as_deref(), item_type.as_str()) {
+        (Some(id), _) => Some(format!("!image://{id}")),
+        (None, "Song") => Some(cover_uri(None, ImageRequest::Track(id.clone()))),
+        (None, "Album") => Some(cover_uri(None, ImageRequest::Album(id.clone()))),
+        (None, _) => None,
+    };
+
+    let cover_element = {
+        let container = div()
             .size_full()
-            .object_fit(ObjectFit::Cover);
+            .bg(variables.border)
+            .children(uri.map(|uri| {
+                img(format!("{uri}?size=36"))
+                    .size_full()
+                    .object_fit(ObjectFit::Cover)
+            }));
         if is_artist {
-            image.rounded_full().into_any_element()
+            container.rounded_full().into_any_element()
         } else {
-            image.into_any_element()
-        }
-    } else {
-        let placeholder = div().size_full().bg(variables.border);
-        if is_artist {
-            placeholder.rounded_full().into_any_element()
-        } else {
-            placeholder.into_any_element()
+            container.into_any_element()
         }
     };
 

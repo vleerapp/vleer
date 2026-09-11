@@ -1,5 +1,6 @@
 pub mod config;
 pub mod db;
+pub mod images;
 pub mod metadata;
 pub mod models;
 pub mod scanner;

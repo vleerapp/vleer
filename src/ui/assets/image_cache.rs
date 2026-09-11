@@ -15,6 +15,7 @@ use gpui::{
 use rustc_hash::{FxBuildHasher, FxHashMap};
 use tracing::{error, trace};
 
+use crate::data::images::is_missing_image;
 use crate::ui::assets::{VleerImageLoader, is_vleer_image};
 
 pub fn vleer_cache(id: impl Into<ElementId>, max_items: usize) -> VleerImageCacheProvider {
@@ -160,8 +161,14 @@ impl ImageCache for VleerImageCache {
             .spawn(cx, async move |cx| {
                 let result = task.await;
 
-                if let Err(err) = result {
-                    error!("error loading image into cache: {:?}", err);
+                match result {
+                    Err(gpui::ImageCacheError::Asset(message))
+                        if is_missing_image(message.as_ref()) =>
+                    {
+                        trace!("no cover image for {message}");
+                    }
+                    Err(err) => error!("error loading image into cache: {:?}", err),
+                    Ok(_) => {}
                 }
 
                 if !notify_pending.swap(true, Ordering::AcqRel) {

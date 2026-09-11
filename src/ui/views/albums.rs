@@ -3,6 +3,7 @@ use gpui::{Context, IntoElement, Render, prelude::FluentBuilder, *};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::rc::Rc;
 
+use crate::ui::assets::{ImageRequest, cover_uri};
 use crate::{
     data::{db::repo::Database, models::AlbumListItem},
     ui::{
@@ -23,7 +24,7 @@ use crate::{
 pub struct AlbumsView {
     page_size: usize,
     total_count: usize,
-    page_cache: FxHashMap<usize, Vec<AlbumListItem>>,
+    page_cache: FxHashMap<usize, (u64, Vec<AlbumListItem>)>,
     page_pending: FxHashSet<(u64, usize)>,
     last_query: String,
     query_version: u64,
@@ -81,15 +82,20 @@ impl AlbumsView {
                         || this
                             .page_cache
                             .get(&0)
-                            .map_or(!first_page.is_empty(), |existing| existing != &first_page);
+                            .map_or(!first_page.is_empty(), |(_, existing)| {
+                                existing != &first_page
+                            });
 
                     this.query_version = this.query_version.wrapping_add(1);
+                    let fresh = this.query_version;
+                    if this.last_query != query {
+                        this.page_cache.clear();
+                    }
                     this.last_query = query;
-                    this.page_cache.clear();
                     this.page_pending.clear();
                     this.total_count = count;
                     if count > 0 {
-                        this.page_cache.insert(0, first_page);
+                        this.page_cache.insert(0, (fresh, first_page));
                     }
                     this.pending_query = None;
                     this.request_inflight = false;
@@ -152,16 +158,20 @@ impl AlbumsView {
         .detach();
 
         cx.observe_global::<LibraryDataChanged>(|this, cx| {
-            this.page_cache.clear();
-            this.page_pending.clear();
-            this.pending_query = None;
-            this.query_version = this.query_version.wrapping_add(1);
-            let query = this.last_query.clone();
-            this.request_query(query, cx);
+            this.refresh(cx);
         })
         .detach();
 
         view
+    }
+
+    fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.page_pending.clear();
+        self.pending_query = Some(self.last_query.clone());
+        self.request_version = self.request_version.wrapping_add(1);
+        if !self.request_inflight {
+            self.start_next_query_request(cx);
+        }
     }
 
     fn request_query(&mut self, query: String, cx: &mut Context<Self>) {
@@ -181,7 +191,11 @@ impl AlbumsView {
 
     fn ensure_page(&mut self, page: usize, cx: &mut Context<Self>) {
         let pending_key = (self.query_version, page);
-        if self.page_cache.contains_key(&page) || self.page_pending.contains(&pending_key) {
+        let fresh = self
+            .page_cache
+            .get(&page)
+            .is_some_and(|(version, _)| *version == self.query_version);
+        if fresh || self.page_pending.contains(&pending_key) {
             return;
         }
 
@@ -209,7 +223,7 @@ impl AlbumsView {
                         this.page_pending.remove(&(query_version, page));
                         return;
                     }
-                    this.page_cache.insert(page, albums);
+                    this.page_cache.insert(page, (query_version, albums));
                     this.page_pending.remove(&(query_version, page));
                     cx.notify();
                 })
@@ -255,7 +269,7 @@ impl AlbumsView {
         let offset = index % self.page_size;
         self.page_cache
             .get(&page)
-            .and_then(|p| p.get(offset))
+            .and_then(|(_, albums)| albums.get(offset))
             .cloned()
     }
 
@@ -297,7 +311,10 @@ fn album_tile(
     )
     .subtitle(subtitle)
     .subtitle_artist_ranges(subtitle_ranges, hovered_artist_idx, on_artist_hover)
-    .image_uri(album.image_id.clone())
+    .image_uri(Some(cover_uri(
+        album.image_id.as_deref(),
+        ImageRequest::Album(album.id.clone()),
+    )))
     .on_play(move |_window, cx| {
         play_album_now(play_album_id.clone(), cx);
     })

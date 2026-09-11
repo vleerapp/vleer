@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::ui::assets::{ImageRequest, cover_uri};
 use crate::{
     data::{
         db::repo::Database,
@@ -64,7 +65,13 @@ fn song_entry_from_track(track: &PlaylistTrack) -> Arc<SongEntry> {
         album: track.album_title.clone().unwrap_or_default(),
         album_id: song.album_id.clone(),
         duration: format!("{}:{:02}", minutes, seconds),
-        cover_uri: song.image_id.clone().map(|id| format!("!image://{}", id)),
+        cover_uri: Some(cover_uri(
+            song.image_id.as_deref(),
+            match &song.album_id {
+                Some(album_id) => ImageRequest::Album(album_id.clone()),
+                None => ImageRequest::Track(song.id.clone()),
+            },
+        )),
         track_number: song.track_number,
         genre: String::new(),
     })

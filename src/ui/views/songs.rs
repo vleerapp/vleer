@@ -5,6 +5,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use tracing::error;
 
+use crate::ui::assets::{ImageRequest, cover_uri};
 use crate::{
     data::{
         db::repo::Database,
@@ -56,6 +57,14 @@ fn song_entry_from_list_item(item: SongListItem) -> Arc<SongEntry> {
     let minutes = item.duration / 60;
     let seconds = item.duration % 60;
 
+    let cover = cover_uri(
+        item.image_id.as_deref(),
+        match &item.album_id {
+            Some(album_id) => ImageRequest::Album(album_id.clone()),
+            None => ImageRequest::Track(item.id.clone()),
+        },
+    );
+
     Arc::new(SongEntry {
         id: item.id,
         title: item.title,
@@ -64,7 +73,7 @@ fn song_entry_from_list_item(item: SongListItem) -> Arc<SongEntry> {
         album,
         album_id: item.album_id,
         duration: format!("{}:{:02}", minutes, seconds),
-        cover_uri: item.image_id.map(|id| format!("!image://{}", id)),
+        cover_uri: Some(cover),
         track_number: None,
         genre: item.genres.unwrap_or_default(),
     })
@@ -72,8 +81,9 @@ fn song_entry_from_list_item(item: SongListItem) -> Arc<SongEntry> {
 
 struct SongPageCache {
     page_size: usize,
-    pages: FxHashMap<usize, Vec<Arc<SongEntry>>>,
+    pages: FxHashMap<usize, (u64, Vec<Arc<SongEntry>>)>,
     count: Option<usize>,
+    count_version: Option<u64>,
     last_query: String,
     last_sort: SongSort,
     last_ascending: bool,
@@ -89,6 +99,7 @@ impl SongPageCache {
             page_size,
             pages: FxHashMap::default(),
             count: None,
+            count_version: None,
             last_query: String::new(),
             last_sort: SongSort::Default,
             last_ascending: false,
@@ -111,6 +122,15 @@ impl SongPageCache {
     fn invalidate(&mut self) {
         self.pages.clear();
         self.count = None;
+        self.count_version = None;
+        self.bump();
+    }
+
+    fn refresh(&mut self) {
+        self.bump();
+    }
+
+    fn bump(&mut self) {
         self.version = self.version.wrapping_add(1);
         self.count_pending = false;
         self.in_flight_page = None;
@@ -121,14 +141,27 @@ impl SongPageCache {
         self.count.unwrap_or(0)
     }
 
+    fn count_is_fresh(&self) -> bool {
+        self.count_version == Some(self.version)
+    }
+
     fn get_row(&self, index: usize) -> Option<Arc<SongEntry>> {
         let page = index / self.page_size;
         let offset = index % self.page_size;
-        self.pages.get(&page).and_then(|p| p.get(offset)).cloned()
+        self.pages
+            .get(&page)
+            .and_then(|(_, rows)| rows.get(offset))
+            .cloned()
+    }
+
+    fn is_fresh(&self, page: usize) -> bool {
+        self.pages
+            .get(&page)
+            .is_some_and(|(version, _)| *version == self.version)
     }
 
     fn request_page(&mut self, page: usize) -> Option<usize> {
-        if self.pages.contains_key(&page) {
+        if self.is_fresh(page) {
             return None;
         }
         if self.in_flight_page == Some(page) {
@@ -152,12 +185,12 @@ impl SongPageCache {
         if self.version != version {
             return (false, None);
         }
-        self.pages.insert(page, entries);
+        self.pages.insert(page, (version, entries));
         if self.in_flight_page == Some(page) {
             self.in_flight_page = None;
         }
         if let Some(p) = self.next_wanted_page
-            && self.pages.contains_key(&p)
+            && self.is_fresh(p)
         {
             self.next_wanted_page = None;
         }
@@ -210,6 +243,7 @@ fn spawn_count_fetch(
                     && c.last_ascending == ascending
                 {
                     c.count = Some(count);
+                    c.count_version = Some(version);
                     table_weak.borrow().as_ref().and_then(|w| w.upgrade())
                 } else {
                     None
@@ -300,7 +334,7 @@ impl SongsView {
                 let version_for_fetch = {
                     let mut c = cache.borrow_mut();
                     c.ensure_state(&query, sort, ascending);
-                    if c.count.is_none() && !c.count_pending {
+                    if !c.count_is_fresh() && !c.count_pending {
                         c.count_pending = true;
                         Some(c.version)
                     } else {
@@ -455,7 +489,7 @@ impl SongsView {
         .detach();
 
         cx.observe_global::<LibraryDataChanged>(|this, cx| {
-            this.cache.borrow_mut().invalidate();
+            this.cache.borrow_mut().refresh();
             let table_handle = this.table.clone();
             cx.update_entity(&table_handle, |_table, cx| {
                 cx.emit(SongTableEvent::NewRows);

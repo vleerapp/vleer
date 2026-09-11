@@ -139,49 +139,28 @@ impl RenderOnce for Card {
         let tile_id = id.to_string();
         let image_hover_group: SharedString = format!("{tile_id}-image-hover").into();
 
-        let image = match image_uri {
-            Some(uri) => match image_shape {
-                CardImageShape::Square => {
-                    img(format!("!image://{}?size={}", uri, image_size as u32))
-                        .id(ElementId::Name(format!("{tile_id}-image").into()))
-                        .size(px(image_size))
-                        .object_fit(ObjectFit::Cover)
-                        .into_any_element()
-                }
-                CardImageShape::Circle => {
-                    img(format!("!image://{}?size={}", uri, image_size as u32))
-                        .id(ElementId::Name(format!("{tile_id}-image").into()))
-                        .size(px(image_size))
-                        .object_fit(ObjectFit::Cover)
-                        .rounded_full()
-                        .into_any_element()
-                }
-            },
-            None => match image_shape {
-                CardImageShape::Square => div()
-                    .id(ElementId::Name(
-                        format!("{tile_id}-image-placeholder").into(),
-                    ))
-                    .size(px(image_size))
-                    .bg(variables.border)
-                    .into_any_element(),
-                CardImageShape::Circle => div()
-                    .id(ElementId::Name(
-                        format!("{tile_id}-image-placeholder").into(),
-                    ))
-                    .size(px(image_size))
-                    .bg(variables.border)
-                    .rounded_full()
-                    .into_any_element(),
-            },
-        };
+        let image = image_uri.map(|uri| {
+            let element = img(format!("{}?size={}", uri, image_size as u32))
+                .id(ElementId::Name(format!("{tile_id}-image").into()))
+                .size(px(image_size))
+                .object_fit(ObjectFit::Cover);
+            match image_shape {
+                CardImageShape::Square => element.into_any_element(),
+                CardImageShape::Circle => element.rounded_full().into_any_element(),
+            }
+        });
 
         let mut image_container = div()
             .id(ElementId::Name(format!("{tile_id}-image-container").into()))
             .size(px(image_size))
             .relative()
+            .bg(variables.border)
             .group(image_hover_group.clone())
-            .child(image);
+            .children(image);
+
+        if matches!(image_shape, CardImageShape::Circle) {
+            image_container = image_container.rounded_full();
+        }
 
         if let Some(on_play) = on_play {
             image_container = image_container.child(
