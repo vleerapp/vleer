@@ -37,6 +37,7 @@ cuid2 = "0.1.6"
 url = "2.5.8"
 rust-embed = { version = "8.12.0", features = ["include-exclude"] }
 lofty = "0.25.1"
+rayon = "1.11"
 walkdir = "2.5.0"
 notify = "8.2.0"
 notify-debouncer-full = "0.7.0"

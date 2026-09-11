@@ -1,25 +1,23 @@
 use anyhow::{Context, Result};
+use futures::StreamExt;
 use futures::channel::mpsc;
 use futures::lock::Mutex as AsyncMutex;
-use futures::stream::{self, StreamExt};
 use gpui::{App, BackgroundExecutor, Global};
 use notify::{EventKind, RecursiveMode};
 use notify_debouncer_full::{DebounceEventResult, Debouncer, RecommendedCache, new_debouncer};
+use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
-use std::time::UNIX_EPOCH;
+use std::time::{Instant, UNIX_EPOCH};
 use tracing::{debug, error, info, warn};
 use walkdir::WalkDir;
 
 use crate::data::config::Config;
-use crate::data::db::repo::Database;
-use crate::data::metadata::{
-    AudioMetadata, ImageData, extract_image_data, read_metadata_and_image,
-};
-use crate::data::models::Cuid;
+use crate::data::db::repo::{BatchTrack, Database, ScanCache};
+use crate::data::metadata::{AudioMetadata, read_metadata};
 use crate::data::telemetry::Telemetry;
 use crate::ui::components::context_menu::{BackgroundUiEvent, BackgroundUiNotifier};
 use crate::ui::layout::navbar;
@@ -29,53 +27,20 @@ type FsWatcher = Debouncer<notify::RecommendedWatcher, RecommendedCache>;
 const SUPPORTED_EXTENSIONS: &[&str] = &[
     "aac", "aiff", "aif", "flac", "mp3", "mp4", "m4a", "mp4a", "ogg", "oga", "opus", "wav", "wv",
 ];
-const MAX_CONCURRENT_SCANS: usize = 4;
-const IO_POOL_THREADS: usize = 4;
+/// Files handed to one parallel read job. Small so the write of one batch
+/// overlaps the read of the next at a fine grain.
+const READ_CHUNK_SIZE: usize = 256;
 
-type IoJob = Box<dyn FnOnce() + Send + 'static>;
-
-fn io_pool() -> &'static std::sync::mpsc::Sender<IoJob> {
-    use std::sync::{Mutex, OnceLock};
-    static POOL: OnceLock<std::sync::mpsc::Sender<IoJob>> = OnceLock::new();
-    POOL.get_or_init(|| {
-        let (tx, rx) = std::sync::mpsc::channel::<IoJob>();
-        let rx = Arc::new(Mutex::new(rx));
-        for i in 0..IO_POOL_THREADS {
-            let rx = rx.clone();
-            std::thread::Builder::new()
-                .name(format!("vleer-io-{i}"))
-                .spawn(move || {
-                    loop {
-                        let job = {
-                            let guard = match rx.lock() {
-                                Ok(g) => g,
-                                Err(_) => break,
-                            };
-                            match guard.recv() {
-                                Ok(j) => j,
-                                Err(_) => break,
-                            }
-                        };
-                        job();
-                    }
-                })
-                .expect("failed to spawn IO worker thread");
-        }
-        tx
-    })
-}
-
-fn io_spawn<F, T>(f: F) -> futures::channel::oneshot::Receiver<T>
-where
-    F: FnOnce() -> T + Send + 'static,
-    T: Send + 'static,
-{
-    let (tx, rx) = futures::channel::oneshot::channel();
-    let _ = io_pool().send(Box::new(move || {
-        let _ = tx.send(f());
-    }));
-    rx
-}
+/// Tracks gathered before opening a transaction.
+///
+/// Deliberately much larger than the read chunk. Committing is not free, and
+/// measured against a real library it dominated the write: a commit per 256
+/// files meant hundreds of them, each costing far more than the rows it
+/// carried. The two numbers used to be one, which tied how often we commit to
+/// how finely reads pipeline -- unrelated concerns that want opposite answers.
+const DB_FLUSH_SIZE: usize = 4096;
+const UI_REFRESH_INTERVAL: Duration = Duration::from_millis(500);
+const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone)]
 pub struct ScanStats {
@@ -107,7 +72,7 @@ pub struct ScannedTrack {
     pub file_size: i64,
     pub file_modified: i64,
     pub metadata: AudioMetadata,
-    pub image_data: Option<ImageData>,
+    pub recheck_image: bool,
 }
 
 #[derive(Default)]
@@ -124,6 +89,8 @@ pub struct Scanner {
     scan_generation: Arc<AtomicU64>,
     pending_changed_paths: Arc<AsyncMutex<HashSet<PathBuf>>>,
     incremental_worker_running: Arc<AtomicBool>,
+
+    warm_cancel: Arc<AtomicBool>,
     executor: BackgroundExecutor,
     background_ui: Option<BackgroundUiNotifier>,
 }
@@ -144,6 +111,7 @@ impl Scanner {
             scan_generation: Arc::new(AtomicU64::new(0)),
             pending_changed_paths: Arc::new(AsyncMutex::new(HashSet::new())),
             incremental_worker_running: Arc::new(AtomicBool::new(false)),
+            warm_cancel: Arc::new(AtomicBool::new(false)),
             executor,
             background_ui,
         }
@@ -335,8 +303,6 @@ impl Scanner {
                         let telemetry_clone = telemetry.clone();
                         let config_clone = config.clone();
                         let background_ui_clone = background_ui.clone();
-                        let scanner_for_missing = scanner.clone();
-
                         exec.clone()
                             .spawn(async move {
                                 while let Some(stats) = rx.next().await {
@@ -345,11 +311,10 @@ impl Scanner {
                                         stats.scanned, stats.added, stats.updated, stats.missing
                                     );
 
-                                    let missing = scanner_for_missing.count_missing_songs(&db_clone).await;
-                                    if missing > 0 {
+                                    if stats.missing > 0 {
                                         navbar::status().set(
                                             "scanner.missing",
-                                            format!("{} song{} missing from disk", missing, if missing == 1 { "" } else { "s" }),
+                                            format!("{} song{} missing from disk", stats.missing, if stats.missing == 1 { "" } else { "s" }),
                                             None,
                                             crate::status::StatusColor::Warning,
                                         );
@@ -420,22 +385,12 @@ impl Scanner {
     fn is_audio_file(path: &Path) -> bool {
         path.extension()
             .and_then(|ext| ext.to_str())
-            .map(|ext| SUPPORTED_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
+            .map(|ext| {
+                SUPPORTED_EXTENSIONS
+                    .iter()
+                    .any(|known| ext.eq_ignore_ascii_case(known))
+            })
             .unwrap_or(false)
-    }
-
-    fn read_metadata(path: &Path) -> Result<AudioMetadata> {
-        AudioMetadata::from_path_with_options(path, false)
-    }
-
-    fn extract_image(path: &Path) -> Option<ImageData> {
-        match extract_image_data(path) {
-            Ok(image) => image,
-            Err(e) => {
-                debug!("Failed to extract image from {:?}: {}", path, e);
-                None
-            }
-        }
     }
 
     fn should_process_file(
@@ -533,21 +488,6 @@ impl Scanner {
         Ok(stale_paths.len())
     }
 
-    pub async fn count_missing_songs(&self, db: &Database) -> usize {
-        let audio_files = match self.collect_audio_files().await {
-            Ok(f) => f,
-            Err(_) => return 0,
-        };
-        let scanned_files: HashSet<String> = audio_files
-            .iter()
-            .map(|p| p.to_string_lossy().to_string())
-            .collect();
-        match self.find_missing_songs(db, &scanned_files) {
-            Ok(paths) => paths.len(),
-            Err(_) => 0,
-        }
-    }
-
     async fn scan_with_options(&self, db: &Database, options: ScanOptions) -> Result<ScanStats> {
         let mut scanned = 0;
         let mut added = 0;
@@ -555,7 +495,9 @@ impl Scanner {
         let mut skipped = 0;
         let mut failed = 0;
 
+        let walk_started = Instant::now();
         let audio_files = self.collect_audio_files().await?;
+        let walk_time = walk_started.elapsed();
         if self.is_cancelled() {
             info!("Scan cancelled before processing files");
             self.clear_scan_progress();
@@ -567,7 +509,9 @@ impl Scanner {
                 missing: 0,
             });
         }
+        let state_started = Instant::now();
         let existing_track_state = Arc::new(self.collect_existing_track_state(db)?);
+        let state_time = state_started.elapsed();
         let total_files = audio_files.len();
         let scanned_files: HashSet<String> = audio_files
             .iter()
@@ -581,83 +525,125 @@ impl Scanner {
         });
 
         let force = options.force;
+        crate::data::db::repo::write_profile::reset();
+        let files = Arc::new(audio_files);
+        let chunk_count = files.len().div_ceil(READ_CHUNK_SIZE);
 
-        let songs_stream = stream::iter(audio_files)
-            .map({
-                let existing_track_state = existing_track_state.clone();
-                move |path: PathBuf| {
-                    let existing_track_state = existing_track_state.clone();
-                    async move {
-                        let rx =
-                            io_spawn(move || process_one_file(path, &existing_track_state, force));
-                        rx.await.ok().flatten()
-                    }
-                }
-            })
-            .buffer_unordered(MAX_CONCURRENT_SCANS)
-            .filter_map(|item| async move { item });
+        let read_chunk = |index: usize| {
+            let files = files.clone();
+            let state = existing_track_state.clone();
+            let (tx, rx) = futures::channel::oneshot::channel();
+            rayon::spawn(move || {
+                let start = index * READ_CHUNK_SIZE;
+                let end = (start + READ_CHUNK_SIZE).min(files.len());
+                let outcomes: Vec<_> = files[start..end]
+                    .par_iter()
+                    .map(|path| process_one_file(path, &state, force))
+                    .collect();
+                let _ = tx.send(outcomes);
+            });
+            rx
+        };
 
-        futures::pin_mut!(songs_stream);
-        let mut seen_image_ids = HashSet::new();
-        let mut artist_cache: HashMap<String, Cuid> = HashMap::new();
-        let mut album_cache: HashMap<String, (Cuid, bool)> = HashMap::new();
-
+        let mut read_time = Duration::ZERO;
+        let mut write_time = Duration::ZERO;
+        let mut cache = ScanCache::default();
+        let mut pending: Vec<(ScannedTrack, bool)> = Vec::with_capacity(DB_FLUSH_SIZE);
+        let mut last_ui_refresh = Instant::now();
+        let mut last_progress = Instant::now();
+        let mut dirty = false;
         let mut cancelled = false;
-        while let Some((track_opt, is_new, is_failed)) = songs_stream.next().await {
+
+        let mut inflight = (chunk_count > 0).then(|| read_chunk(0));
+
+        for index in 0..chunk_count {
+            let Some(rx) = inflight.take() else {
+                break;
+            };
+
+            let waiting = Instant::now();
+            let outcomes = rx.await.unwrap_or_default();
+            read_time += waiting.elapsed();
+
             if self.is_cancelled() {
                 cancelled = true;
                 break;
             }
-            if is_failed {
-                failed += 1;
-                continue;
+
+            if index + 1 < chunk_count {
+                inflight = Some(read_chunk(index + 1));
             }
 
-            let Some(track) = track_opt else {
-                skipped += 1;
-                continue;
-            };
-            if self
-                .save_track(
-                    db,
-                    &track,
-                    &mut seen_image_ids,
-                    &mut artist_cache,
-                    &mut album_cache,
-                )
-                .is_ok()
-            {
-                scanned += 1;
-                if is_new {
-                    added += 1;
-                } else {
-                    updated += 1;
+            for outcome in outcomes {
+                match outcome {
+                    Some((_, _, true)) => failed += 1,
+                    Some((Some(track), is_new, _)) => pending.push((track, is_new)),
+                    Some((None, _, _)) => skipped += 1,
+                    None => skipped += 1,
                 }
-            } else {
-                failed += 1;
             }
 
-            let current = scanned + skipped + failed;
-            if current % 1000 == 0 {
-                info!(
-                    "Progress: {}/{} scanned, {} skipped, {} failed",
-                    current, total_files, skipped, failed
-                );
+            if pending.len() >= DB_FLUSH_SIZE {
+                let flush_started = Instant::now();
+                match self.flush_batch(db, &pending, &mut cache) {
+                    Ok((batch_added, batch_updated)) => {
+                        scanned += pending.len();
+                        added += batch_added;
+                        updated += batch_updated;
+                        dirty = true;
+                    }
+                    Err(e) => {
+                        error!("Failed to write scan batch: {}", e);
+                        failed += pending.len();
+                    }
+                }
+                write_time += flush_started.elapsed();
+                pending.clear();
             }
 
-            if (added + updated) % 25 == 0
-                && (added + updated) > 0
+            let current = scanned + pending.len() + skipped + failed;
+
+            if dirty
+                && last_ui_refresh.elapsed() >= UI_REFRESH_INTERVAL
                 && let Some(ref ui) = self.background_ui
             {
                 ui.notify(BackgroundUiEvent::LibraryDataChanged);
+                last_ui_refresh = Instant::now();
+                dirty = false;
             }
 
-            self.update_scan_progress(ScanProgress {
-                current,
-                total: total_files.max(1),
-                phase: ScanPhase::Scanning,
-            });
+            if last_progress.elapsed() >= PROGRESS_INTERVAL {
+                self.update_scan_progress(ScanProgress {
+                    current,
+                    total: total_files.max(1),
+                    phase: ScanPhase::Scanning,
+                });
+                last_progress = Instant::now();
+            }
         }
+
+        if !pending.is_empty() {
+            let flush_started = Instant::now();
+            match self.flush_batch(db, &pending, &mut cache) {
+                Ok((batch_added, batch_updated)) => {
+                    scanned += pending.len();
+                    added += batch_added;
+                    updated += batch_updated;
+                }
+                Err(e) => {
+                    error!("Failed to write final scan batch: {}", e);
+                    failed += pending.len();
+                }
+            }
+            write_time += flush_started.elapsed();
+            pending.clear();
+        }
+
+        let index_started = Instant::now();
+        if added > 0 || updated > 0 {
+            db.rebuild_search_index();
+        }
+        let index_time = index_started.elapsed();
 
         if cancelled || self.is_cancelled() {
             info!(
@@ -674,11 +660,25 @@ impl Scanner {
             });
         }
 
+        let missing_started = Instant::now();
         let missing = self.remove_missing_songs(db, &scanned_files)?;
+        let missing_time = missing_started.elapsed();
 
         info!(
             "Scan complete: {} scanned, {} added, {} updated, {} skipped, {} failed, {} missing",
             scanned, added, updated, skipped, failed, missing
+        );
+        info!(
+            "Scan phases: walk {:?}, existing state {:?}, read {:?}, write {:?}, search index {:?}, missing {:?}",
+            walk_time, state_time, read_time, write_time, index_time, missing_time
+        );
+        let (lock, albums, songs, artists, genres, commit) =
+            crate::data::db::repo::write_profile::snapshot();
+        let (commits, wal_mb) = crate::data::db::repo::write_profile::commit_stats();
+        info!(
+            "Write breakdown: waiting for connection {lock:?}, albums {albums:?}, songs \
+             {songs:?}, artists {artists:?}, genres {genres:?}, commit {commit:?} over \
+             {commits} transactions, wal {wal_mb}MB"
         );
 
         self.update_scan_progress(ScanProgress {
@@ -717,12 +717,39 @@ impl Scanner {
             });
         }
 
+        self.warm_cancel.store(true, Ordering::Release);
+
         self.cancel_flag.store(false, Ordering::Release);
         let result = self.scan_with_options(db, options).await;
         if result.is_err() {
             self.clear_scan_progress();
         }
+        if result.is_ok() && !self.is_cancelled() {
+            self.spawn_image_warm_pass(db);
+        }
         result
+    }
+
+    fn spawn_image_warm_pass(&self, db: &Database) {
+        self.warm_cancel.store(false, Ordering::Release);
+
+        let db = db.clone();
+        let cancel = self.warm_cancel.clone();
+
+        self.executor
+            .spawn(async move {
+                let started = Instant::now();
+                let resolved = crate::data::images::warm_images(db, cancel).await;
+
+                if resolved > 0 {
+                    info!(
+                        "Resolved {} cover image(s) in {:?}",
+                        resolved,
+                        started.elapsed()
+                    );
+                }
+            })
+            .detach();
     }
 
     pub async fn scan(&self, db: &Database) -> Result<ScanStats> {
@@ -738,24 +765,18 @@ impl Scanner {
         db: &Database,
         changed_paths: Vec<PathBuf>,
     ) -> Result<ScanStats> {
-        let mut scanned = 0;
-        let mut added = 0;
-        let mut updated = 0;
-        let mut seen_image_ids = HashSet::new();
-        let mut artist_cache: HashMap<String, Cuid> = HashMap::new();
-        let mut album_cache: HashMap<String, (Cuid, bool)> = HashMap::new();
+        let mut cache = ScanCache::default();
+        let mut pending: Vec<(ScannedTrack, bool)> = Vec::new();
 
         for path in changed_paths {
-            let path_clone = path.clone();
-
-            if !path.exists() || !path.is_file() || !Self::is_audio_file(&path) {
+            if !path.is_file() || !Self::is_audio_file(&path) {
                 continue;
             }
 
             let file_meta = match std::fs::metadata(&path) {
                 Ok(m) => m,
                 Err(e) => {
-                    warn!("Failed to read file metadata from {:?}: {}", path_clone, e);
+                    warn!("Failed to read file metadata from {:?}: {}", path, e);
                     continue;
                 }
             };
@@ -769,7 +790,7 @@ impl Scanner {
                 .unwrap_or(0);
 
             let existing = db
-                .get_song_by_path(path_clone.to_string_lossy().as_ref())
+                .get_song_by_path(path.to_string_lossy().as_ref())
                 .ok()
                 .flatten();
 
@@ -782,46 +803,34 @@ impl Scanner {
                 continue;
             }
 
-            let metadata = match Self::read_metadata(&path) {
-                Ok(m) => m,
+            let metadata = match read_metadata(&path) {
+                Ok(metadata) => metadata,
                 Err(e) => {
-                    warn!("Failed to read metadata from {:?}: {}", path_clone, e);
+                    warn!("Failed to read metadata from {:?}: {}", path, e);
                     continue;
                 }
             };
 
-            let image_data = Self::extract_image(&path);
+            pending.push((
+                ScannedTrack {
+                    path,
+                    file_size,
+                    file_modified,
+                    metadata,
 
-            let track = ScannedTrack {
-                path: path.clone(),
-                file_size,
-                file_modified,
-                metadata,
-                image_data,
-            };
+                    recheck_image: true,
+                },
+                is_new,
+            ));
+        }
 
-            match self.save_track(
-                db,
-                &track,
-                &mut seen_image_ids,
-                &mut artist_cache,
-                &mut album_cache,
-            ) {
-                Ok(()) => {
-                    scanned += 1;
-                    if is_new {
-                        added += 1;
-                    } else {
-                        updated += 1;
-                    }
-                    debug!("Updated track: {:?}", path_clone);
-                }
-                Err(e) => error!("Failed to save track {:?}: {}", path_clone, e),
-            }
+        let (added, updated) = self.flush_batch(db, &pending, &mut cache)?;
+        if added > 0 || updated > 0 {
+            db.rebuild_search_index();
         }
 
         Ok(ScanStats {
-            scanned,
+            scanned: pending.len(),
             added,
             updated,
             removed: 0,
@@ -905,80 +914,67 @@ impl Scanner {
             .detach();
     }
 
-    fn save_track(
+    fn flush_batch(
         &self,
         db: &Database,
-        track: &ScannedTrack,
-        seen_image_ids: &mut HashSet<String>,
-        _artist_cache: &mut HashMap<String, Cuid>,
-        album_cache: &mut HashMap<String, (Cuid, bool)>,
-    ) -> Result<()> {
-        let path_str = track.path.to_string_lossy().to_string();
-        let meta = &track.metadata;
+        tracks: &[(ScannedTrack, bool)],
+        cache: &mut ScanCache,
+    ) -> Result<(usize, usize)> {
+        if tracks.is_empty() {
+            return Ok((0, 0));
+        }
 
-        let image_id = if let Some(image) = &track.image_data {
-            if seen_image_ids.insert(image.id.clone()) {
-                db.upsert_image(&image.id, &image.data)?;
-            }
-            Some(image.id.clone())
-        } else {
-            None
-        };
+        let paths: Vec<String> = tracks
+            .iter()
+            .map(|(track, _)| track.path.to_string_lossy().into_owned())
+            .collect();
+        let artists: Vec<Vec<&str>> = tracks
+            .iter()
+            .map(|(track, _)| track.metadata.artists.iter().map(|s| s.as_str()).collect())
+            .collect();
+        let genres: Vec<Vec<&str>> = tracks
+            .iter()
+            .map(|(track, _)| track.metadata.genres.iter().map(|s| s.as_str()).collect())
+            .collect();
 
-        let artist_names: Vec<&str> = meta.artists.iter().map(|s| s.as_str()).collect();
-
-        let album_id = if let Some(album_name) = &meta.album {
-            let key = album_name.clone();
-            if let Some((cached_album_id, has_image)) = album_cache.get_mut(&key) {
-                if !*has_image && image_id.is_some() {
-                    db.upsert_album(album_name, &artist_names, image_id.as_deref())?;
-                    *has_image = true;
+        let batch: Vec<BatchTrack<'_>> = tracks
+            .iter()
+            .enumerate()
+            .map(|(i, (track, _))| {
+                let meta = &track.metadata;
+                BatchTrack {
+                    title: meta.title.as_deref().unwrap_or("Unknown"),
+                    artists: &artists[i],
+                    genres: &genres[i],
+                    album: meta.album.as_deref(),
+                    file_path: &paths[i],
+                    duration: meta.duration.as_secs() as i32,
+                    track_number: meta.track_number.map(|n| n as i32),
+                    year: meta.year,
+                    recheck_image: track.recheck_image,
+                    file_size: track.file_size,
+                    file_modified: track.file_modified,
+                    lufs: meta.lufs,
                 }
-                Some(cached_album_id.clone())
-            } else {
-                let album_id = db.upsert_album(album_name, &artist_names, image_id.as_deref())?;
-                album_cache.insert(key, (album_id.clone(), image_id.is_some()));
-                Some(album_id)
-            }
-        } else {
-            None
-        };
+            })
+            .collect();
 
-        let title = meta.title.as_deref().unwrap_or("Unknown");
-        let duration = meta.duration.as_secs() as i32;
-        let track_number = meta.track_number.map(|n| n as i32);
+        db.upsert_tracks_batch(&batch, cache)?;
 
-        db.upsert_song(
-            title,
-            &artist_names,
-            album_id.as_ref(),
-            &path_str,
-            duration,
-            track_number,
-            meta.year,
-            &meta.genres.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
-            image_id.as_deref(),
-            track.file_size,
-            track.file_modified,
-            meta.lufs,
-        )?;
-
-        debug!("Saved track: {:?}", track.path);
-        Ok(())
+        let added = tracks.iter().filter(|(_, is_new)| *is_new).count();
+        Ok((added, tracks.len() - added))
     }
 }
 
 fn process_one_file(
-    path: PathBuf,
+    path: &Path,
     existing_track_state: &HashMap<String, (i64, i64)>,
     force: bool,
 ) -> Option<(Option<ScannedTrack>, bool, bool)> {
-    let file_path = path.to_string_lossy().to_string();
-
-    let file_meta = match std::fs::metadata(&path) {
+    let file_meta = match std::fs::metadata(path) {
         Ok(meta) => meta,
         Err(e) => {
-            warn!("Failed to read metadata for {}: {}", file_path, e);
+            warn!("Failed to read metadata for {:?}: {}", path, e);
             return Some((None, false, true));
         }
     };
@@ -991,8 +987,17 @@ fn process_one_file(
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
 
-    let existing = existing_track_state.get(&file_path).copied();
+    let existing = existing_track_state
+        .get(path.to_string_lossy().as_ref())
+        .copied();
     let is_new = existing.is_none();
+
+    let identity_changed = match existing {
+        Some((existing_size, existing_modified)) => {
+            existing_size != file_size || existing_modified != file_modified
+        }
+        None => true,
+    };
 
     if let Some((existing_size, existing_modified)) = existing
         && !Scanner::should_process_file(
@@ -1006,21 +1011,21 @@ fn process_one_file(
         return Some((None, false, false));
     }
 
-    let (metadata, image_data) = match read_metadata_and_image(&path) {
-        Ok(result) => result,
+    let metadata = match read_metadata(path) {
+        Ok(metadata) => metadata,
         Err(e) => {
-            warn!("Failed to read metadata for {}: {}", file_path, e);
+            warn!("Failed to read metadata for {:?}: {}", path, e);
             return Some((None, false, true));
         }
     };
 
     Some((
         Some(ScannedTrack {
-            path,
+            path: path.to_path_buf(),
             file_size,
             file_modified,
             metadata,
-            image_data,
+            recheck_image: identity_changed,
         }),
         is_new,
         false,
@@ -1154,5 +1159,112 @@ impl MusicWatcher {
         let _ = db;
 
         Ok(rx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lofty::config::ParseOptions;
+    use lofty::file::AudioFile;
+    use lofty::probe::Probe;
+    use std::io::BufReader;
+    use std::sync::atomic::AtomicUsize;
+    use std::time::Instant;
+
+    fn bench_files() -> Vec<PathBuf> {
+        let root = std::env::var("VLEER_BENCH_DIR").expect("set VLEER_BENCH_DIR");
+        WalkDir::new(root)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file() && Scanner::is_audio_file(e.path()))
+            .map(|e| e.path().to_path_buf())
+            .collect()
+    }
+
+    fn timed(paths: &[PathBuf], threads: usize, f: fn(&Path)) -> std::time::Duration {
+        let next = AtomicUsize::new(0);
+        let t = Instant::now();
+        std::thread::scope(|s| {
+            for _ in 0..threads {
+                s.spawn(|| {
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        if i >= paths.len() {
+                            break;
+                        }
+                        f(&paths[i]);
+                    }
+                });
+            }
+        });
+        t.elapsed()
+    }
+
+    fn stat_only(path: &Path) {
+        let _ = std::fs::metadata(path).map(|m| m.len());
+    }
+
+    fn read_tags(path: &Path, art: bool) {
+        read_with(path, ParseOptions::new().read_cover_art(art));
+    }
+
+    fn read_with(path: &Path, options: ParseOptions) {
+        let Ok(file) = std::fs::File::open(path) else {
+            return;
+        };
+        let probe = Probe::new(BufReader::with_capacity(64 * 1024, file));
+        if let Ok(guessed) = probe.guess_file_type() {
+            let _ = guessed
+                .options(options)
+                .read()
+                .map(|f| f.properties().duration());
+        }
+    }
+
+    fn read_no_art(path: &Path) {
+        read_tags(path, false);
+    }
+
+    fn read_no_properties(path: &Path) {
+        read_with(
+            path,
+            ParseOptions::new()
+                .read_cover_art(false)
+                .read_properties(false),
+        );
+    }
+
+    fn read_with_art(path: &Path) {
+        read_tags(path, true);
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_scan_phases() {
+        let paths = bench_files();
+        println!("\n{} audio files\n", paths.len());
+        let only: Option<String> = std::env::var("VLEER_BENCH_ONLY").ok();
+        let threads_list: Vec<usize> = std::env::var("VLEER_BENCH_THREADS")
+            .ok()
+            .map(|v| v.split(',').filter_map(|t| t.trim().parse().ok()).collect())
+            .unwrap_or_else(|| vec![1, 8, 32]);
+
+        for (name, f) in [
+            ("stat only     ", stat_only as fn(&Path)),
+            ("tags, no props", read_no_properties as fn(&Path)),
+            ("tags, no art  ", read_no_art as fn(&Path)),
+            ("tags + art    ", read_with_art as fn(&Path)),
+        ] {
+            if let Some(only) = &only
+                && !name.contains(only.as_str())
+            {
+                continue;
+            }
+            for threads in threads_list.iter().copied() {
+                println!("{name} t={threads:<3} {:>12.2?}", timed(&paths, threads, f));
+            }
+            println!();
+        }
     }
 }
