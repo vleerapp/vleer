@@ -279,7 +279,11 @@ impl SettingsView {
                 });
             }
             for (i, input) in this.q_inputs.iter().enumerate() {
-                let q = eq.q_values.get(i).copied().unwrap_or(1.461);
+                let q = eq
+                    .q_values
+                    .get(i)
+                    .copied()
+                    .unwrap_or(crate::media::equalizer::Q_DEFAULT);
                 input.update(cx, |inp, cx| {
                     inp.set_text(format!("{:.2}", q), cx);
                 });
@@ -338,7 +342,11 @@ impl SettingsView {
 
         let q_inputs: Vec<Entity<TextInput>> = (0..10)
             .map(|i| {
-                let q = eq.q_values.get(i).copied().unwrap_or(1.461);
+                let q = eq
+                    .q_values
+                    .get(i)
+                    .copied()
+                    .unwrap_or(crate::media::equalizer::Q_DEFAULT);
                 cx.new(|cx| {
                     TextInput::new(cx, "")
                         .with_text(format!("{:.2}", q))
@@ -389,7 +397,10 @@ impl SettingsView {
                 if let InputEvent::Submit(text) = event
                     && let Ok(new_q) = text.parse::<f32>()
                 {
-                    let new_q = new_q.max(0.1);
+                    let new_q = new_q.clamp(
+                        crate::media::equalizer::Q_MIN,
+                        crate::media::equalizer::Q_MAX,
+                    );
                     let (enabled, gains, q_values) =
                         cx.update_global::<Config, _>(|config, _cx| {
                             config.set(|s| {

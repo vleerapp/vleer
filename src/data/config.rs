@@ -50,7 +50,7 @@ impl Default for EqualizerSettings {
             enabled: false,
             frequencies: vec![32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000],
             gains: vec![0.0; 10],
-            q_values: vec![1.461; 10],
+            q_values: vec![crate::media::equalizer::Q_DEFAULT; 10],
         }
     }
 }
