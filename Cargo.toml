@@ -10,8 +10,8 @@ license = "AGPL-3.0"
 categories = ["multimedia::audio"]
 
 [dependencies]
-gpui = { package = "gpui-unofficial", version = "1.19.2" }
-gpui-platform-gpui-unofficial = { version = "1.19.2", features = [
+gpui = { package = "gpui-unofficial", version = "1.18.1" }
+gpui-platform-gpui-unofficial = { version = "1.15.0", features = [
   "font-kit",
   "x11",
   "wayland",
@@ -106,7 +106,7 @@ windows = { version = "0.62.2", features = [
   "Win32_System_Com",
   "Win32_System_WinRT",
 ] }
-windows-future = "0.100.0"
+windows-future = "0.3.2"
 
 [profile.release]
 strip = true
