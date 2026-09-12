@@ -121,6 +121,7 @@ impl PlaylistView {
             true,
             true,
             false,
+            px(0.0),
         );
 
         let title_input = cx.new(|cx| {

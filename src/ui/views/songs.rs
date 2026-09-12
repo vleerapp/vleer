@@ -433,6 +433,7 @@ impl SongsView {
             .detach();
         });
 
+        let scrollbar_inset = px(cx.global::<Variables>().padding_24);
         let table = SongTable::new(
             cx,
             get_row_count,
@@ -443,6 +444,7 @@ impl SongsView {
             true,
             true,
             true,
+            scrollbar_inset,
         );
         *table_weak.borrow_mut() = Some(table.downgrade());
 

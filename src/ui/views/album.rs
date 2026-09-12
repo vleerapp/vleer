@@ -124,6 +124,7 @@ impl AlbumView {
             false,
             false,
             false,
+            px(0.0),
         );
 
         let mut view = Self {

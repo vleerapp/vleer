@@ -685,6 +685,7 @@ pub struct SongTable {
     show_album: bool,
     show_cover: bool,
     show_genre: bool,
+    scrollbar_inset: Pixels,
     scroll_handle: UniformListScrollHandle,
 }
 
@@ -713,6 +714,7 @@ impl SongTable {
         show_album: bool,
         show_cover: bool,
         show_genre: bool,
+        scrollbar_inset: Pixels,
     ) -> Entity<Self> {
         cx.new(|cx| {
             let views = cx.new(|_| FxHashMap::default());
@@ -790,6 +792,7 @@ impl SongTable {
                 show_album,
                 show_cover,
                 show_genre,
+                scrollbar_inset,
                 scroll_handle: UniformListScrollHandle::default(),
             }
         })
@@ -812,6 +815,7 @@ impl Render for SongTable {
         let show_cover = self.show_cover;
         let show_genre = self.show_genre;
         let row_count = self.row_count;
+        let scrollbar_inset = self.scrollbar_inset;
 
         let mut header = flex_row()
             .w_full()
@@ -959,14 +963,15 @@ impl Render for SongTable {
                         )
                         .track_scroll(&scroll_handle)
                         .size_full()
-                        .pt(px(variables.padding_16)),
+                        .pt(px(variables.padding_16))
+                        .pb(px(variables.padding_24 - variables.padding_16)),
                     ),
                 )
                 .child(
                     div()
                         .absolute()
                         .top_0()
-                        .right(px(-variables.padding_24))
+                        .right(-scrollbar_inset)
                         .bottom_0()
                         .left_0()
                         .child(Scrollbar::new(&self.scroll_handle).axis(ScrollbarAxis::Vertical)),
