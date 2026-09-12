@@ -21,6 +21,7 @@ use crate::{
             },
             div::{flex_col, flex_row},
             icons,
+            scrollbar::{Scrollbar, ScrollbarAxis},
             song_table::{
                 GetRowCountHandler, GetRowHandler, QueueHandler, SongEntry, SongTable,
                 SongTableEvent, join_artists,
@@ -49,6 +50,7 @@ pub struct AlbumView {
     load_task: Option<Task<()>>,
     table: Entity<SongTable>,
     context_menu: Entity<ContextMenu>,
+    artists_scroll_handle: ScrollHandle,
 }
 
 fn song_entry_from_song(song: &crate::data::models::Song) -> Arc<SongEntry> {
@@ -141,6 +143,7 @@ impl AlbumView {
             load_task: None,
             table,
             context_menu: cx.new(|_| ContextMenu::new()),
+            artists_scroll_handle: ScrollHandle::new(),
         };
 
         if cx.global::<ActiveView>().0 == AppView::Album {
@@ -442,51 +445,86 @@ impl Render for AlbumView {
 
             let artists_data = self.artists_data.clone();
 
-            let sidebar =
-                flex_col()
-                    .w(px(cover_size))
-                    .flex_shrink_0()
-                    .gap(px(variables.padding_16))
-                    .child(image)
-                    .children(artists_data.into_iter().enumerate().map(
-                        |(i, (name, image_uri))| {
-                            let tile_id = format!("album-artist-{}", i);
-                            flex_row()
-                                .id(ElementId::Name(tile_id.clone().into()))
-                                .gap(px(variables.padding_8))
-                                .items_center()
-                                .child(
-                                    div()
-                                        .id(ElementId::Name(format!("{}-avatar", tile_id).into()))
-                                        .size(px(36.0))
+            let artists_list = flex_col().gap(px(variables.padding_16)).children(
+                artists_data.into_iter().enumerate().map(|(i, (name, image_uri))| {
+                    let tile_id = format!("album-artist-{}", i);
+                    flex_row()
+                        .id(ElementId::Name(tile_id.clone().into()))
+                        .gap(px(variables.padding_8))
+                        .items_center()
+                        .child(
+                            div()
+                                .id(ElementId::Name(format!("{}-avatar", tile_id).into()))
+                                .size(px(36.0))
+                                .flex_shrink_0()
+                                .rounded_full()
+                                .relative()
+                                .overflow_hidden()
+                                .child(match image_uri {
+                                    Some(uri) => img(format!("!image://{}?size=36", uri))
+                                        .size_full()
                                         .rounded_full()
-                                        .relative()
-                                        .overflow_hidden()
-                                        .child(match image_uri {
-                                            Some(uri) => img(format!("!image://{}?size=36", uri))
-                                                .size_full()
-                                                .rounded_full()
-                                                .object_fit(ObjectFit::Cover)
-                                                .into_any_element(),
-                                            None => div()
-                                                .size_full()
-                                                .rounded_full()
-                                                .bg(variables.border)
-                                                .into_any_element(),
-                                        }),
-                                )
+                                        .object_fit(ObjectFit::Cover)
+                                        .into_any_element(),
+                                    None => div()
+                                        .size_full()
+                                        .rounded_full()
+                                        .bg(variables.border)
+                                        .into_any_element(),
+                                }),
+                        )
+                        .child(
+                            div()
+                                .id(ElementId::Name(format!("{}-name", tile_id).into()))
+                                .flex_1()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .child(name),
+                        )
+                        .into_any_element()
+                }),
+            );
+
+            let sidebar = flex_col()
+                .w(px(cover_size))
+                .h_full()
+                .min_h_0()
+                .flex_shrink_0()
+                .child(image)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .min_w_0()
+                        .mb(px(-variables.padding_24))
+                        .relative()
+                        .child(
+                            flex_col()
+                                .id("album-artists-scroll")
+                                .size_full()
+                                .overflow_y_scroll()
+                                .track_scroll(&self.artists_scroll_handle)
                                 .child(
-                                    div()
-                                        .id(ElementId::Name(format!("{}-name", tile_id).into()))
-                                        .flex_1()
-                                        .min_w_0()
-                                        .overflow_hidden()
-                                        .text_ellipsis()
-                                        .child(name),
-                                )
-                                .into_any_element()
-                        },
-                    ));
+                                    artists_list
+                                        .flex_shrink_0()
+                                        .pt(px(variables.padding_16))
+                                        .pb(px(variables.padding_24)),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .right(px(-variables.padding_24))
+                                .bottom_0()
+                                .left_0()
+                                .child(
+                                    Scrollbar::new(&self.artists_scroll_handle)
+                                        .axis(ScrollbarAxis::Vertical),
+                                ),
+                        ),
+                );
 
             flex_row()
                 .size_full()
