@@ -1,3 +1,4 @@
+use crate::ui::assets::image_cache::vleer_cache;
 use crate::ui::assets::{ImageRequest, cover_uri};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
@@ -548,6 +549,7 @@ impl Render for QueuePane {
                         .size_full()
                         .min_h_0()
                         .relative()
+                        .image_cache(vleer_cache("queue-image-cache", 64))
                         .child(
                             div().size_full().child(
                                 uniform_list(

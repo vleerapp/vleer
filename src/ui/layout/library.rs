@@ -2,6 +2,7 @@ use crate::data::db::repo::Database;
 use crate::data::models::{Cuid, PinnedItem};
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
+use crate::ui::assets::image_cache::vleer_cache;
 use crate::ui::assets::{ImageRequest, cover_uri};
 use crate::ui::components::context_menu::LibraryDataChanged;
 use crate::ui::components::context_menu::{
@@ -538,6 +539,7 @@ impl Render for Library {
                                     div()
                                         .flex_1()
                                         .min_h_0()
+                                        .image_cache(vleer_cache("library-image-cache", 64))
                                         .overflow_y_scrollbar()
                                         .child(
                                             flex_col()
