@@ -203,7 +203,7 @@ jobs:
       - name: Build and Package
         id: package
         shell: bash
-        run: cargo packager --release
+        run: cargo packager --profile dist
 
       - name: Dump WiX diagnostics (Windows)
         if: failure() && runner.os == 'Windows'
@@ -218,7 +218,7 @@ jobs:
             Write-Host "no candle.exe at $candle"
           }
 
-          $wixRoot = "target/release/bundles/.cargo-packager/wix"
+          $wixRoot = "target/dist/bundles/.cargo-packager/wix"
           if (Test-Path $wixRoot) {
             Get-ChildItem -Path $wixRoot -Filter *.wxs -Recurse | ForEach-Object {
               Write-Host "==== $($_.FullName) ===="
@@ -241,7 +241,7 @@ jobs:
           rm -rf "$ROOT"
           mkdir -p "$TREE/bin" "$TREE/share/applications" "$TREE/share/vleer"
 
-          install -m 0755 target/release/vleer "$TREE/bin/vleer"
+          install -m 0755 target/dist/vleer "$TREE/bin/vleer"
 
           for size in 128 256 512; do
             dir="$TREE/share/icons/hicolor/${size}x${size}/apps"
@@ -261,7 +261,7 @@ jobs:
           StartupWMClass=vleer
           DESKTOP
 
-          tar -czf "target/release/bundles/${NAME}.tar.gz" -C "$ROOT" "$NAME"
+          tar -czf "target/dist/bundles/${NAME}.tar.gz" -C "$ROOT" "$NAME"
           rm -rf "$ROOT"
 
       - name: Locate unsigned Windows MSI
@@ -269,8 +269,8 @@ jobs:
         id: locate-msi
         shell: pwsh
         run: |
-          $msi = Get-ChildItem -Path target/release/bundles -Filter *.msi -File | Select-Object -First 1
-          if (-Not $msi) { throw "No .msi found in target/release/bundles" }
+          $msi = Get-ChildItem -Path target/dist/bundles -Filter *.msi -File | Select-Object -First 1
+          if (-Not $msi) { throw "No .msi found in target/dist/bundles" }
           "path=$($msi.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "name=$($msi.Name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
@@ -331,7 +331,7 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
-          for f in target/release/bundles/*; do
+          for f in target/dist/bundles/*; do
             [ -f "$f" ] || continue
             gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" \
               --detach-sign --armor --output "$f.sig" "$f"
@@ -344,7 +344,7 @@ jobs:
           ARCH_LOWER=$(echo "${{ matrix.arch }}" | tr '[:upper:]' '[:lower:]')
           PREFIX="Vleer-${{ needs.version.outputs.full }}-${ARCH_LOWER}"
           echo "prefix=$PREFIX" >> $GITHUB_OUTPUT
-          cd target/release/bundles
+          cd target/dist/bundles
           for f in *; do
             [[ "$f" == *.sig ]] && continue
             [[ -f "$f" ]] || continue
@@ -362,63 +362,63 @@ jobs:
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v7
         with:
-          path: target/release/bundles/${{ steps.rename.outputs.prefix }}.msi
+          path: target/dist/bundles/${{ steps.rename.outputs.prefix }}.msi
           archive: false
 
       - name: Upload MSI signature (Windows)
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v7
         with:
-          path: target/release/bundles/${{ steps.rename.outputs.prefix }}.msi.sig
+          path: target/dist/bundles/${{ steps.rename.outputs.prefix }}.msi.sig
           archive: false
 
       - name: Upload DMG (macOS)
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v7
         with:
-          path: target/release/bundles/${{ steps.rename.outputs.prefix }}.dmg
+          path: target/dist/bundles/${{ steps.rename.outputs.prefix }}.dmg
           archive: false
 
       - name: Upload DMG signature (macOS)
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v7
         with:
-          path: target/release/bundles/${{ steps.rename.outputs.prefix }}.dmg.sig
+          path: target/dist/bundles/${{ steps.rename.outputs.prefix }}.dmg.sig
           archive: false
 
       - name: Upload AppImage (Linux)
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v7
         with:
-          path: target/release/bundles/${{ steps.rename.outputs.prefix }}.AppImage
+          path: target/dist/bundles/${{ steps.rename.outputs.prefix }}.AppImage
           archive: false
 
       - name: Upload AppImage signature (Linux)
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v7
         with:
-          path: target/release/bundles/${{ steps.rename.outputs.prefix }}.AppImage.sig
+          path: target/dist/bundles/${{ steps.rename.outputs.prefix }}.AppImage.sig
           archive: false
 
       - name: Upload tarball (Linux)
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v7
         with:
-          path: target/release/bundles/${{ steps.rename.outputs.prefix }}.tar.gz
+          path: target/dist/bundles/${{ steps.rename.outputs.prefix }}.tar.gz
           archive: false
 
       - name: Upload tarball signature (Linux)
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v7
         with:
-          path: target/release/bundles/${{ steps.rename.outputs.prefix }}.tar.gz.sig
+          path: target/dist/bundles/${{ steps.rename.outputs.prefix }}.tar.gz.sig
           archive: false
 
       - name: Upload to S3
         shell: bash
         run: |
           set -euo pipefail
-          for f in target/release/bundles/*; do
+          for f in target/dist/bundles/*; do
             [ -f "$f" ] || continue
             name=$(basename "$f")
             echo "uploading $name"
@@ -439,7 +439,7 @@ jobs:
           else
             FILE="${{ steps.rename.outputs.prefix }}.dmg"
           fi
-          SHA=$(shasum -a 256 "target/release/bundles/$FILE" | cut -d' ' -f1)
+          SHA=$(shasum -a 256 "target/dist/bundles/$FILE" | cut -d' ' -f1)
           mkdir -p "$RUNNER_TEMP/brewmeta"
           cat > "$RUNNER_TEMP/brewmeta/meta.json" <<JSON
           {"os":"${{ runner.os }}","arch":"${{ matrix.arch }}","file":"$FILE","sha256":"$SHA"}

@@ -108,7 +108,8 @@ windows = { version = "0.62.2", features = [
 ] }
 windows-future = "0.3.2"
 
-[profile.release]
+[profile.dist]
+inherits = "release"
 strip = true
 lto = "fat"
 codegen-units = 1
@@ -121,7 +122,7 @@ authors = ["PandaDEV <hello@pandadev.net>"]
 homepage = "https://vleer.app"
 category = "Music"
 identifier = "app.vleerapp.vleer"
-before_packaging_command = "cargo build --release"
+before_packaging_command = "cargo build --profile dist"
 icons = [
   "assets/images/icon.png",
   "assets/images/icon-512.png",
@@ -129,7 +130,7 @@ icons = [
   "assets/images/icon-128.png",
   "assets/images/icon.icns",
 ]
-out_dir = "target/release/bundles"
+out_dir = "target/dist/bundles"
 formats = ["dmg", "wix", "appimage"]
 
 [package.metadata.packager.macos]
