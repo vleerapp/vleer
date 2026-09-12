@@ -697,6 +697,26 @@ impl Database {
         Ok(())
     }
 
+    pub fn delete_songs_under_path(&self, dir: &str) -> Result<usize> {
+        let dir = dir.trim_end_matches('/');
+        let escaped = dir
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let prefix = format!("{escaped}/%");
+        let deleted = {
+            let conn = self.conn.lock();
+            conn.execute(
+                "DELETE FROM songs WHERE file_path = ?1 OR file_path LIKE ?2 ESCAPE '\\'",
+                params![dir, prefix],
+            )?
+        };
+        if deleted > 0 {
+            self.rebuild_search_index();
+        }
+        Ok(deleted)
+    }
+
     pub fn get_song_paths(&self) -> Result<Vec<String>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare_cached("SELECT file_path FROM songs")?;

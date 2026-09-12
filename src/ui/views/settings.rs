@@ -1,7 +1,10 @@
 use gpui::{Context, Entity, IntoElement, Render, prelude::FluentBuilder as _, *};
 
 use crate::data::config::{Config, UpdateChannel};
+use crate::data::db::repo::Database;
+use crate::data::scanner::expand_tilde;
 use crate::media::playback::Playback;
+use crate::ui::components::context_menu::{LibraryDataChanged, QueueChanged};
 use crate::ui::components::div::{flex_col, flex_row};
 use crate::ui::components::icons::{self, LINK, icon};
 use crate::ui::components::input::{InputEvent, TextInput};
@@ -10,6 +13,7 @@ use crate::ui::components::slider::slider;
 use crate::ui::components::switch::Switch;
 use crate::ui::variables::Variables;
 use crate::updater::{UpdateStatus, Updater, is_managed_externally, run_check_in_background};
+use tracing::error;
 
 #[derive(IntoElement)]
 struct ScanPathsSection;
@@ -56,6 +60,32 @@ impl RenderOnce for ScanPathsSection {
                                                 s.scan.paths.retain(|p| p != &path);
                                             });
                                         });
+
+                                        let db = cx.global::<Database>().clone();
+                                        let dir = expand_tilde(&path).to_string_lossy().into_owned();
+                                        cx.spawn(async move |cx| {
+                                            let bg = cx.background_executor().clone();
+                                            let deleted = bg
+                                                .spawn(async move {
+                                                    db.delete_songs_under_path(&dir)
+                                                })
+                                                .await;
+                                            match deleted {
+                                                Ok(n) if n > 0 => {
+                                                    cx.update(|cx| {
+                                                        cx.set_global(LibraryDataChanged);
+                                                        cx.set_global(QueueChanged);
+                                                    });
+                                                }
+                                                Ok(_) => {}
+                                                Err(e) => {
+                                                    error!(
+                                                        "failed to delete songs under removed scan path: {e}"
+                                                    );
+                                                }
+                                            }
+                                        })
+                                        .detach();
                                     }),
                             )
                     })),
