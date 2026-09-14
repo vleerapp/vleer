@@ -15,7 +15,7 @@ use parking_lot::Mutex;
 use rusqlite::{Connection, OptionalExtension, ToSql, params};
 use rusqlite_migration::Migrations;
 use rust_embed::RustEmbed;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -91,16 +91,16 @@ pub struct BatchTrack<'a> {
 
 struct AlbumCacheEntry {
     id: Cuid,
-    artists: std::collections::HashSet<String>,
+    artists: HashSet<String>,
     next_position: i64,
 }
 
-/// Where the time inside a batch write actually goes.
-///
-/// Counters rather than a returned struct because the interesting question is
-/// about a whole scan, not one batch, and the scan is the only caller that can
-/// answer it. Cheap enough to leave on: a handful of atomic adds per song
-/// against statements that cost microseconds each.
+type SpellingVotes = HashMap<Cuid, HashMap<String, usize>>;
+
+fn fold_name(name: &str) -> String {
+    name.to_ascii_lowercase()
+}
+
 pub mod write_profile {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::Duration;
@@ -126,9 +126,6 @@ pub mod write_profile {
         }
     }
 
-    /// How many transactions the scan committed, and how large the write-ahead
-    /// log grew. A WAL that keeps growing means checkpoints are not completing,
-    /// which is the usual reason commits get expensive under concurrent readers.
     pub fn commit_stats() -> (u64, u64) {
         (
             COMMITS.load(Ordering::Relaxed),
@@ -136,7 +133,6 @@ pub mod write_profile {
         )
     }
 
-    /// (waiting for the connection, albums, songs, artists, genres, commit)
     pub fn snapshot() -> (Duration, Duration, Duration, Duration, Duration, Duration) {
         let ns = |c: &AtomicU64| Duration::from_nanos(c.load(Ordering::Relaxed));
         (
@@ -155,6 +151,27 @@ pub struct ScanCache {
     artists: HashMap<String, Cuid>,
     genres: HashMap<String, Cuid>,
     albums: HashMap<String, AlbumCacheEntry>,
+    artist_votes: SpellingVotes,
+    genre_votes: SpellingVotes,
+    album_votes: SpellingVotes,
+}
+
+fn find_or_insert(
+    tx: &rusqlite::Transaction<'_>,
+    find_sql: &str,
+    insert_sql: &str,
+    name: &str,
+) -> Result<Cuid> {
+    let existing: Option<Cuid> = tx
+        .prepare_cached(find_sql)?
+        .query_row(params![name], |row| row.get(0))
+        .optional()?;
+    match existing {
+        Some(id) => Ok(id),
+        None => Ok(tx
+            .prepare_cached(insert_sql)?
+            .query_row(params![Cuid::new(), name], |row| row.get(0))?),
+    }
 }
 
 fn artist_id_cached(
@@ -162,17 +179,19 @@ fn artist_id_cached(
     cache: &mut ScanCache,
     name: &str,
 ) -> Result<Cuid> {
-    if let Some(id) = cache.artists.get(name) {
+    let key = fold_name(name);
+    if let Some(id) = cache.artists.get(&key) {
         return Ok(id.clone());
     }
-    let id: Cuid = tx
-        .prepare_cached(
-            "INSERT INTO artists (id, name) VALUES (?1, ?2)
-             ON CONFLICT(name) DO UPDATE SET name = excluded.name
-             RETURNING id",
-        )?
-        .query_row(params![Cuid::new(), name], |row| row.get(0))?;
-    cache.artists.insert(name.to_string(), id.clone());
+    let id = find_or_insert(
+        tx,
+        "SELECT id FROM artists WHERE name = ?1 COLLATE NOCASE ORDER BY name LIMIT 1",
+        "INSERT INTO artists (id, name) VALUES (?1, ?2)
+         ON CONFLICT(name) DO UPDATE SET name = excluded.name
+         RETURNING id",
+        name,
+    )?;
+    cache.artists.insert(key, id.clone());
     Ok(id)
 }
 
@@ -181,17 +200,19 @@ fn genre_id_cached(
     cache: &mut ScanCache,
     name: &str,
 ) -> Result<Cuid> {
-    if let Some(id) = cache.genres.get(name) {
+    let key = fold_name(name);
+    if let Some(id) = cache.genres.get(&key) {
         return Ok(id.clone());
     }
-    let id: Cuid = tx
-        .prepare_cached(
-            "INSERT INTO genres (id, name) VALUES (?1, ?2)
-             ON CONFLICT(name) DO UPDATE SET name = excluded.name
-             RETURNING id",
-        )?
-        .query_row(params![Cuid::new(), name], |row| row.get(0))?;
-    cache.genres.insert(name.to_string(), id.clone());
+    let id = find_or_insert(
+        tx,
+        "SELECT id FROM genres WHERE name = ?1 COLLATE NOCASE ORDER BY name LIMIT 1",
+        "INSERT INTO genres (id, name) VALUES (?1, ?2)
+         ON CONFLICT(name) DO UPDATE SET name = excluded.name
+         RETURNING id",
+        name,
+    )?;
+    cache.genres.insert(key, id.clone());
     Ok(id)
 }
 
@@ -201,22 +222,25 @@ fn upsert_album_cached(
     title: &str,
     artists: &[&str],
 ) -> Result<Cuid> {
-    if !cache.albums.contains_key(title) {
-        let album_id: Cuid = tx
-            .prepare_cached(
-                "INSERT INTO albums (id, title) VALUES (?1, ?2)
-                 ON CONFLICT(title) DO UPDATE SET title = excluded.title
-                 RETURNING id",
-            )?
-            .query_row(params![Cuid::new(), title], |row| row.get(0))?;
+    let title_key = fold_name(title);
+    if !cache.albums.contains_key(&title_key) {
+        let album_id = find_or_insert(
+            tx,
+            "SELECT id FROM albums WHERE title = ?1 COLLATE NOCASE ORDER BY title LIMIT 1",
+            "INSERT INTO albums (id, title) VALUES (?1, ?2)
+             ON CONFLICT(title) DO UPDATE SET title = excluded.title
+             RETURNING id",
+            title,
+        )?;
 
-        let existing: std::collections::HashSet<String> = {
+        let existing: HashSet<String> = {
             let mut stmt = tx.prepare_cached(
                 "SELECT a.name FROM artists a
                  JOIN albums_artists aa ON a.id = aa.artist_id
                  WHERE aa.album_id = ?1",
             )?;
             stmt.query_map(params![album_id], |row| row.get::<_, String>(0))?
+                .map(|name| name.map(|name| fold_name(&name)))
                 .collect::<rusqlite::Result<_>>()?
         };
 
@@ -228,7 +252,7 @@ fn upsert_album_cached(
             .unwrap_or(-1);
 
         cache.albums.insert(
-            title.to_string(),
+            title_key.clone(),
             AlbumCacheEntry {
                 id: album_id,
                 artists: existing,
@@ -237,28 +261,32 @@ fn upsert_album_cached(
         );
     }
 
-    let (album_id, missing): (Cuid, Vec<String>) = {
-        let entry = &cache.albums[title];
+    let (album_id, missing): (Cuid, Vec<&str>) = {
+        let entry = &cache.albums[&title_key];
+        let mut seen = HashSet::new();
         (
             entry.id.clone(),
             artists
                 .iter()
-                .filter(|name| !entry.artists.contains(**name))
-                .map(|name| (*name).to_string())
+                .copied()
+                .filter(|name| {
+                    let key = fold_name(name);
+                    !entry.artists.contains(&key) && seen.insert(key)
+                })
                 .collect(),
         )
     };
 
     for name in missing {
-        let artist_id = artist_id_cached(tx, cache, &name)?;
+        let artist_id = artist_id_cached(tx, cache, name)?;
         let position = {
             let entry = cache
                 .albums
-                .get_mut(title)
+                .get_mut(&title_key)
                 .expect("album cache entry inserted above");
             let position = entry.next_position;
             entry.next_position += 1;
-            entry.artists.insert(name);
+            entry.artists.insert(fold_name(name));
             position
         };
         tx.prepare_cached(
@@ -270,6 +298,113 @@ fn upsert_album_cached(
 
     Ok(album_id)
 }
+
+fn vote(votes: &mut SpellingVotes, id: &Cuid, spelling: &str) {
+    *votes
+        .entry(id.clone())
+        .or_default()
+        .entry(spelling.to_string())
+        .or_default() += 1;
+}
+
+fn apply_majority_spellings(
+    tx: &rusqlite::Transaction<'_>,
+    votes: &SpellingVotes,
+    touched: &HashSet<Cuid>,
+    state_sql: &str,
+    rename_sql: &str,
+) -> Result<()> {
+    for id in touched {
+        let Some(counts) = votes.get(id) else {
+            continue;
+        };
+        let Some((winner, &winner_votes)) = counts
+            .iter()
+            .max_by(|a, b| a.1.cmp(b.1).then_with(|| b.0.cmp(a.0)))
+        else {
+            continue;
+        };
+        let Some((current, total)): Option<(String, i64)> = tx
+            .prepare_cached(state_sql)?
+            .query_row(params![id], |row| Ok((row.get(0)?, row.get(1)?)))
+            .optional()?
+        else {
+            continue;
+        };
+        if current == *winner {
+            continue;
+        }
+        let seen: usize = counts.values().sum();
+        let unseen = (total.max(0) as usize).saturating_sub(seen);
+        let current_votes = counts.get(&current).copied().unwrap_or(0);
+        if winner_votes > current_votes + unseen {
+            tx.prepare_cached(rename_sql)?
+                .execute(params![winner, id])?;
+        }
+    }
+    Ok(())
+}
+
+struct CaseDuplicates {
+    candidates_sql: &'static str,
+    merge_sql: &'static [&'static str],
+}
+
+const CASE_DUPLICATES: &[CaseDuplicates] = &[
+    CaseDuplicates {
+        candidates_sql: "SELECT id, name FROM artists
+             ORDER BY name COLLATE NOCASE,
+                      (SELECT COUNT(*) FROM songs_artists WHERE artist_id = artists.id) DESC,
+                      (SELECT COUNT(*) FROM albums_artists WHERE artist_id = artists.id) DESC,
+                      name",
+        merge_sql: &[
+            "INSERT OR IGNORE INTO songs_artists (song_id, artist_id, position)
+             SELECT song_id, ?1, position FROM songs_artists WHERE artist_id = ?2",
+            "INSERT OR IGNORE INTO albums_artists (album_id, artist_id, position)
+             SELECT album_id, ?1, position FROM albums_artists WHERE artist_id = ?2",
+            "UPDATE artists SET
+                favorite = (SELECT MAX(COALESCE(favorite, 0)) FROM artists WHERE id IN (?1, ?2)),
+                pinned = (SELECT MAX(COALESCE(pinned, 0)) FROM artists WHERE id IN (?1, ?2)),
+                image_id = COALESCE(image_id, (SELECT image_id FROM artists WHERE id = ?2))
+             WHERE id = ?1",
+            "DELETE FROM songs_artists WHERE artist_id = ?2",
+            "DELETE FROM albums_artists WHERE artist_id = ?2",
+            "DELETE FROM artists WHERE id = ?2",
+        ],
+    },
+    CaseDuplicates {
+        candidates_sql: "SELECT id, title FROM albums
+             ORDER BY title COLLATE NOCASE,
+                      (SELECT COUNT(*) FROM songs WHERE album_id = albums.id) DESC,
+                      title",
+        merge_sql: &[
+            "UPDATE songs SET album_id = ?1 WHERE album_id = ?2",
+            "INSERT OR IGNORE INTO albums_artists (album_id, artist_id, position)
+             SELECT ?1, artist_id,
+                    position + (SELECT COALESCE(MAX(position), -1) + 1 FROM albums_artists WHERE album_id = ?1)
+             FROM albums_artists WHERE album_id = ?2",
+            "UPDATE albums SET
+                favorite = (SELECT MAX(COALESCE(favorite, 0)) FROM albums WHERE id IN (?1, ?2)),
+                pinned = (SELECT MAX(COALESCE(pinned, 0)) FROM albums WHERE id IN (?1, ?2)),
+                image_id = COALESCE(image_id, (SELECT image_id FROM albums WHERE id = ?2))
+             WHERE id = ?1",
+            "DELETE FROM albums_artists WHERE album_id = ?2",
+            "DELETE FROM albums WHERE id = ?2",
+        ],
+    },
+    CaseDuplicates {
+        candidates_sql: "SELECT id, name FROM genres
+             ORDER BY name COLLATE NOCASE,
+                      (SELECT COUNT(*) FROM songs_genres WHERE genre_id = genres.id) DESC,
+                      name",
+        merge_sql: &[
+            "INSERT OR IGNORE INTO songs_genres (song_id, genre_id)
+             SELECT song_id, ?1 FROM songs_genres WHERE genre_id = ?2",
+            "DELETE FROM songs_genres WHERE genre_id = ?2",
+            "DELETE FROM genres WHERE id = ?2",
+        ],
+    },
+];
 
 #[derive(Clone)]
 pub struct Database {
@@ -599,6 +734,9 @@ impl Database {
         write_profile::add(&write_profile::LOCK_NS, lock_started);
         let tx = conn.transaction()?;
         let mut written = 0usize;
+        let mut touched_artists = HashSet::new();
+        let mut touched_genres = HashSet::new();
+        let mut touched_albums = HashSet::new();
 
         for track in tracks {
             let album_started = std::time::Instant::now();
@@ -608,6 +746,10 @@ impl Database {
                 }
                 None => None,
             };
+            if let (Some(id), Some(title)) = (&album_id, track.album) {
+                vote(&mut cache.album_votes, id, title);
+                touched_albums.insert(id.clone());
+            }
             write_profile::add(&write_profile::ALBUM_NS, album_started);
             let song_started = std::time::Instant::now();
 
@@ -651,8 +793,13 @@ impl Database {
             let artists_started = std::time::Instant::now();
             tx.prepare_cached("DELETE FROM songs_artists WHERE song_id = ?1")?
                 .execute(params![song_id])?;
+            let mut credited = HashSet::new();
             for (position, artist_name) in track.artists.iter().enumerate() {
                 let artist_id = artist_id_cached(&tx, cache, artist_name)?;
+                if credited.insert(artist_id.clone()) {
+                    vote(&mut cache.artist_votes, &artist_id, artist_name);
+                    touched_artists.insert(artist_id.clone());
+                }
                 tx.prepare_cached(
                     "INSERT INTO songs_artists (song_id, artist_id, position) VALUES (?1, ?2, ?3)
                      ON CONFLICT(song_id, artist_id) DO UPDATE SET position = excluded.position",
@@ -665,8 +812,13 @@ impl Database {
             let genres_started = std::time::Instant::now();
             tx.prepare_cached("DELETE FROM songs_genres WHERE song_id = ?1")?
                 .execute(params![song_id])?;
+            let mut tagged = HashSet::new();
             for genre_name in track.genres {
                 let genre_id = genre_id_cached(&tx, cache, genre_name)?;
+                if tagged.insert(genre_id.clone()) {
+                    vote(&mut cache.genre_votes, &genre_id, genre_name);
+                    touched_genres.insert(genre_id.clone());
+                }
                 tx.prepare_cached(
                     "INSERT INTO songs_genres (song_id, genre_id) VALUES (?1, ?2)
                      ON CONFLICT(song_id, genre_id) DO NOTHING",
@@ -678,6 +830,31 @@ impl Database {
             written += 1;
         }
 
+        apply_majority_spellings(
+            &tx,
+            &cache.artist_votes,
+            &touched_artists,
+            "SELECT name, (SELECT COUNT(*) FROM songs_artists WHERE artist_id = ?1)
+             FROM artists WHERE id = ?1",
+            "UPDATE OR IGNORE artists SET name = ?1 WHERE id = ?2",
+        )?;
+        apply_majority_spellings(
+            &tx,
+            &cache.genre_votes,
+            &touched_genres,
+            "SELECT name, (SELECT COUNT(*) FROM songs_genres WHERE genre_id = ?1)
+             FROM genres WHERE id = ?1",
+            "UPDATE OR IGNORE genres SET name = ?1 WHERE id = ?2",
+        )?;
+        apply_majority_spellings(
+            &tx,
+            &cache.album_votes,
+            &touched_albums,
+            "SELECT title, (SELECT COUNT(*) FROM songs WHERE album_id = ?1)
+             FROM albums WHERE id = ?1",
+            "UPDATE OR IGNORE albums SET title = ?1 WHERE id = ?2",
+        )?;
+
         let commit_started = std::time::Instant::now();
         tx.commit()?;
         write_profile::add(&write_profile::COMMIT_NS, commit_started);
@@ -686,6 +863,36 @@ impl Database {
             write_profile::WAL_BYTES.store(meta.len(), std::sync::atomic::Ordering::Relaxed);
         }
         Ok(written)
+    }
+
+    pub fn merge_case_duplicates(&self) -> Result<usize> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        let mut merged = 0;
+
+        for kind in CASE_DUPLICATES {
+            let rows: Vec<(Cuid, String)> = tx
+                .prepare_cached(kind.candidates_sql)?
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<rusqlite::Result<_>>()?;
+
+            let mut keeper: Option<(String, Cuid)> = None;
+            for (id, name) in rows {
+                let key = fold_name(&name);
+                match &keeper {
+                    Some((keeper_key, keeper_id)) if *keeper_key == key => {
+                        for sql in kind.merge_sql {
+                            tx.prepare_cached(sql)?.execute(params![keeper_id, id])?;
+                        }
+                        merged += 1;
+                    }
+                    _ => keeper = Some((key, id)),
+                }
+            }
+        }
+
+        tx.commit()?;
+        Ok(merged)
     }
 
     pub fn delete_song(&self, id: &Cuid) -> Result<()> {
@@ -1631,6 +1838,132 @@ mod tests {
         (target.image_id, target.image_checked)
     }
 
+    fn artist_names(db: &Database) -> Vec<String> {
+        let conn = db.conn.lock();
+        let mut stmt = conn
+            .prepare("SELECT name FROM artists ORDER BY name")
+            .unwrap();
+        stmt.query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn differently_cased_names_merge_into_the_majority_spelling() {
+        let (db, path) = named_db("case_majority");
+        let mut cache = ScanCache::default();
+
+        let lower = ["ellis"];
+        let upper = ["Ellis"];
+        let tracks = [
+            BatchTrack {
+                artists: &lower,
+                album: Some("night"),
+                ..track("/music/1.flac", true)
+            },
+            BatchTrack {
+                artists: &upper,
+                album: Some("Night"),
+                ..track("/music/2.flac", true)
+            },
+            BatchTrack {
+                artists: &upper,
+                album: Some("Night"),
+                ..track("/music/3.flac", true)
+            },
+        ];
+        db.upsert_tracks_batch(&tracks, &mut cache).unwrap();
+
+        assert_eq!(artist_names(&db), vec!["Ellis".to_string()]);
+        let album_id = db
+            .get_song_by_path("/music/1.flac")
+            .unwrap()
+            .unwrap()
+            .album_id;
+        assert_eq!(
+            db.get_song_by_path("/music/3.flac")
+                .unwrap()
+                .unwrap()
+                .album_id,
+            album_id
+        );
+        assert_eq!(
+            db.get_album(album_id.as_ref().unwrap())
+                .unwrap()
+                .unwrap()
+                .title,
+            "Night"
+        );
+
+        let mut incremental = ScanCache::default();
+        db.upsert_tracks_batch(
+            &[BatchTrack {
+                artists: &lower,
+                ..track("/music/4.flac", true)
+            }],
+            &mut incremental,
+        )
+        .unwrap();
+        assert_eq!(
+            artist_names(&db),
+            vec!["Ellis".to_string()],
+            "one changed file must not outvote songs it did not read"
+        );
+        cleanup(&path);
+    }
+
+    #[test]
+    fn existing_case_duplicates_merge_into_the_most_used_row() {
+        let (db, path) = named_db("case_merge");
+        {
+            let conn = db.conn.lock();
+            conn.execute_batch(
+                "INSERT INTO artists (id, name, favorite) VALUES ('a_upper', 'Ellis', 0), ('a_lower', 'ellis', 1);
+                 INSERT INTO albums (id, title) VALUES ('al_upper', 'Night'), ('al_lower', 'night');
+                 INSERT INTO genres (id, name) VALUES ('g_upper', 'Pop'), ('g_lower', 'pop');
+                 INSERT INTO songs (id, title, album_id, file_path, duration) VALUES
+                    ('s1', 'One', 'al_upper', '/music/1.flac', 1),
+                    ('s2', 'Two', 'al_upper', '/music/2.flac', 1),
+                    ('s3', 'Three', 'al_lower', '/music/3.flac', 1);
+                 INSERT INTO songs_artists (song_id, artist_id, position) VALUES
+                    ('s1', 'a_upper', 0), ('s2', 'a_upper', 0), ('s3', 'a_lower', 0);
+                 INSERT INTO albums_artists (album_id, artist_id, position) VALUES
+                    ('al_upper', 'a_upper', 0), ('al_lower', 'a_lower', 0);
+                 INSERT INTO songs_genres (song_id, genre_id) VALUES
+                    ('s1', 'g_upper'), ('s2', 'g_upper'), ('s3', 'g_lower');",
+            )
+            .unwrap();
+        }
+
+        assert_eq!(db.merge_case_duplicates().unwrap(), 3);
+        assert_eq!(db.merge_case_duplicates().unwrap(), 0);
+
+        assert_eq!(artist_names(&db), vec!["Ellis".to_string()]);
+        let conn = db.conn.lock();
+        let count = |sql: &str| conn.query_row(sql, [], |row| row.get::<_, i64>(0)).unwrap();
+        assert_eq!(count("SELECT COUNT(*) FROM albums"), 1);
+        assert_eq!(count("SELECT COUNT(*) FROM genres"), 1);
+        assert_eq!(
+            count("SELECT COUNT(*) FROM songs WHERE album_id = 'al_upper'"),
+            3
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM songs_artists WHERE artist_id = 'a_upper'"),
+            3
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM songs_genres WHERE genre_id = 'g_upper'"),
+            3
+        );
+        assert_eq!(
+            count("SELECT favorite FROM artists WHERE id = 'a_upper'"),
+            1
+        );
+        drop(conn);
+        cleanup(&path);
+    }
+
     #[test]
     fn rescanning_keeps_a_resolved_image() {
         let (db, path) = named_db("image_keep");
@@ -1777,14 +2110,6 @@ mod tests {
         cleanup(&path);
     }
 
-    /// Does a second writer on the same database explain why a real scan
-    /// writes far slower than this bench does?
-    ///
-    /// During a scan the UI is rendering rows whose image is not resolved yet,
-    /// and each of those resolves into its own write transaction. WAL takes one
-    /// writer at a time, so those interleave with the scanner's batches. This
-    /// reproduces that shape: identical inserts, with and without a second
-    /// connection writing images throughout.
     #[test]
     #[ignore]
     fn bench_write_contention() {
@@ -1796,9 +2121,7 @@ mod tests {
 
         let titles: Vec<String> = (0..songs).map(|i| format!("Song {i}")).collect();
         let paths: Vec<String> = (0..songs).map(|i| format!("/music/c_{i}.flac")).collect();
-        // Artists and albums matter: without them the per-song DELETE FROM
-        // songs_artists has nothing to delete, so the cleanup triggers a rescan
-        // actually fires never run and the measurement misses them entirely.
+
         let artist_names: Vec<String> = (0..songs / 10).map(|i| format!("Artist {i}")).collect();
         let album_names: Vec<String> = (0..songs / 4).map(|i| format!("Album {i}")).collect();
 
@@ -1845,9 +2168,6 @@ genres {g:?}, commit {c:?}, wal {}MB",
             wal / 1_048_576
         );
 
-        // A second database so the contended run inserts into an empty store
-        // exactly like the first did; the competing writer targets that same
-        // file, which is the whole point.
         let (db2, path2) = named_db("contention_b");
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let writer = {
@@ -1871,10 +2191,6 @@ genres {g:?}, commit {c:?}, wal {}MB",
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
         let writes = writer.join().unwrap();
 
-        // And the other shape: the UI reading while the scan writes. These
-        // queries take the same connection mutex the batch writes need, so
-        // unlike the image writer above they are not a separate connection
-        // waiting its turn in SQLite -- they are in front of the scanner.
         let (db3, path3) = named_db("contention_c");
         let stop_r = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let reader = {
@@ -1916,9 +2232,6 @@ genres {g:?}, commit {c:?}, wal {}MB",
         );
         cleanup(&path3);
 
-        // And the shape the scan's own lookahead creates: while a batch is
-        // being written on one thread, rayon is reading the next chunk on every
-        // core. The writer is then competing with N busy threads for N cores.
         let (db4, path4) = named_db("contention_d");
         let stop_c = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let burners: Vec<_> = (0..std::thread::available_parallelism()
@@ -1950,9 +2263,6 @@ genres {g:?}, commit {c:?}, wal {}MB",
         );
         cleanup(&path4);
 
-        // A store the size of a real one. The benches above all start empty, so
-        // their whole index working set sits in SQLite's default ~2MB page
-        // cache; a library with artwork in it does not.
         let (db5, path5) = named_db("contention_e");
         let blob = vec![7u8; 40 * 1024];
         for i in 0..1_000 {
@@ -1972,9 +2282,6 @@ genres {g:?}, commit {c:?}, wal {}MB",
         );
         cleanup(&path5);
 
-        // The same rows written a second time: the path a rescan actually
-        // takes, where every song's DELETE FROM songs_artists has rows to
-        // delete and so fires the cleanup triggers a cold insert never reaches.
         let t = Instant::now();
         insert_all(&db);
         let reupsert = t.elapsed();
@@ -2095,9 +2402,6 @@ artists {artists:?}, genres {genres:?}, commit {commit:?}"
         }
         println!("get_albums_count      x100:  {:>10?}", t.elapsed());
 
-        // The queries the views re-run on every LibraryDataChanged, which
-        // during a scan is every 500ms -- on the same connection the scanner
-        // needs for its batch writes.
         let t = Instant::now();
         for _ in 0..10 {
             db.get_recently_added_items(100).unwrap();

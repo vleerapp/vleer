@@ -27,17 +27,9 @@ type FsWatcher = Debouncer<notify::RecommendedWatcher, RecommendedCache>;
 const SUPPORTED_EXTENSIONS: &[&str] = &[
     "aac", "aiff", "aif", "flac", "mp3", "mp4", "m4a", "mp4a", "ogg", "oga", "opus", "wav", "wv",
 ];
-/// Files handed to one parallel read job. Small so the write of one batch
-/// overlaps the read of the next at a fine grain.
+
 const READ_CHUNK_SIZE: usize = 256;
 
-/// Tracks gathered before opening a transaction.
-///
-/// Deliberately much larger than the read chunk. Committing is not free, and
-/// measured against a real library it dominated the write: a commit per 256
-/// files meant hundreds of them, each costing far more than the rows it
-/// carried. The two numbers used to be one, which tied how often we commit to
-/// how finely reads pipeline -- unrelated concerns that want opposite answers.
 const DB_FLUSH_SIZE: usize = 4096;
 const UI_REFRESH_INTERVAL: Duration = Duration::from_millis(500);
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
@@ -494,6 +486,18 @@ impl Scanner {
         let mut updated = 0;
         let mut skipped = 0;
         let mut failed = 0;
+
+        match db.merge_case_duplicates() {
+            Ok(0) => {}
+            Ok(merged) => {
+                info!("Merged {} case-insensitive duplicate(s)", merged);
+                db.rebuild_search_index();
+                if let Some(ref ui) = self.background_ui {
+                    ui.notify(BackgroundUiEvent::LibraryDataChanged);
+                }
+            }
+            Err(e) => error!("Failed to merge case-insensitive duplicates: {}", e),
+        }
 
         let walk_started = Instant::now();
         let audio_files = self.collect_audio_files().await?;
