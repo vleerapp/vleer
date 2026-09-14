@@ -446,44 +446,47 @@ impl Render for AlbumView {
             let artists_data = self.artists_data.clone();
 
             let artists_list = flex_col().gap(px(variables.padding_16)).children(
-                artists_data.into_iter().enumerate().map(|(i, (name, image_uri))| {
-                    let tile_id = format!("album-artist-{}", i);
-                    flex_row()
-                        .id(ElementId::Name(tile_id.clone().into()))
-                        .gap(px(variables.padding_8))
-                        .items_center()
-                        .child(
-                            div()
-                                .id(ElementId::Name(format!("{}-avatar", tile_id).into()))
-                                .size(px(36.0))
-                                .flex_shrink_0()
-                                .rounded_full()
-                                .relative()
-                                .overflow_hidden()
-                                .child(match image_uri {
-                                    Some(uri) => img(format!("!image://{}?size=36", uri))
-                                        .size_full()
-                                        .rounded_full()
-                                        .object_fit(ObjectFit::Cover)
-                                        .into_any_element(),
-                                    None => div()
-                                        .size_full()
-                                        .rounded_full()
-                                        .bg(variables.border)
-                                        .into_any_element(),
-                                }),
-                        )
-                        .child(
-                            div()
-                                .id(ElementId::Name(format!("{}-name", tile_id).into()))
-                                .flex_1()
-                                .min_w_0()
-                                .overflow_hidden()
-                                .text_ellipsis()
-                                .child(name),
-                        )
-                        .into_any_element()
-                }),
+                artists_data
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, (name, image_uri))| {
+                        let tile_id = format!("album-artist-{}", i);
+                        flex_row()
+                            .id(ElementId::Name(tile_id.clone().into()))
+                            .gap(px(variables.padding_8))
+                            .items_center()
+                            .child(
+                                div()
+                                    .id(ElementId::Name(format!("{}-avatar", tile_id).into()))
+                                    .size(px(36.0))
+                                    .flex_shrink_0()
+                                    .rounded_full()
+                                    .relative()
+                                    .overflow_hidden()
+                                    .child(match image_uri {
+                                        Some(uri) => img(format!("!image://{}?size=36", uri))
+                                            .size_full()
+                                            .rounded_full()
+                                            .object_fit(ObjectFit::Cover)
+                                            .into_any_element(),
+                                        None => div()
+                                            .size_full()
+                                            .rounded_full()
+                                            .bg(variables.border)
+                                            .into_any_element(),
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .id(ElementId::Name(format!("{}-name", tile_id).into()))
+                                    .flex_1()
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .child(name),
+                            )
+                            .into_any_element()
+                    }),
             );
 
             let sidebar = flex_col()
