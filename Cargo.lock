@@ -8302,7 +8302,6 @@ dependencies = [
  "sequoia-openpgp",
  "serde",
  "serde_json",
- "sha2 0.11.0",
  "spectrum-analyzer",
  "symphonia-adapter-libopus",
  "tokio",
@@ -8316,6 +8315,7 @@ dependencies = [
  "walkdir",
  "windows 0.62.2",
  "windows-future 0.3.2",
+ "xxhash-rust",
  "zbus",
 ]
 

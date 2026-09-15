@@ -12,6 +12,14 @@ impl Cuid {
     pub fn new() -> Self {
         Cuid(cuid2::create_id())
     }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn into_string(self) -> String {
+        self.0
+    }
 }
 
 impl From<String> for Cuid {
