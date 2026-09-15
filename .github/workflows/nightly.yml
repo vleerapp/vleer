@@ -513,54 +513,54 @@ jobs:
           mac_x64 = meta[("macOS", "x86_64")]["sha256"]
           mac_arm = meta[("macOS", "aarch64")]["sha256"]
 
-          formula = f'''class VleerATNightly < Formula
-            desc "Vleer nightly build"
+          formula = f'''class VleerNightly < Formula
+            desc "Music, but without the subscription (nightly build)"
             homepage "https://vleer.app"
-            version "{version}"
-            conflicts_with "vleer"
-
-            on_macos do
-              odie "install macOS nightly via `brew install --cask vleer@nightly` instead"
-            end
-
             url "{s3_endpoint}/nightly/Vleer-{version}-#{{Hardware::CPU.arm? ? "aarch64" : "x86_64"}}.tar.gz"
+            version "{version}"
             sha256 Hardware::CPU.arm? ? "{linux_arm}" : "{linux_x64}"
 
+            conflicts_with "vleer"
+
             def install
-              bin.install "bin/vleer" => "vleer-nightly"
+              odie "install macOS nightly via `brew install --cask vleer-nightly` instead" if OS.mac?
+
+              bin.install "bin/vleer"
               share.install "share/applications", "share/icons"
+              prefix.install "share/vleer/LICENSE"
             end
 
             test do
-              system "#{{bin}}/vleer-nightly", "--version"
+              system "#{{bin}}/vleer", "--version"
             end
           end
           '''
-          open("tap/Formula/vleer@nightly.rb", "w").write(formula)
+          open("tap/Formula/vleer-nightly.rb", "w").write(formula)
 
-          cask = f'''cask "vleer@nightly" do
+          cask = f'''cask "vleer-nightly" do
             arch arm: "aarch64", intel: "x86_64"
 
             version "{version}"
-            sha256 arm:   "{mac_arm}",
-                   intel: "{mac_x64}"
+            sha256 arm:    "{mac_arm}",
+                   x86_64: "{mac_x64}"
 
             url "{s3_endpoint}/nightly/Vleer-{version}-#{{arch}}.dmg"
-            name "Vleer Nightly"
-            desc "Vleer nightly build"
-            homepage "https://vleer.app"
+            name "Vleer"
+            desc "Music, but without the subscription (nightly build)"
+            homepage "https://vleer.app/"
 
-            conflicts_with cask: "vleer"
             auto_updates true
+            conflicts_with cask: "vleer"
+            depends_on :macos
 
-            app "Vleer.app", target: "Vleer Nightly.app"
+            app "Vleer.app"
 
-            postflight do
-              system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{{appdir}}/Vleer Nightly.app"]
+            postflight_steps do
+              run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "/Applications/Vleer.app"]
             end
           end
           '''
-          open("tap/Casks/vleer@nightly.rb", "w").write(cask)
+          open("tap/Casks/vleer-nightly.rb", "w").write(cask)
           PY
 
       - name: Commit + push tap update
@@ -570,7 +570,7 @@ jobs:
           set -euo pipefail
           git config user.name "vleer-bot"
           git config user.email "bot@vleer.app"
-          git add "Formula/vleer@nightly.rb" "Casks/vleer@nightly.rb"
+          git add "Formula/vleer-nightly.rb" "Casks/vleer-nightly.rb"
           if git diff --cached --quiet; then
             echo "no changes"
             exit 0
