@@ -98,12 +98,14 @@ impl Telemetry {
         self.executor
             .spawn(async move {
                 match agent.post(url).send_json(&payload) {
-                    Ok(res) if res.status().is_success() => info!("Telemetry sent"),
-                    Ok(res) => error!("Telemetry status: {}", res.status()),
-                    Err(e) if cfg!(debug_assertions) => {
-                        debug!("Telemetry error (debug build): {e}")
+                    Ok(res) if res.status().is_success() => {
+                        info!("Telemetry sent, payload: {payload:?}")
                     }
-                    Err(e) => error!("Telemetry error: {e}"),
+                    Ok(res) => error!("Telemetry status: {}, payload: {payload:?}", res.status()),
+                    Err(e) if cfg!(debug_assertions) => {
+                        debug!("Telemetry error (debug build): {e}, payload: {payload:?}")
+                    }
+                    Err(e) => error!("Telemetry error: {e}, payload: {payload:?}"),
                 }
             })
             .detach();

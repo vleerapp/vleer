@@ -6,7 +6,7 @@ use tokio::sync::Semaphore;
 use tracing::{debug, warn};
 
 use crate::data::db::repo::{AlbumImageTarget, Database};
-use crate::data::metadata::{encode_cover, image_id_for, read_front_image};
+use crate::data::metadata::{encode_cover, image_id_for, read_tag_images};
 use crate::data::models::Cuid;
 
 const IMAGE_IO_CONCURRENCY: usize = 4;
@@ -54,7 +54,7 @@ fn image_pool() -> &'static std::sync::mpsc::Sender<IoJob> {
     })
 }
 
-fn io_spawn<F, T>(f: F) -> futures::channel::oneshot::Receiver<T>
+pub(crate) fn io_spawn<F, T>(f: F) -> futures::channel::oneshot::Receiver<T>
 where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
@@ -90,7 +90,7 @@ fn is_busy(error: &anyhow::Error) -> bool {
     )
 }
 
-async fn write_with_retry<T, F>(f: F) -> Result<T>
+pub(crate) async fn write_with_retry<T, F>(f: F) -> Result<T>
 where
     F: FnMut() -> Result<T> + Send + 'static,
     T: Send + 'static,
@@ -127,28 +127,45 @@ pub async fn resolve_song_image(db: Database, song_id: Cuid) -> Result<String> {
     }
 
     let path = target.file_path.clone();
-    let raw = {
+    let images = {
         let _permit = io_limit().acquire().await;
-        io_spawn(move || read_front_image(Path::new(&path)))
+        io_spawn(move || read_tag_images(Path::new(&path)))
             .await
             .map_err(|_| anyhow!("image read cancelled"))??
     };
 
-    let Some(raw) = raw else {
+    if let Some(raw) = images.artist
+        && let Err(e) = store_song_artist_image(db.clone(), song_id.clone(), raw).await
+    {
+        debug!("artist image from song {song_id} not stored: {e}");
+    }
+
+    let Some(raw) = images.cover else {
         let db_for_mark = db.clone();
         let mark_song = song_id.clone();
         write_with_retry(move || db_for_mark.mark_song_image_missing(&mark_song)).await?;
         return Err(anyhow!(NO_IMAGE));
     };
 
-    let image_id = image_id_for(&raw);
+    let (image_id, encoded) = prepare_image(&db, raw).await?;
 
+    let db_for_store = db.clone();
+    let (store_song, store_id) = (song_id.clone(), image_id.clone());
+    write_with_retry(move || {
+        db_for_store.store_song_image(&store_song, &store_id, encoded.as_deref())
+    })
+    .await?;
+
+    Ok(image_id)
+}
+
+pub(crate) async fn prepare_image(
+    db: &Database,
+    raw: Vec<u8>,
+) -> Result<(String, Option<Vec<u8>>)> {
+    let image_id = image_id_for(&raw);
     if db.image_exists(&image_id)? {
-        let db_for_store = db.clone();
-        let (store_song, store_id) = (song_id.clone(), image_id.clone());
-        write_with_retry(move || db_for_store.store_song_image(&store_song, &store_id, None))
-            .await?;
-        return Ok(image_id);
+        return Ok((image_id, None));
     }
 
     let encoded = {
@@ -158,12 +175,17 @@ pub async fn resolve_song_image(db: Database, song_id: Cuid) -> Result<String> {
             .map_err(|_| anyhow!("image encode cancelled"))??
     };
 
-    let db_for_store = db.clone();
-    let (store_song, store_id) = (song_id.clone(), image_id.clone());
-    write_with_retry(move || db_for_store.store_song_image(&store_song, &store_id, Some(&encoded)))
-        .await?;
+    Ok((image_id, Some(encoded)))
+}
 
-    Ok(image_id)
+async fn store_song_artist_image(db: Database, song_id: Cuid, raw: Vec<u8>) -> Result<()> {
+    if !db.song_lead_artist_needs_image(&song_id)? {
+        return Ok(());
+    }
+
+    let (image_id, encoded) = prepare_image(&db, raw).await?;
+    write_with_retry(move || db.store_song_artist_image(&song_id, &image_id, encoded.as_deref()))
+        .await
 }
 
 pub async fn warm_images(db: Database, cancel: Arc<AtomicBool>) -> usize {

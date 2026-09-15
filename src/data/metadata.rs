@@ -5,12 +5,13 @@ use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::picture::PictureType;
 use lofty::probe::Probe;
 use lofty::tag::{Accessor, ItemKey, Tag};
-use sha2::{Digest, Sha256};
-use std::fmt::Write as _;
 use std::fs::File;
 use std::io::{BufReader, Cursor};
 use std::path::Path;
 use std::time::Duration;
+
+use crate::data::fingerprint::audio_fingerprint;
+use crate::data::models::Cuid;
 
 const PROBE_BUFFER_CAPACITY: usize = 64 * 1024;
 
@@ -22,6 +23,7 @@ pub struct AudioMetadata {
     pub title: Option<String>,
     pub artists: Vec<String>,
     pub album: Option<String>,
+    pub album_artist: Option<String>,
     pub track_number: Option<u32>,
     pub year: Option<i32>,
     pub duration: Duration,
@@ -30,46 +32,62 @@ pub struct AudioMetadata {
 }
 
 fn extract_metadata_from_tag(tag: Option<&Tag>, duration: Duration) -> AudioMetadata {
-    let (title, artists, album, genres, year, track_number, lufs) = if let Some(tag) = tag {
-        let title = tag.title().map(|s| s.to_string());
-        let artists = tag
-            .artist()
-            .map(|s| {
-                s.split([',', ';', '/', '&'])
-                    .map(|a| a.trim().to_string())
-                    .filter(|a| !a.is_empty())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        let album = tag.album().map(|s| s.to_string());
-        let genres = tag
-            .genre()
-            .map(|s| {
-                s.split([',', ';', '/'])
-                    .map(|g| g.trim().to_string())
-                    .filter(|g| !g.is_empty())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        let year = tag.date().map(|d| d.year as i32);
-        let track_number = tag.track();
+    let (title, artists, album, album_artist, genres, year, track_number, lufs) =
+        if let Some(tag) = tag {
+            let title = tag.title().map(|s| s.to_string());
+            let artists = tag
+                .artist()
+                .map(|s| {
+                    s.split([',', ';', '/', '&'])
+                        .map(|a| a.trim().to_string())
+                        .filter(|a| !a.is_empty())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let album = tag.album().map(|s| s.to_string());
+            let album_artist = tag
+                .get_string(ItemKey::AlbumArtist)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            let genres = tag
+                .genre()
+                .map(|s| {
+                    s.split([',', ';', '/'])
+                        .map(|g| g.trim().to_string())
+                        .filter(|g| !g.is_empty())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let year = tag.date().map(|d| d.year as i32);
+            let track_number = tag.track();
 
-        let lufs = tag.get_string(ItemKey::ReplayGainTrackGain).and_then(|s| {
-            s.trim_end_matches(" dB")
-                .parse::<f32>()
-                .ok()
-                .map(|gain| -18.0 - (gain))
-        });
+            let lufs = tag.get_string(ItemKey::ReplayGainTrackGain).and_then(|s| {
+                s.trim_end_matches(" dB")
+                    .parse::<f32>()
+                    .ok()
+                    .map(|gain| -18.0 - (gain))
+            });
 
-        (title, artists, album, genres, year, track_number, lufs)
-    } else {
-        (None, vec![], None, vec![], None, None, None)
-    };
+            (
+                title,
+                artists,
+                album,
+                album_artist,
+                genres,
+                year,
+                track_number,
+                lufs,
+            )
+        } else {
+            (None, vec![], None, None, vec![], None, None, None)
+        };
 
     AudioMetadata {
         title,
         artists,
         album,
+        album_artist,
         genres,
         year,
         track_number,
@@ -79,13 +97,7 @@ fn extract_metadata_from_tag(tag: Option<&Tag>, duration: Duration) -> AudioMeta
 }
 
 pub(crate) fn image_id_for(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    let mut id = String::with_capacity(64);
-    for byte in hasher.finalize() {
-        let _ = write!(id, "{:02x}", byte);
-    }
-    id
+    Cuid::for_image(bytes).into_string()
 }
 
 fn open_probe(path: &Path) -> Result<Probe<BufReader<File>>> {
@@ -94,8 +106,9 @@ fn open_probe(path: &Path) -> Result<Probe<BufReader<File>>> {
     Ok(Probe::new(reader))
 }
 
-pub fn read_metadata(path: &Path) -> Result<AudioMetadata> {
-    let tagged_file = open_probe(path)?
+pub fn read_track(path: &Path) -> Result<(AudioMetadata, String)> {
+    let file = File::open(path).with_context(|| format!("Failed to open {:?}", path))?;
+    let tagged_file = Probe::new(BufReader::with_capacity(PROBE_BUFFER_CAPACITY, &file))
         .guess_file_type()?
         .options(ParseOptions::new().read_cover_art(false))
         .read()?;
@@ -105,27 +118,59 @@ pub fn read_metadata(path: &Path) -> Result<AudioMetadata> {
         .primary_tag()
         .or_else(|| tagged_file.first_tag());
 
-    Ok(extract_metadata_from_tag(tag, duration))
+    let metadata = extract_metadata_from_tag(tag, duration);
+    let audio_hash = audio_fingerprint(&mut &file)
+        .with_context(|| format!("Failed to fingerprint {:?}", path))?;
+    Ok((metadata, audio_hash))
 }
 
-pub(crate) fn read_front_image(path: &Path) -> Result<Option<Vec<u8>>> {
+const ARTIST_PICTURES: &[PictureType] = &[
+    PictureType::LeadArtist,
+    PictureType::Artist,
+    PictureType::Band,
+];
+
+#[derive(Default)]
+pub(crate) struct TagImages {
+    pub cover: Option<Vec<u8>>,
+    pub artist: Option<Vec<u8>>,
+}
+
+pub(crate) fn read_tag_images(path: &Path) -> Result<TagImages> {
     let tagged_file = open_probe(path)?
         .guess_file_type()?
         .options(ParseOptions::new().read_properties(false))
         .read()?;
 
-    let tag = tagged_file
+    let Some(tag) = tagged_file
         .primary_tag()
-        .or_else(|| tagged_file.first_tag());
+        .or_else(|| tagged_file.first_tag())
+    else {
+        return Ok(TagImages::default());
+    };
 
-    Ok(tag.and_then(|tag| {
-        tag.pictures()
-            .iter()
-            .find(|p| p.pic_type() == PictureType::CoverFront)
-            .or_else(|| tag.pictures().first())
-            .map(|picture| picture.data().to_vec())
-            .filter(|data| !data.is_empty())
-    }))
+    let pictures: Vec<_> = tag
+        .pictures()
+        .iter()
+        .filter(|picture| !picture.data().is_empty())
+        .collect();
+
+    let cover = pictures
+        .iter()
+        .find(|p| p.pic_type() == PictureType::CoverFront)
+        .or_else(|| {
+            pictures
+                .iter()
+                .find(|p| !ARTIST_PICTURES.contains(&p.pic_type()))
+        })
+        .map(|picture| picture.data().to_vec());
+
+    let artist = ARTIST_PICTURES
+        .iter()
+        .find_map(|kind| pictures.iter().find(|p| p.pic_type() == *kind))
+        .map(|picture| picture.data().to_vec());
+
+    Ok(TagImages { cover, artist })
 }
 
 pub(crate) fn encode_cover(bytes: &[u8]) -> Result<Vec<u8>> {

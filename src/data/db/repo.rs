@@ -1,5 +1,6 @@
 use crate::data::{
     db::models::*,
+    ids::fold_key,
     models::{
         Album, AlbumListItem, Artist, ArtistListItem, Cuid, Event, EventContext, EventType, Image,
         PinnedItem, Playlist, PlaylistListItem, PlaylistTrack, RecentItem, Song, SongListItem,
@@ -78,7 +79,9 @@ pub struct BatchTrack<'a> {
     pub artists: &'a [&'a str],
     pub genres: &'a [&'a str],
     pub album: Option<&'a str>,
+    pub album_artist: Option<&'a str>,
     pub file_path: &'a str,
+    pub audio_hash: &'a str,
     pub duration: i32,
     pub track_number: Option<i32>,
     pub year: Option<i32>,
@@ -96,10 +99,6 @@ struct AlbumCacheEntry {
 }
 
 type SpellingVotes = HashMap<Cuid, HashMap<String, usize>>;
-
-fn fold_name(name: &str) -> String {
-    name.to_ascii_lowercase()
-}
 
 pub mod write_profile {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -150,28 +149,10 @@ pub mod write_profile {
 pub struct ScanCache {
     artists: HashMap<String, Cuid>,
     genres: HashMap<String, Cuid>,
-    albums: HashMap<String, AlbumCacheEntry>,
+    albums: HashMap<(String, String), AlbumCacheEntry>,
     artist_votes: SpellingVotes,
     genre_votes: SpellingVotes,
     album_votes: SpellingVotes,
-}
-
-fn find_or_insert(
-    tx: &rusqlite::Transaction<'_>,
-    find_sql: &str,
-    insert_sql: &str,
-    name: &str,
-) -> Result<Cuid> {
-    let existing: Option<Cuid> = tx
-        .prepare_cached(find_sql)?
-        .query_row(params![name], |row| row.get(0))
-        .optional()?;
-    match existing {
-        Some(id) => Ok(id),
-        None => Ok(tx
-            .prepare_cached(insert_sql)?
-            .query_row(params![Cuid::new(), name], |row| row.get(0))?),
-    }
 }
 
 fn artist_id_cached(
@@ -179,18 +160,40 @@ fn artist_id_cached(
     cache: &mut ScanCache,
     name: &str,
 ) -> Result<Cuid> {
-    let key = fold_name(name);
+    let key = fold_key(name);
     if let Some(id) = cache.artists.get(&key) {
         return Ok(id.clone());
     }
-    let id = find_or_insert(
-        tx,
-        "SELECT id FROM artists WHERE name = ?1 COLLATE NOCASE ORDER BY name LIMIT 1",
-        "INSERT INTO artists (id, name) VALUES (?1, ?2)
-         ON CONFLICT(name) DO UPDATE SET name = excluded.name
-         RETURNING id",
-        name,
-    )?;
+    let existing: Option<Cuid> = tx
+        .prepare_cached(
+            "SELECT id FROM (
+                 SELECT id, 0 AS rank FROM artists WHERE name = ?1 COLLATE NOCASE
+                 UNION ALL
+                 SELECT artist_id, 1 FROM artist_aliases WHERE name = ?1
+             ) ORDER BY rank LIMIT 1",
+        )?
+        .query_row(params![name], |row| row.get(0))
+        .optional()?;
+    let id = match existing {
+        Some(id) => id,
+        None => {
+            let insert = |id: Cuid| -> Result<Option<Cuid>> {
+                Ok(tx
+                    .prepare_cached(
+                        "INSERT INTO artists (id, name) VALUES (?1, ?2)
+                         ON CONFLICT(name) DO UPDATE SET name = excluded.name
+                         ON CONFLICT(id) DO NOTHING
+                         RETURNING id",
+                    )?
+                    .query_row(params![id, name], |row| row.get(0))
+                    .optional()?)
+            };
+            match insert(Cuid::for_artist(name))? {
+                Some(id) => id,
+                None => insert(Cuid::new())?.expect("a random artist id cannot collide"),
+            }
+        }
+    };
     cache.artists.insert(key, id.clone());
     Ok(id)
 }
@@ -200,18 +203,13 @@ fn genre_id_cached(
     cache: &mut ScanCache,
     name: &str,
 ) -> Result<Cuid> {
-    let key = fold_name(name);
+    let key = fold_key(name);
     if let Some(id) = cache.genres.get(&key) {
         return Ok(id.clone());
     }
-    let id = find_or_insert(
-        tx,
-        "SELECT id FROM genres WHERE name = ?1 COLLATE NOCASE ORDER BY name LIMIT 1",
-        "INSERT INTO genres (id, name) VALUES (?1, ?2)
-         ON CONFLICT(name) DO UPDATE SET name = excluded.name
-         RETURNING id",
-        name,
-    )?;
+    let id = Cuid::for_genre(name);
+    tx.prepare_cached("INSERT INTO genres (id, name) VALUES (?1, ?2) ON CONFLICT(id) DO NOTHING")?
+        .execute(params![id, name])?;
     cache.genres.insert(key, id.clone());
     Ok(id)
 }
@@ -220,18 +218,21 @@ fn upsert_album_cached(
     tx: &rusqlite::Transaction<'_>,
     cache: &mut ScanCache,
     title: &str,
+    album_artist: Option<&str>,
     artists: &[&str],
 ) -> Result<Cuid> {
-    let title_key = fold_name(title);
-    if !cache.albums.contains_key(&title_key) {
-        let album_id = find_or_insert(
-            tx,
-            "SELECT id FROM albums WHERE title = ?1 COLLATE NOCASE ORDER BY title LIMIT 1",
-            "INSERT INTO albums (id, title) VALUES (?1, ?2)
-             ON CONFLICT(title) DO UPDATE SET title = excluded.title
-             RETURNING id",
-            title,
-        )?;
+    let credited: Vec<&str> = album_artist
+        .into_iter()
+        .chain(artists.iter().copied())
+        .collect();
+    let key_artist = credited.first().copied().unwrap_or_default();
+    let cache_key = (fold_key(title), fold_key(key_artist));
+    if !cache.albums.contains_key(&cache_key) {
+        let album_id = Cuid::for_album(title, key_artist);
+        tx.prepare_cached(
+            "INSERT INTO albums (id, title) VALUES (?1, ?2) ON CONFLICT(id) DO NOTHING",
+        )?
+        .execute(params![album_id, title])?;
 
         let existing: HashSet<String> = {
             let mut stmt = tx.prepare_cached(
@@ -240,7 +241,7 @@ fn upsert_album_cached(
                  WHERE aa.album_id = ?1",
             )?;
             stmt.query_map(params![album_id], |row| row.get::<_, String>(0))?
-                .map(|name| name.map(|name| fold_name(&name)))
+                .map(|name| name.map(|name| fold_key(&name)))
                 .collect::<rusqlite::Result<_>>()?
         };
 
@@ -252,7 +253,7 @@ fn upsert_album_cached(
             .unwrap_or(-1);
 
         cache.albums.insert(
-            title_key.clone(),
+            cache_key.clone(),
             AlbumCacheEntry {
                 id: album_id,
                 artists: existing,
@@ -262,15 +263,15 @@ fn upsert_album_cached(
     }
 
     let (album_id, missing): (Cuid, Vec<&str>) = {
-        let entry = &cache.albums[&title_key];
+        let entry = &cache.albums[&cache_key];
         let mut seen = HashSet::new();
         (
             entry.id.clone(),
-            artists
+            credited
                 .iter()
                 .copied()
                 .filter(|name| {
-                    let key = fold_name(name);
+                    let key = fold_key(name);
                     !entry.artists.contains(&key) && seen.insert(key)
                 })
                 .collect(),
@@ -282,11 +283,11 @@ fn upsert_album_cached(
         let position = {
             let entry = cache
                 .albums
-                .get_mut(&title_key)
+                .get_mut(&cache_key)
                 .expect("album cache entry inserted above");
             let position = entry.next_position;
             entry.next_position += 1;
-            entry.artists.insert(fold_name(name));
+            entry.artists.insert(fold_key(name));
             position
         };
         tx.prepare_cached(
@@ -345,65 +346,28 @@ fn apply_majority_spellings(
     Ok(())
 }
 
-struct CaseDuplicates {
-    candidates_sql: &'static str,
-    merge_sql: &'static [&'static str],
-}
-
-const CASE_DUPLICATES: &[CaseDuplicates] = &[
-    CaseDuplicates {
-        candidates_sql: "SELECT id, name FROM artists
-             ORDER BY name COLLATE NOCASE,
-                      (SELECT COUNT(*) FROM songs_artists WHERE artist_id = artists.id) DESC,
-                      (SELECT COUNT(*) FROM albums_artists WHERE artist_id = artists.id) DESC,
-                      name",
-        merge_sql: &[
-            "INSERT OR IGNORE INTO songs_artists (song_id, artist_id, position)
-             SELECT song_id, ?1, position FROM songs_artists WHERE artist_id = ?2",
-            "INSERT OR IGNORE INTO albums_artists (album_id, artist_id, position)
-             SELECT album_id, ?1, position FROM albums_artists WHERE artist_id = ?2",
-            "UPDATE artists SET
-                favorite = (SELECT MAX(COALESCE(favorite, 0)) FROM artists WHERE id IN (?1, ?2)),
-                pinned = (SELECT MAX(COALESCE(pinned, 0)) FROM artists WHERE id IN (?1, ?2)),
-                image_id = COALESCE(image_id, (SELECT image_id FROM artists WHERE id = ?2))
-             WHERE id = ?1",
-            "DELETE FROM songs_artists WHERE artist_id = ?2",
-            "DELETE FROM albums_artists WHERE artist_id = ?2",
-            "DELETE FROM artists WHERE id = ?2",
-        ],
-    },
-    CaseDuplicates {
-        candidates_sql: "SELECT id, title FROM albums
-             ORDER BY title COLLATE NOCASE,
-                      (SELECT COUNT(*) FROM songs WHERE album_id = albums.id) DESC,
-                      title",
-        merge_sql: &[
-            "UPDATE songs SET album_id = ?1 WHERE album_id = ?2",
-            "INSERT OR IGNORE INTO albums_artists (album_id, artist_id, position)
-             SELECT ?1, artist_id,
-                    position + (SELECT COALESCE(MAX(position), -1) + 1 FROM albums_artists WHERE album_id = ?1)
-             FROM albums_artists WHERE album_id = ?2",
-            "UPDATE albums SET
-                favorite = (SELECT MAX(COALESCE(favorite, 0)) FROM albums WHERE id IN (?1, ?2)),
-                pinned = (SELECT MAX(COALESCE(pinned, 0)) FROM albums WHERE id IN (?1, ?2)),
-                image_id = COALESCE(image_id, (SELECT image_id FROM albums WHERE id = ?2))
-             WHERE id = ?1",
-            "DELETE FROM albums_artists WHERE album_id = ?2",
-            "DELETE FROM albums WHERE id = ?2",
-        ],
-    },
-    CaseDuplicates {
-        candidates_sql: "SELECT id, name FROM genres
-             ORDER BY name COLLATE NOCASE,
-                      (SELECT COUNT(*) FROM songs_genres WHERE genre_id = genres.id) DESC,
-                      name",
-        merge_sql: &[
-            "INSERT OR IGNORE INTO songs_genres (song_id, genre_id)
-             SELECT song_id, ?1 FROM songs_genres WHERE genre_id = ?2",
-            "DELETE FROM songs_genres WHERE genre_id = ?2",
-            "DELETE FROM genres WHERE id = ?2",
-        ],
-    },
+const ARTIST_MERGE_SQL: &[&str] = &[
+    "INSERT OR IGNORE INTO songs_artists (song_id, artist_id, position)
+     SELECT song_id, ?1, position FROM songs_artists WHERE artist_id = ?2",
+    "INSERT OR IGNORE INTO albums_artists (album_id, artist_id, position)
+     SELECT album_id, ?1, position FROM albums_artists WHERE artist_id = ?2",
+    "UPDATE artists SET
+        favorite = (SELECT MAX(COALESCE(favorite, 0)) FROM artists WHERE id IN (?1, ?2)),
+        pinned = (SELECT MAX(COALESCE(pinned, 0)) FROM artists WHERE id IN (?1, ?2)),
+        image_id = COALESCE(image_id, (SELECT image_id FROM artists WHERE id = ?2)),
+        omm_id = CASE
+            WHEN NULLIF(omm_id, '') IS NOT NULL THEN omm_id
+            WHEN NULLIF((SELECT omm_id FROM artists WHERE id = ?2), '') IS NOT NULL
+                THEN (SELECT omm_id FROM artists WHERE id = ?2)
+            WHEN omm_id IS NOT NULL OR (SELECT omm_id FROM artists WHERE id = ?2) IS NOT NULL
+                THEN ''
+            ELSE NULL
+        END
+     WHERE id = ?1",
+    "UPDATE artist_aliases SET artist_id = ?1 WHERE artist_id = ?2",
+    "DELETE FROM songs_artists WHERE artist_id = ?2",
+    "DELETE FROM albums_artists WHERE artist_id = ?2",
+    "DELETE FROM artists WHERE id = ?2",
 ];
 
 #[derive(Clone)]
@@ -427,6 +391,29 @@ pub struct SongImageTarget {
 pub enum AlbumImageTarget {
     Resolved(String),
     Candidates(Vec<Cuid>),
+}
+
+pub struct ArtistMetadata<'a> {
+    pub omm_id: &'a str,
+    pub name: &'a str,
+    pub image: Option<(&'a str, Option<&'a [u8]>)>,
+}
+
+fn insert_artist_alias(
+    tx: &rusqlite::Transaction<'_>,
+    alias: &str,
+    artist_id: &Cuid,
+    canonical: &str,
+) -> Result<()> {
+    if alias.eq_ignore_ascii_case(canonical) {
+        return Ok(());
+    }
+    tx.prepare_cached(
+        "INSERT INTO artist_aliases (name, artist_id) VALUES (?1, ?2)
+         ON CONFLICT(name) DO UPDATE SET artist_id = excluded.artist_id",
+    )?
+    .execute(params![alias, artist_id])?;
+    Ok(())
 }
 
 impl Global for Database {}
@@ -720,6 +707,132 @@ impl Database {
         Ok(rows)
     }
 
+    pub fn song_lead_artist_needs_image(&self, song_id: &Cuid) -> Result<bool> {
+        let conn = self.image_write_conn.lock();
+        let found: Option<i64> = conn
+            .prepare_cached(
+                "SELECT 1 FROM songs_artists sa
+                 JOIN artists ar ON ar.id = sa.artist_id
+                 WHERE sa.song_id = ?1 AND sa.position = 0 AND ar.image_id IS NULL",
+            )?
+            .query_row(params![song_id], |row| row.get(0))
+            .optional()?;
+        Ok(found.is_some())
+    }
+
+    pub fn store_song_artist_image(
+        &self,
+        song_id: &Cuid,
+        image_id: &str,
+        data: Option<&[u8]>,
+    ) -> Result<()> {
+        let mut conn = self.image_write_conn.lock();
+        let tx = conn.transaction()?;
+
+        if let Some(data) = data {
+            tx.prepare_cached(
+                "INSERT INTO images (id, data) VALUES (?1, ?2)
+                 ON CONFLICT(id) DO NOTHING",
+            )?
+            .execute(params![image_id, data])?;
+        }
+
+        let updated = tx
+            .prepare_cached(
+                "UPDATE artists SET image_id = ?2
+                 WHERE image_id IS NULL
+                   AND id = (SELECT artist_id FROM songs_artists WHERE song_id = ?1 AND position = 0)",
+            )?
+            .execute(params![song_id, image_id])?;
+
+        if updated > 0 {
+            tx.commit()?;
+        }
+        Ok(())
+    }
+
+    pub fn artists_needing_metadata(&self, limit: i64) -> Result<Vec<(Cuid, String)>> {
+        let conn = self.image_write_conn.lock();
+        let rows = conn
+            .prepare_cached("SELECT id, name FROM artists WHERE omm_id IS NULL LIMIT ?1")?
+            .query_map(params![limit], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    pub fn mark_artist_metadata_missing(&self, artist_id: &Cuid) -> Result<()> {
+        let conn = self.image_write_conn.lock();
+        conn.prepare_cached("UPDATE artists SET omm_id = '' WHERE id = ?1 AND omm_id IS NULL")?
+            .execute(params![artist_id])?;
+        Ok(())
+    }
+
+    pub fn store_artist_metadata(
+        &self,
+        artist_id: &Cuid,
+        metadata: &ArtistMetadata<'_>,
+    ) -> Result<Option<Cuid>> {
+        let mut conn = self.image_write_conn.lock();
+        let tx = conn.transaction()?;
+
+        let Some(current_name): Option<String> = tx
+            .prepare_cached("SELECT name FROM artists WHERE id = ?1")?
+            .query_row(params![artist_id], |row| row.get(0))
+            .optional()?
+        else {
+            return Ok(None);
+        };
+
+        let keeper: Option<(Cuid, String)> = tx
+            .prepare_cached(
+                "SELECT id, name FROM artists
+                 WHERE id <> ?1 AND (omm_id = ?2 OR name = ?3 COLLATE NOCASE)
+                 ORDER BY omm_id = ?2 DESC LIMIT 1",
+            )?
+            .query_row(params![artist_id, metadata.omm_id, metadata.name], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .optional()?;
+
+        let target = match keeper {
+            Some((keeper_id, keeper_name)) => {
+                for sql in ARTIST_MERGE_SQL {
+                    tx.prepare_cached(sql)?
+                        .execute(params![keeper_id, artist_id])?;
+                }
+                insert_artist_alias(&tx, &keeper_name, &keeper_id, metadata.name)?;
+                keeper_id
+            }
+            None => artist_id.clone(),
+        };
+        insert_artist_alias(&tx, &current_name, &target, metadata.name)?;
+
+        if let Some((image_id, Some(data))) = metadata.image {
+            tx.prepare_cached(
+                "INSERT INTO images (id, data) VALUES (?1, ?2)
+                 ON CONFLICT(id) DO NOTHING",
+            )?
+            .execute(params![image_id, data])?;
+        }
+
+        tx.prepare_cached(
+            "UPDATE artists SET
+                omm_id = ?2,
+                name = ?3,
+                image_id = COALESCE(?4, image_id)
+             WHERE id = ?1",
+        )?
+        .execute(params![
+            target,
+            metadata.omm_id,
+            metadata.name,
+            metadata.image.map(|(image_id, _)| image_id)
+        ])?;
+
+        tx.commit()?;
+        Ok(Some(target))
+    }
+
     pub fn upsert_tracks_batch(
         &self,
         tracks: &[BatchTrack<'_>],
@@ -733,7 +846,7 @@ impl Database {
         let mut conn = self.conn.lock();
         write_profile::add(&write_profile::LOCK_NS, lock_started);
         let tx = conn.transaction()?;
-        let mut written = 0usize;
+        let mut inserted = 0usize;
         let mut touched_artists = HashSet::new();
         let mut touched_genres = HashSet::new();
         let mut touched_albums = HashSet::new();
@@ -741,9 +854,13 @@ impl Database {
         for track in tracks {
             let album_started = std::time::Instant::now();
             let album_id = match track.album {
-                Some(album_title) => {
-                    Some(upsert_album_cached(&tx, cache, album_title, track.artists)?)
-                }
+                Some(album_title) => Some(upsert_album_cached(
+                    &tx,
+                    cache,
+                    album_title,
+                    track.album_artist,
+                    track.artists,
+                )?),
                 None => None,
             };
             if let (Some(id), Some(title)) = (&album_id, track.album) {
@@ -755,11 +872,55 @@ impl Database {
 
             let year_str = track.year.map(|y| y.to_string());
 
-            let song_id: Cuid = tx
-                .prepare_cached(
+            let song_id = Cuid::for_song(track.audio_hash, album_id.as_ref());
+            let at_path: Option<Cuid> = tx
+                .prepare_cached("SELECT id FROM songs WHERE file_path = ?1")?
+                .query_row(params![track.file_path], |row| row.get(0))
+                .optional()?;
+            match at_path {
+                Some(old_id) if old_id != song_id => {
+                    let collides = tx
+                        .prepare_cached("SELECT 1 FROM songs WHERE id = ?1")?
+                        .query_row(params![song_id], |row| row.get::<_, i64>(0))
+                        .optional()?
+                        .is_some();
+                    if collides {
+                        tx.prepare_cached(
+                            "UPDATE songs SET
+                                favorite = MAX(favorite, (SELECT favorite FROM songs WHERE id = ?2)),
+                                pinned = MAX(pinned, (SELECT pinned FROM songs WHERE id = ?2))
+                             WHERE id = ?1",
+                        )?
+                        .execute(params![song_id, old_id])?;
+                        tx.prepare_cached("DELETE FROM songs WHERE id = ?1")?
+                            .execute(params![old_id])?;
+                        tx.prepare_cached("UPDATE songs SET file_path = ?1 WHERE id = ?2")?
+                            .execute(params![track.file_path, song_id])?;
+                    } else {
+                        tx.prepare_cached("UPDATE songs SET id = ?1 WHERE id = ?2")?
+                            .execute(params![song_id, old_id])?;
+                    }
+                }
+                Some(_) => {}
+                None => {
+                    let exists = tx
+                        .prepare_cached("SELECT 1 FROM songs WHERE id = ?1")?
+                        .query_row(params![song_id], |row| row.get::<_, i64>(0))
+                        .optional()?
+                        .is_some();
+                    if exists {
+                        tx.prepare_cached("UPDATE songs SET file_path = ?1 WHERE id = ?2")?
+                            .execute(params![track.file_path, song_id])?;
+                    } else {
+                        inserted += 1;
+                    }
+                }
+            }
+
+            tx.prepare_cached(
                     "INSERT INTO songs (id, title, album_id, file_path, file_size, file_modified, date, duration, track_number, lufs, image_checked)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0)
-                     ON CONFLICT(file_path) DO UPDATE SET
+                     ON CONFLICT(id) DO UPDATE SET
                         title = excluded.title,
                         album_id = excluded.album_id,
                         file_size = excluded.file_size,
@@ -768,12 +929,11 @@ impl Database {
                         duration = excluded.duration,
                         track_number = excluded.track_number,
                         lufs = excluded.lufs,
-                        image_checked = CASE WHEN ?11 THEN 0 ELSE songs.image_checked END
-                     RETURNING id",
+                        image_checked = CASE WHEN ?11 THEN 0 ELSE songs.image_checked END",
                 )?
-                .query_row(
+                .execute(
                     params![
-                        Cuid::new(),
+                        song_id,
                         track.title,
                         album_id,
                         track.file_path,
@@ -785,7 +945,6 @@ impl Database {
                         track.lufs,
                         track.recheck_image
                     ],
-                    |row| row.get(0),
                 )?;
 
             write_profile::add(&write_profile::SONG_NS, song_started);
@@ -827,7 +986,6 @@ impl Database {
             }
 
             write_profile::add(&write_profile::GENRE_NS, genres_started);
-            written += 1;
         }
 
         apply_majority_spellings(
@@ -836,7 +994,7 @@ impl Database {
             &touched_artists,
             "SELECT name, (SELECT COUNT(*) FROM songs_artists WHERE artist_id = ?1)
              FROM artists WHERE id = ?1",
-            "UPDATE OR IGNORE artists SET name = ?1 WHERE id = ?2",
+            "UPDATE OR IGNORE artists SET name = ?1 WHERE id = ?2 AND COALESCE(omm_id, '') = ''",
         )?;
         apply_majority_spellings(
             &tx,
@@ -862,37 +1020,7 @@ impl Database {
         if let Ok(meta) = std::fs::metadata(format!("{}-wal", self.path.display())) {
             write_profile::WAL_BYTES.store(meta.len(), std::sync::atomic::Ordering::Relaxed);
         }
-        Ok(written)
-    }
-
-    pub fn merge_case_duplicates(&self) -> Result<usize> {
-        let mut conn = self.conn.lock();
-        let tx = conn.transaction()?;
-        let mut merged = 0;
-
-        for kind in CASE_DUPLICATES {
-            let rows: Vec<(Cuid, String)> = tx
-                .prepare_cached(kind.candidates_sql)?
-                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-                .collect::<rusqlite::Result<_>>()?;
-
-            let mut keeper: Option<(String, Cuid)> = None;
-            for (id, name) in rows {
-                let key = fold_name(&name);
-                match &keeper {
-                    Some((keeper_key, keeper_id)) if *keeper_key == key => {
-                        for sql in kind.merge_sql {
-                            tx.prepare_cached(sql)?.execute(params![keeper_id, id])?;
-                        }
-                        merged += 1;
-                    }
-                    _ => keeper = Some((key, id)),
-                }
-            }
-        }
-
-        tx.commit()?;
-        Ok(merged)
+        Ok(inserted)
     }
 
     pub fn delete_song(&self, id: &Cuid) -> Result<()> {
@@ -1156,17 +1284,14 @@ impl Database {
             let conn = self.conn.lock();
             return collect_mapped::<AlbumListRow, AlbumListItem, _>(
                 &conn,
-
-
-
-
                 "SELECT al.id, al.title,
                         (SELECT GROUP_CONCAT(name, ', ')
                          FROM (SELECT ar.name FROM albums_artists aa JOIN artists ar ON aa.artist_id = ar.id WHERE aa.album_id = al.id ORDER BY aa.position)) AS artist_name,
                         al.image_id,
                         (SELECT MIN(s.date) FROM songs s WHERE s.album_id = al.id) AS year
-                 FROM (SELECT id, title, image_id FROM albums
-                       ORDER BY title COLLATE NOCASE ASC
+                 FROM (SELECT a.id, a.title, a.image_id
+                       FROM albums a
+                       ORDER BY (SELECT MAX(s.rowid) FROM songs s WHERE s.album_id = a.id) DESC
                        LIMIT ?1 OFFSET ?2) al",
                 params![limit, offset],
                 AlbumListRow::from_row,
@@ -1246,7 +1371,7 @@ impl Database {
     }
 
     pub fn upsert_playlist_song(&self, playlist_id: &Cuid, song_id: &Cuid) -> Result<()> {
-        let id = Cuid::new();
+        let id = Cuid::for_playlist_song(playlist_id, song_id);
         let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO playlist_songs (id, playlist_id, song_id, position)
@@ -1520,23 +1645,19 @@ impl Database {
         let mut stmt = conn.prepare_cached(
             r#"
             WITH recent_songs AS (
-                SELECT s.id, s.title, s.album_id, s.image_id, s.date_added, s.date
+                SELECT s.rowid AS rowid, s.id, s.title, s.album_id, s.image_id, s.date_added, s.date
                 FROM songs s
-                ORDER BY s.date_added DESC
+                ORDER BY s.date_added DESC, s.rowid DESC
                 LIMIT ?1
             ),
             image_groups AS (
                 SELECT
-                    -- Falls through to the album before the song: grouping on
-                    -- image_id alone put every track of a not-yet-resolved
-                    -- album in its own group, turning the album tiles here into
-                    -- a flat list of songs.
                     COALESCE(rs.image_id, 'album_' || rs.album_id, 'no_image_' || rs.id) AS group_key,
                     rs.image_id,
                     rs.album_id,
-                    MAX(rs.date_added) AS most_recent_date,
+                    MAX(rs.rowid) AS latest_rowid,
                     COUNT(*) AS song_count,
-                    MIN(rs.id) AS first_song_id
+                    rs.id AS first_song_id
                 FROM recent_songs rs
                 GROUP BY group_key, rs.image_id, rs.album_id
             )
@@ -1553,7 +1674,7 @@ impl Database {
             FROM image_groups ig
             JOIN songs s ON ig.first_song_id = s.id
             LEFT JOIN albums al ON ig.album_id = al.id
-            ORDER BY ig.most_recent_date DESC
+            ORDER BY ig.latest_rowid DESC
             "#,
         )?;
         let rows = stmt
@@ -1778,7 +1899,8 @@ fn song_order(sort: SongSort, ascending: bool) -> &'static str {
                 "genres COLLATE NOCASE DESC, s.id ASC"
             }
         }
-        SongSort::Default => "s.date_added DESC, s.id ASC",
+
+        SongSort::Default => "s.date_added DESC, s.rowid DESC",
     }
 }
 
@@ -1812,7 +1934,9 @@ mod tests {
             artists: &[],
             genres: &[],
             album: None,
+            album_artist: None,
             file_path,
+            audio_hash: file_path,
             duration: 180,
             track_number: None,
             year: None,
@@ -1913,54 +2037,625 @@ mod tests {
         cleanup(&path);
     }
 
+    fn count(db: &Database, sql: &str) -> i64 {
+        db.conn.lock().query_row(sql, [], |row| row.get(0)).unwrap()
+    }
+
     #[test]
-    fn existing_case_duplicates_merge_into_the_most_used_row() {
-        let (db, path) = named_db("case_merge");
-        {
-            let conn = db.conn.lock();
-            conn.execute_batch(
-                "INSERT INTO artists (id, name, favorite) VALUES ('a_upper', 'Ellis', 0), ('a_lower', 'ellis', 1);
-                 INSERT INTO albums (id, title) VALUES ('al_upper', 'Night'), ('al_lower', 'night');
-                 INSERT INTO genres (id, name) VALUES ('g_upper', 'Pop'), ('g_lower', 'pop');
-                 INSERT INTO songs (id, title, album_id, file_path, duration) VALUES
-                    ('s1', 'One', 'al_upper', '/music/1.flac', 1),
-                    ('s2', 'Two', 'al_upper', '/music/2.flac', 1),
-                    ('s3', 'Three', 'al_lower', '/music/3.flac', 1);
-                 INSERT INTO songs_artists (song_id, artist_id, position) VALUES
-                    ('s1', 'a_upper', 0), ('s2', 'a_upper', 0), ('s3', 'a_lower', 0);
-                 INSERT INTO albums_artists (album_id, artist_id, position) VALUES
-                    ('al_upper', 'a_upper', 0), ('al_lower', 'a_lower', 0);
-                 INSERT INTO songs_genres (song_id, genre_id) VALUES
-                    ('s1', 'g_upper'), ('s2', 'g_upper'), ('s3', 'g_lower');",
+    fn a_moved_file_keeps_its_history() {
+        let (db, path) = named_db("song_move");
+        let playlist = Cuid::new();
+        db.upsert_playlist(&playlist, "Mix", None, None, false)
+            .unwrap();
+
+        db.upsert_tracks_batch(
+            &[BatchTrack {
+                audio_hash: "audio-1",
+                ..track("/music/old/1.flac", false)
+            }],
+            &mut ScanCache::default(),
+        )
+        .unwrap();
+        let old_id = song_id_for(&db, "/music/old/1.flac");
+        db.upsert_playlist_song(&playlist, &old_id).unwrap();
+        db.set_favorite::<Song>(&old_id, true).unwrap();
+        let context = db.insert_event_context(Some(&old_id), None).unwrap();
+
+        let added = db
+            .upsert_tracks_batch(
+                &[BatchTrack {
+                    audio_hash: "audio-1",
+                    ..track("/music/new/1.flac", false)
+                }],
+                &mut ScanCache::default(),
             )
             .unwrap();
-        }
 
-        assert_eq!(db.merge_case_duplicates().unwrap(), 3);
-        assert_eq!(db.merge_case_duplicates().unwrap(), 0);
+        assert_eq!(added, 0, "a relink is an update, not an addition");
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM songs"), 1);
+        assert!(db.get_song_by_path("/music/old/1.flac").unwrap().is_none());
+        let song = db.get_song_by_path("/music/new/1.flac").unwrap().unwrap();
+        assert_eq!(song.id, Cuid::for_song("audio-1", None));
+        assert!(song.favorite);
+        let tracks = db.get_playlist_songs(&playlist).unwrap();
+        assert_eq!(tracks.len(), 1);
+        assert_eq!(
+            db.get_event_context(&context).unwrap().unwrap().song_id,
+            Some(song.id)
+        );
+        cleanup(&path);
+    }
 
-        assert_eq!(artist_names(&db), vec!["Ellis".to_string()]);
-        let conn = db.conn.lock();
-        let count = |sql: &str| conn.query_row(sql, [], |row| row.get::<_, i64>(0)).unwrap();
-        assert_eq!(count("SELECT COUNT(*) FROM albums"), 1);
-        assert_eq!(count("SELECT COUNT(*) FROM genres"), 1);
+    #[test]
+    fn retagging_keeps_the_id() {
+        let (db, path) = named_db("song_identity");
+        db.upsert_tracks_batch(
+            &[BatchTrack {
+                audio_hash: "audio-2",
+                ..track("/music/a/2.flac", false)
+            }],
+            &mut ScanCache::default(),
+        )
+        .unwrap();
+        let id = song_id_for(&db, "/music/a/2.flac");
+
+        db.upsert_tracks_batch(
+            &[BatchTrack {
+                title: "Retitled",
+                audio_hash: "audio-2",
+                ..track("/music/a/2.flac", false)
+            }],
+            &mut ScanCache::default(),
+        )
+        .unwrap();
+        assert_eq!(song_id_for(&db, "/music/a/2.flac"), id);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn the_same_recording_on_two_albums_keeps_a_row_per_album() {
+        let (db, path) = named_db("song_shared_across_albums");
+        db.upsert_tracks_batch(
+            &[
+                BatchTrack {
+                    audio_hash: "shared",
+                    album: Some("Greatest Hits"),
+                    artists: &["Artist"],
+                    ..track("/music/best-of/1.flac", false)
+                },
+                BatchTrack {
+                    audio_hash: "shared",
+                    album: Some("Welcome to the Jungle, Vol. 2"),
+                    artists: &["Artist"],
+                    ..track("/music/comp2/1.flac", false)
+                },
+            ],
+            &mut ScanCache::default(),
+        )
+        .unwrap();
+
         assert_eq!(
-            count("SELECT COUNT(*) FROM songs WHERE album_id = 'al_upper'"),
-            3
+            count(&db, "SELECT COUNT(*) FROM songs"),
+            2,
+            "same recording, two different albums -- two rows"
         );
+        let best_of = db
+            .get_song_by_path("/music/best-of/1.flac")
+            .unwrap()
+            .unwrap()
+            .album_id
+            .unwrap();
+        let comp2 = db
+            .get_song_by_path("/music/comp2/1.flac")
+            .unwrap()
+            .unwrap()
+            .album_id
+            .unwrap();
+        assert_ne!(best_of, comp2);
+        assert_eq!(db.get_album_songs(&best_of).unwrap().len(), 1);
+        assert_eq!(db.get_album_songs(&comp2).unwrap().len(), 1);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn a_copy_with_identical_audio_in_the_same_album_still_collapses() {
+        let (db, path) = named_db("song_copy_same_album");
+        db.upsert_tracks_batch(
+            &[BatchTrack {
+                audio_hash: "dup",
+                album: Some("An Album"),
+                ..track("/music/a/1.flac", false)
+            }],
+            &mut ScanCache::default(),
+        )
+        .unwrap();
+
+        let added = db
+            .upsert_tracks_batch(
+                &[BatchTrack {
+                    audio_hash: "dup",
+                    album: Some("An Album"),
+                    ..track("/music/a/1-copy.flac", false)
+                }],
+                &mut ScanCache::default(),
+            )
+            .unwrap();
+
+        assert_eq!(added, 0, "same audio, same album -- still one song");
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM songs"), 1);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn a_copy_with_identical_audio_collapses_onto_one_row() {
+        let (db, path) = named_db("song_copy");
+        db.upsert_tracks_batch(
+            &[BatchTrack {
+                audio_hash: "audio-3",
+                ..track("/music/a/2.flac", false)
+            }],
+            &mut ScanCache::default(),
+        )
+        .unwrap();
+
+        let added = db
+            .upsert_tracks_batch(
+                &[BatchTrack {
+                    audio_hash: "audio-3",
+                    ..track("/music/b/2.flac", false)
+                }],
+                &mut ScanCache::default(),
+            )
+            .unwrap();
+
+        assert_eq!(added, 0, "identical audio is the same song, not a new one");
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM songs"), 1);
+        assert!(db.get_song_by_path("/music/a/2.flac").unwrap().is_none());
+        assert!(db.get_song_by_path("/music/b/2.flac").unwrap().is_some());
+        cleanup(&path);
+    }
+
+    #[test]
+    fn replaced_audio_at_the_same_path_gets_a_new_id_and_keeps_playlists() {
+        let (db, path) = named_db("song_replace");
+        let playlist = Cuid::new();
+        db.upsert_playlist(&playlist, "Mix", None, None, false)
+            .unwrap();
+        db.upsert_tracks_batch(
+            &[BatchTrack {
+                audio_hash: "before",
+                ..track("/music/3.flac", false)
+            }],
+            &mut ScanCache::default(),
+        )
+        .unwrap();
+        let before = song_id_for(&db, "/music/3.flac");
+        db.upsert_playlist_song(&playlist, &before).unwrap();
+
+        db.upsert_tracks_batch(
+            &[BatchTrack {
+                audio_hash: "after",
+                ..track("/music/3.flac", true)
+            }],
+            &mut ScanCache::default(),
+        )
+        .unwrap();
+        let after = song_id_for(&db, "/music/3.flac");
+        assert_ne!(before, after);
+        assert_eq!(after, Cuid::for_song("after", None));
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM songs"), 1);
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM playlist_songs"), 1);
+        assert_eq!(db.get_playlist_songs(&playlist).unwrap()[0].song.id, after);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn audio_replaced_to_match_another_cataloged_song_merges_into_it() {
+        let (db, path) = named_db("song_replace_collision");
+        db.upsert_tracks_batch(
+            &[
+                BatchTrack {
+                    audio_hash: "shared",
+                    ..track("/music/target.flac", false)
+                },
+                BatchTrack {
+                    audio_hash: "before",
+                    ..track("/music/source.flac", false)
+                },
+            ],
+            &mut ScanCache::default(),
+        )
+        .unwrap();
+        let target = song_id_for(&db, "/music/target.flac");
+        db.set_favorite::<Song>(&target, false).unwrap();
+        let source = song_id_for(&db, "/music/source.flac");
+        db.set_favorite::<Song>(&source, true).unwrap();
+
+        db.upsert_tracks_batch(
+            &[BatchTrack {
+                audio_hash: "shared",
+                ..track("/music/source.flac", true)
+            }],
+            &mut ScanCache::default(),
+        )
+        .unwrap();
+
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM songs"), 1);
+        assert!(db.get_song_by_path("/music/target.flac").unwrap().is_none());
+        let merged = db.get_song_by_path("/music/source.flac").unwrap().unwrap();
+        assert_eq!(merged.id, target);
+        assert!(merged.favorite, "favorite carries over from the merged row");
+        cleanup(&path);
+    }
+
+    #[test]
+    fn duplicates_within_a_single_batch_collapse_too() {
+        let (db, path) = named_db("song_copy_same_batch");
+        let added = db
+            .upsert_tracks_batch(
+                &[
+                    BatchTrack {
+                        audio_hash: "dup",
+                        ..track("/music/a/x.flac", false)
+                    },
+                    BatchTrack {
+                        audio_hash: "dup",
+                        ..track("/music/b/x.flac", false)
+                    },
+                ],
+                &mut ScanCache::default(),
+            )
+            .unwrap();
+        assert_eq!(added, 1, "one real song, one duplicate, in the same batch");
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM songs"), 1);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn duplicates_scattered_through_a_large_batch_still_collapse() {
+        let (db, path) = named_db("song_copy_large_batch");
+        let n = 600;
+        let paths: Vec<String> = (0..n).map(|i| format!("/music/{i}.flac")).collect();
+        let hashes: Vec<String> = (0..n)
+            .map(|i| match i {
+                5 => "dup".to_string(),
+                595 => "dup".to_string(),
+                _ => format!("hash-{i}"),
+            })
+            .collect();
+        let batch: Vec<BatchTrack<'_>> = (0..n)
+            .map(|i| BatchTrack {
+                audio_hash: &hashes[i],
+                ..track(&paths[i], false)
+            })
+            .collect();
+        let added = db
+            .upsert_tracks_batch(&batch, &mut ScanCache::default())
+            .unwrap();
+        assert_eq!(added, n - 1, "one pair should collapse into a single song");
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM songs"), (n - 1) as i64);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn default_song_order_breaks_same_second_ties_by_insertion_order() {
+        let (db, path) = named_db("song_recency");
+
+        db.upsert_tracks_batch(
+            &[
+                BatchTrack {
+                    audio_hash: "1",
+                    ..track("/music/1.flac", false)
+                },
+                BatchTrack {
+                    audio_hash: "2",
+                    ..track("/music/2.flac", false)
+                },
+                BatchTrack {
+                    audio_hash: "3",
+                    ..track("/music/3.flac", false)
+                },
+            ],
+            &mut ScanCache::default(),
+        )
+        .unwrap();
+
+        let songs = db.get_songs(None, SongSort::Default, false, 0, 10).unwrap();
+        let ids: Vec<Cuid> = songs.into_iter().map(|s| s.id).collect();
         assert_eq!(
-            count("SELECT COUNT(*) FROM songs_artists WHERE artist_id = 'a_upper'"),
-            3
+            ids,
+            [
+                song_id_for(&db, "/music/3.flac"),
+                song_id_for(&db, "/music/2.flac"),
+                song_id_for(&db, "/music/1.flac"),
+            ]
         );
+        cleanup(&path);
+    }
+
+    #[test]
+    fn recently_added_albums_come_first_by_default() {
+        let (db, path) = named_db("album_recency");
+        db.upsert_tracks_batch(
+            &[
+                BatchTrack {
+                    audio_hash: "1",
+                    album: Some("Old"),
+                    ..track("/music/old.flac", false)
+                },
+                BatchTrack {
+                    audio_hash: "2",
+                    album: Some("New"),
+                    ..track("/music/new.flac", false)
+                },
+            ],
+            &mut ScanCache::default(),
+        )
+        .unwrap();
+
+        let albums = db.get_albums("", 0, 10).unwrap();
+        let titles: Vec<&str> = albums.iter().map(|a| a.title.as_str()).collect();
+        assert_eq!(titles, ["New", "Old"]);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn recently_added_items_surfaces_the_newest_song_of_each_group() {
+        let (db, path) = named_db("recent_items");
+        db.upsert_tracks_batch(
+            &[
+                BatchTrack {
+                    audio_hash: "1",
+                    ..track("/music/1.flac", false)
+                },
+                BatchTrack {
+                    audio_hash: "2",
+                    ..track("/music/2.flac", false)
+                },
+            ],
+            &mut ScanCache::default(),
+        )
+        .unwrap();
+
+        let items = db.get_recently_added_items(10).unwrap();
+        assert_eq!(items.len(), 2, "each song has its own image group here");
+        let RecentItem::Song { id: first, .. } = &items[0] else {
+            panic!("expected a song item");
+        };
+        let RecentItem::Song { id: second, .. } = &items[1] else {
+            panic!("expected a song item");
+        };
+        assert_eq!(*first, song_id_for(&db, "/music/2.flac"));
+        assert_eq!(*second, song_id_for(&db, "/music/1.flac"));
+        cleanup(&path);
+    }
+
+    #[test]
+    fn retitling_an_album_drops_the_old_row_and_keeps_its_state() {
+        let (db, path) = named_db("album_retitle");
+        db.upsert_tracks_batch(
+            &[BatchTrack {
+                audio_hash: "1",
+                album: Some("Song - Single"),
+                ..track("/music/x.flac", false)
+            }],
+            &mut ScanCache::default(),
+        )
+        .unwrap();
+        let song = song_id_for(&db, "/music/x.flac");
+        let old_album = db
+            .get_song_by_path("/music/x.flac")
+            .unwrap()
+            .unwrap()
+            .album_id
+            .unwrap();
+        db.store_song_image(&song, "cover", Some(b"jpegbytes"))
+            .unwrap();
+        db.set_favorite::<Album>(&old_album, true).unwrap();
+        db.set_pinned::<Album>(&old_album, true).unwrap();
         assert_eq!(
-            count("SELECT COUNT(*) FROM songs_genres WHERE genre_id = 'g_upper'"),
-            3
+            db.get_album(&old_album)
+                .unwrap()
+                .unwrap()
+                .image_id
+                .as_deref(),
+            Some("cover")
         );
+
+        db.upsert_tracks_batch(
+            &[BatchTrack {
+                audio_hash: "1",
+                album: Some("Song"),
+                ..track("/music/x.flac", false)
+            }],
+            &mut ScanCache::default(),
+        )
+        .unwrap();
+
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM albums"), 1);
+        assert!(db.get_album(&old_album).unwrap().is_none());
+        let new_album = db
+            .get_song_by_path("/music/x.flac")
+            .unwrap()
+            .unwrap()
+            .album_id
+            .unwrap();
+        assert_ne!(new_album, old_album);
+        let album = db.get_album(&new_album).unwrap().unwrap();
+        assert_eq!(album.title, "Song");
+        assert_eq!(album.image_id.as_deref(), Some("cover"));
+        assert!(album.favorite, "favorite carries over from the renamed row");
+        assert!(album.pinned, "pinned carries over from the renamed row");
+        cleanup(&path);
+    }
+
+    #[test]
+    fn albums_with_the_same_title_split_by_album_artist() {
+        let (db, path) = named_db("album_artist");
+        db.upsert_tracks_batch(
+            &[
+                BatchTrack {
+                    album: Some("Greatest Hits"),
+                    artists: &["Queen"],
+                    ..track("/music/q.flac", false)
+                },
+                BatchTrack {
+                    album: Some("Greatest Hits"),
+                    artists: &["ABBA"],
+                    ..track("/music/a.flac", false)
+                },
+                BatchTrack {
+                    album: Some("greatest hits"),
+                    album_artist: Some("Queen"),
+                    artists: &["Queen", "David Bowie"],
+                    ..track("/music/q2.flac", false)
+                },
+            ],
+            &mut ScanCache::default(),
+        )
+        .unwrap();
+
+        let album_of = |p: &str| db.get_song_by_path(p).unwrap().unwrap().album_id.unwrap();
+        assert_ne!(album_of("/music/q.flac"), album_of("/music/a.flac"));
+        assert_eq!(album_of("/music/q.flac"), album_of("/music/q2.flac"));
         assert_eq!(
-            count("SELECT favorite FROM artists WHERE id = 'a_upper'"),
-            1
+            album_of("/music/q.flac"),
+            Cuid::for_album("Greatest Hits", "Queen")
         );
-        drop(conn);
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM albums"), 2);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn genres_and_artists_get_derived_ids() {
+        let (db, path) = named_db("derived_ids");
+        db.upsert_tracks_batch(
+            &[BatchTrack {
+                artists: &["Ellis"],
+                genres: &["Pop"],
+                ..track("/music/g.flac", false)
+            }],
+            &mut ScanCache::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            db.get_artist_by_name("Ellis").unwrap().unwrap().id,
+            Cuid::for_artist("ellis")
+        );
+        let genre: String = db
+            .conn
+            .lock()
+            .query_row("SELECT id FROM genres", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(genre, Cuid::for_genre("POP").into_string());
+        cleanup(&path);
+    }
+
+    #[test]
+    fn identified_artists_take_the_canonical_name_and_keep_matching_tags() {
+        let (db, path) = named_db("artist_metadata");
+        let mut cache = ScanCache::default();
+        db.upsert_tracks_batch(
+            &[
+                BatchTrack {
+                    artists: &["Beyonce"],
+                    ..track("/music/1.flac", false)
+                },
+                BatchTrack {
+                    artists: &["Beyoncé"],
+                    ..track("/music/2.flac", false)
+                },
+            ],
+            &mut cache,
+        )
+        .unwrap();
+
+        let by_name = |name: &str| db.get_artist_by_name(name).unwrap().unwrap().id;
+        let plain = by_name("Beyonce");
+        let accented = by_name("Beyoncé");
+        let metadata = ArtistMetadata {
+            omm_id: "omm:artist:0a1b2c3d4e5f6g7h",
+            name: "Beyoncé",
+            image: Some(("img", Some(b"jpeg"))),
+        };
+
+        assert_eq!(
+            db.store_artist_metadata(&plain, &metadata).unwrap(),
+            Some(accented.clone())
+        );
+        assert_eq!(artist_names(&db), vec!["Beyoncé".to_string()]);
+        assert!(db.artists_needing_metadata(10).unwrap().is_empty());
+
+        let mut cache = ScanCache::default();
+        db.upsert_tracks_batch(
+            &[
+                BatchTrack {
+                    artists: &["Beyonce"],
+                    ..track("/music/1.flac", false)
+                },
+                BatchTrack {
+                    artists: &["BEYONCE"],
+                    ..track("/music/3.flac", false)
+                },
+            ],
+            &mut cache,
+        )
+        .unwrap();
+
+        assert_eq!(artist_names(&db), vec!["Beyoncé".to_string()]);
+        let artist = db.get_artist(&accented).unwrap().unwrap();
+        assert_eq!(artist.image_id.as_deref(), Some("img"));
+        cleanup(&path);
+    }
+
+    #[test]
+    fn tag_artist_images_fill_gaps_but_never_replace_canonical_artwork() {
+        let (db, path) = named_db("artist_tag_image");
+        let mut cache = ScanCache::default();
+        db.upsert_tracks_batch(
+            &[BatchTrack {
+                artists: &["Lead", "Feature"],
+                ..track("/music/1.flac", false)
+            }],
+            &mut cache,
+        )
+        .unwrap();
+        let song = song_id_for(&db, "/music/1.flac");
+        let lead = db.get_artist_by_name("Lead").unwrap().unwrap().id;
+        let feature = db.get_artist_by_name("Feature").unwrap().unwrap().id;
+        let image_of = |id: &Cuid| db.get_artist(id).unwrap().unwrap().image_id;
+        let image_rows = || {
+            db.conn
+                .lock()
+                .query_row("SELECT COUNT(*) FROM images", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap()
+        };
+
+        assert!(db.song_lead_artist_needs_image(&song).unwrap());
+        db.store_song_artist_image(&song, "tag", Some(b"tag"))
+            .unwrap();
+        assert_eq!(image_of(&lead).as_deref(), Some("tag"));
+        assert_eq!(image_of(&feature), None);
+        assert!(!db.song_lead_artist_needs_image(&song).unwrap());
+
+        db.store_song_artist_image(&song, "other", Some(b"other"))
+            .unwrap();
+        assert_eq!(image_of(&lead).as_deref(), Some("tag"));
+        assert_eq!(image_rows(), 1);
+
+        db.store_artist_metadata(
+            &lead,
+            &ArtistMetadata {
+                omm_id: "omm:artist:0a1b2c3d4e5f6g7h",
+                name: "Lead",
+                image: Some(("omm", Some(b"omm"))),
+            },
+        )
+        .unwrap();
+        assert_eq!(image_of(&lead).as_deref(), Some("omm"));
+        assert_eq!(image_rows(), 1);
         cleanup(&path);
     }
 
@@ -2140,7 +2835,9 @@ mod tests {
                         artists: &artists[slot],
                         genres: &[],
                         album: Some(&album_names[i % album_names.len()]),
+                        album_artist: None,
                         file_path: &paths[i],
+                        audio_hash: &paths[i],
                         duration: 180,
                         track_number: None,
                         year: None,
@@ -2339,7 +3036,9 @@ genres {g:?}, commit {c:?}, wal {}MB",
                     artists: &artists[slot],
                     genres: &[],
                     album: Some(&albums[i % albums_count]),
+                    album_artist: None,
                     file_path: &paths[i],
+                    audio_hash: &paths[i],
                     duration: 180 + (i as i32 % 300),
                     track_number: Some((i as i32 % 20) + 1),
                     year: Some(2000 + (i as i32 % 24)),

@@ -1,5 +1,4 @@
 use gpui::*;
-use sha2::{Digest, Sha256};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -8,6 +7,7 @@ use crate::ui::assets::{ImageRequest, cover_uri};
 use crate::{
     data::{
         db::repo::Database,
+        metadata::image_id_for,
         models::{Cuid, Playlist, PlaylistTrack},
     },
     media::{
@@ -531,13 +531,7 @@ fn open_image_picker(
                     &mut std::io::Cursor::new(&mut out),
                     image::ImageFormat::Jpeg,
                 )?;
-                let mut hasher = Sha256::new();
-                hasher.update(&out);
-                let image_id = hasher
-                    .finalize()
-                    .iter()
-                    .map(|b| format!("{:02x}", b))
-                    .collect::<String>();
+                let image_id = image_id_for(&out);
                 anyhow::Ok((image_id, out))
             })
             .await;

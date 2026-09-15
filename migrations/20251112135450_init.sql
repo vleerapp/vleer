@@ -20,11 +20,17 @@ CREATE TABLE IF NOT EXISTS songs (
 );
 CREATE TABLE IF NOT EXISTS artists (
     id TEXT PRIMARY KEY,
+    omm_id TEXT,
     name TEXT UNIQUE NOT NULL,
     image_id TEXT,
     favorite BOOLEAN DEFAULT FALSE,
     pinned BOOLEAN DEFAULT FALSE,
     FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE SET NULL
+);
+CREATE TABLE IF NOT EXISTS artist_aliases (
+    name TEXT PRIMARY KEY COLLATE NOCASE,
+    artist_id TEXT NOT NULL,
+    FOREIGN KEY (artist_id) REFERENCES artists(id) ON DELETE CASCADE
 );
 CREATE TABLE IF NOT EXISTS albums (
     id TEXT PRIMARY KEY,
@@ -59,7 +65,7 @@ CREATE TABLE IF NOT EXISTS playlist_songs (
     position INTEGER NOT NULL,
     date_added TEXT DEFAULT (DATETIME('now')),
     FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE,
-    FOREIGN KEY (song_id) REFERENCES songs(id) ON DELETE CASCADE
+    FOREIGN KEY (song_id) REFERENCES songs(id) ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE TABLE IF NOT EXISTS events (
     id TEXT PRIMARY KEY,
@@ -75,7 +81,7 @@ CREATE TABLE IF NOT EXISTS event_contexts (
     song_id TEXT,
     playlist_id TEXT,
     date_created TEXT DEFAULT (DATETIME('now')),
-    FOREIGN KEY (song_id) REFERENCES songs(id) ON DELETE CASCADE,
+    FOREIGN KEY (song_id) REFERENCES songs(id) ON DELETE CASCADE ON UPDATE CASCADE,
     FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE
 );
 CREATE TABLE IF NOT EXISTS images (
@@ -92,7 +98,7 @@ CREATE TABLE IF NOT EXISTS songs_genres (
     song_id TEXT NOT NULL,
     genre_id TEXT NOT NULL,
     PRIMARY KEY (song_id, genre_id),
-    FOREIGN KEY (song_id) REFERENCES songs(id) ON DELETE CASCADE,
+    FOREIGN KEY (song_id) REFERENCES songs(id) ON DELETE CASCADE ON UPDATE CASCADE,
     FOREIGN KEY (genre_id) REFERENCES genres(id) ON DELETE CASCADE
 );
 CREATE TABLE IF NOT EXISTS songs_artists (
@@ -100,7 +106,7 @@ CREATE TABLE IF NOT EXISTS songs_artists (
     artist_id TEXT NOT NULL,
     position INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (song_id, artist_id),
-    FOREIGN KEY (song_id) REFERENCES songs(id) ON DELETE CASCADE,
+    FOREIGN KEY (song_id) REFERENCES songs(id) ON DELETE CASCADE ON UPDATE CASCADE,
     FOREIGN KEY (artist_id) REFERENCES artists(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_songs_genres_song ON songs_genres(song_id);
@@ -125,8 +131,9 @@ CREATE INDEX IF NOT EXISTS idx_images_date_created ON images(date_created);
 CREATE INDEX IF NOT EXISTS idx_songs_image_id ON songs(image_id);
 CREATE INDEX IF NOT EXISTS idx_albums_image_id ON albums(image_id);
 CREATE INDEX IF NOT EXISTS idx_artists_image_id ON artists(image_id);
+CREATE INDEX IF NOT EXISTS idx_artists_omm_id ON artists(omm_id);
+CREATE INDEX IF NOT EXISTS idx_artist_aliases_artist ON artist_aliases(artist_id);
 CREATE INDEX IF NOT EXISTS idx_playlists_image_id ON playlists(image_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_albums_title ON albums(title);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_songs_file_path_unique ON songs(file_path);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_playlist_songs_unique ON playlist_songs(playlist_id, song_id);
 CREATE INDEX IF NOT EXISTS idx_artists_name ON artists(name);
@@ -134,17 +141,35 @@ CREATE INDEX IF NOT EXISTS idx_albums_title ON albums(title);
 CREATE INDEX IF NOT EXISTS idx_songs_title ON songs(title);
 CREATE INDEX IF NOT EXISTS idx_songs_album_id ON songs(album_id, id);
 CREATE INDEX IF NOT EXISTS idx_playlists_name ON playlists(name);
-CREATE INDEX IF NOT EXISTS idx_songs_date_added ON songs(date_added DESC, id ASC);
+CREATE INDEX IF NOT EXISTS idx_songs_date_added ON songs(date_added);
 CREATE INDEX IF NOT EXISTS idx_songs_album_image ON songs(album_id, image_checked);
--- The list views all sort case-insensitively, which a binary-collated index
--- cannot serve: without these every page sorts the whole table before taking
--- its twenty rows.
 CREATE INDEX IF NOT EXISTS idx_albums_title_nocase ON albums(title COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_artists_name_nocase ON artists(name COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_songs_title_nocase ON songs(title COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_playlists_name_nocase ON playlists(name COLLATE NOCASE);
 CREATE TRIGGER IF NOT EXISTS delete_album_trigger
 AFTER DELETE ON songs BEGIN
+DELETE FROM albums
+WHERE albums.id = OLD.album_id
+    AND NOT EXISTS (
+        SELECT 1
+        FROM songs
+        WHERE songs.album_id = OLD.album_id
+    );
+END;
+CREATE TRIGGER IF NOT EXISTS rename_album_and_delete_orphan
+AFTER UPDATE OF album_id ON songs
+WHEN OLD.album_id IS NOT NULL AND OLD.album_id IS NOT NEW.album_id BEGIN
+UPDATE albums
+SET image_id = COALESCE(image_id, (SELECT image_id FROM albums WHERE id = OLD.album_id)),
+    favorite = MAX(favorite, (SELECT favorite FROM albums WHERE id = OLD.album_id)),
+    pinned = MAX(pinned, (SELECT pinned FROM albums WHERE id = OLD.album_id))
+WHERE id = NEW.album_id
+    AND NOT EXISTS (
+        SELECT 1
+        FROM songs
+        WHERE songs.album_id = OLD.album_id
+    );
 DELETE FROM albums
 WHERE albums.id = OLD.album_id
     AND NOT EXISTS (
@@ -252,6 +277,35 @@ WHERE id = OLD.image_id
 END;
 CREATE TRIGGER IF NOT EXISTS delete_replaced_song_image
 AFTER UPDATE OF image_id ON songs WHEN OLD.image_id IS NOT NULL
+    AND (
+        NEW.image_id IS NULL
+        OR NEW.image_id <> OLD.image_id
+    ) BEGIN
+DELETE FROM images
+WHERE id = OLD.image_id
+    AND NOT EXISTS (
+        SELECT 1
+        FROM artists
+        WHERE image_id = OLD.image_id
+    )
+    AND NOT EXISTS (
+        SELECT 1
+        FROM albums
+        WHERE image_id = OLD.image_id
+    )
+    AND NOT EXISTS (
+        SELECT 1
+        FROM songs
+        WHERE image_id = OLD.image_id
+    )
+    AND NOT EXISTS (
+        SELECT 1
+        FROM playlists
+        WHERE image_id = OLD.image_id
+    );
+END;
+CREATE TRIGGER IF NOT EXISTS delete_replaced_artist_image
+AFTER UPDATE OF image_id ON artists WHEN OLD.image_id IS NOT NULL
     AND (
         NEW.image_id IS NULL
         OR NEW.image_id <> OLD.image_id

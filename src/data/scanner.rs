@@ -17,7 +17,7 @@ use walkdir::WalkDir;
 
 use crate::data::config::Config;
 use crate::data::db::repo::{BatchTrack, Database, ScanCache};
-use crate::data::metadata::{AudioMetadata, read_metadata};
+use crate::data::metadata::{AudioMetadata, read_track};
 use crate::data::telemetry::Telemetry;
 use crate::ui::components::context_menu::{BackgroundUiEvent, BackgroundUiNotifier};
 use crate::ui::layout::navbar;
@@ -64,6 +64,7 @@ pub struct ScannedTrack {
     pub file_size: i64,
     pub file_modified: i64,
     pub metadata: AudioMetadata,
+    pub audio_hash: String,
     pub recheck_image: bool,
 }
 
@@ -487,18 +488,6 @@ impl Scanner {
         let mut skipped = 0;
         let mut failed = 0;
 
-        match db.merge_case_duplicates() {
-            Ok(0) => {}
-            Ok(merged) => {
-                info!("Merged {} case-insensitive duplicate(s)", merged);
-                db.rebuild_search_index();
-                if let Some(ref ui) = self.background_ui {
-                    ui.notify(BackgroundUiEvent::LibraryDataChanged);
-                }
-            }
-            Err(e) => error!("Failed to merge case-insensitive duplicates: {}", e),
-        }
-
         let walk_started = Instant::now();
         let audio_files = self.collect_audio_files().await?;
         let walk_time = walk_started.elapsed();
@@ -552,7 +541,7 @@ impl Scanner {
         let mut read_time = Duration::ZERO;
         let mut write_time = Duration::ZERO;
         let mut cache = ScanCache::default();
-        let mut pending: Vec<(ScannedTrack, bool)> = Vec::with_capacity(DB_FLUSH_SIZE);
+        let mut pending: Vec<ScannedTrack> = Vec::with_capacity(DB_FLUSH_SIZE);
         let mut last_ui_refresh = Instant::now();
         let mut last_progress = Instant::now();
         let mut dirty = false;
@@ -580,9 +569,9 @@ impl Scanner {
 
             for outcome in outcomes {
                 match outcome {
-                    Some((_, _, true)) => failed += 1,
-                    Some((Some(track), is_new, _)) => pending.push((track, is_new)),
-                    Some((None, _, _)) => skipped += 1,
+                    Some((_, true)) => failed += 1,
+                    Some((Some(track), _)) => pending.push(track),
+                    Some((None, _)) => skipped += 1,
                     None => skipped += 1,
                 }
             }
@@ -730,6 +719,7 @@ impl Scanner {
         }
         if result.is_ok() && !self.is_cancelled() {
             self.spawn_image_warm_pass(db);
+            self.spawn_metadata_warm_pass(db);
         }
         result
     }
@@ -756,6 +746,33 @@ impl Scanner {
             .detach();
     }
 
+    fn spawn_metadata_warm_pass(&self, db: &Database) {
+        let db = db.clone();
+        let cancel = self.warm_cancel.clone();
+        let background_ui = self.background_ui.clone();
+
+        self.executor
+            .spawn(async move {
+                let started = Instant::now();
+                let resolved =
+                    crate::data::openmusicmetadata::warm_artist_metadata(db.clone(), cancel).await;
+
+                if resolved > 0 {
+                    info!(
+                        "Resolved metadata for {} artist(s) in {:?}",
+                        resolved,
+                        started.elapsed()
+                    );
+                    db.rebuild_search_index();
+                    if let Some(ui) = background_ui {
+                        ui.notify(BackgroundUiEvent::LibraryDataChanged);
+                        ui.notify(BackgroundUiEvent::HomeDataChanged);
+                    }
+                }
+            })
+            .detach();
+    }
+
     pub async fn scan(&self, db: &Database) -> Result<ScanStats> {
         self.run_scan(db, ScanOptions::default()).await
     }
@@ -770,7 +787,7 @@ impl Scanner {
         changed_paths: Vec<PathBuf>,
     ) -> Result<ScanStats> {
         let mut cache = ScanCache::default();
-        let mut pending: Vec<(ScannedTrack, bool)> = Vec::new();
+        let mut pending: Vec<ScannedTrack> = Vec::new();
 
         for path in changed_paths {
             if !path.is_file() || !Self::is_audio_file(&path) {
@@ -798,8 +815,6 @@ impl Scanner {
                 .ok()
                 .flatten();
 
-            let is_new = existing.is_none();
-
             if let Some(existing) = existing
                 && existing.file_size == file_size
                 && existing.file_modified == file_modified
@@ -807,25 +822,22 @@ impl Scanner {
                 continue;
             }
 
-            let metadata = match read_metadata(&path) {
-                Ok(metadata) => metadata,
+            let (metadata, audio_hash) = match read_track(&path) {
+                Ok(track) => track,
                 Err(e) => {
                     warn!("Failed to read metadata from {:?}: {}", path, e);
                     continue;
                 }
             };
 
-            pending.push((
-                ScannedTrack {
-                    path,
-                    file_size,
-                    file_modified,
-                    metadata,
-
-                    recheck_image: true,
-                },
-                is_new,
-            ));
+            pending.push(ScannedTrack {
+                path,
+                file_size,
+                file_modified,
+                metadata,
+                audio_hash,
+                recheck_image: true,
+            });
         }
 
         let (added, updated) = self.flush_batch(db, &pending, &mut cache)?;
@@ -921,7 +933,7 @@ impl Scanner {
     fn flush_batch(
         &self,
         db: &Database,
-        tracks: &[(ScannedTrack, bool)],
+        tracks: &[ScannedTrack],
         cache: &mut ScanCache,
     ) -> Result<(usize, usize)> {
         if tracks.is_empty() {
@@ -930,28 +942,30 @@ impl Scanner {
 
         let paths: Vec<String> = tracks
             .iter()
-            .map(|(track, _)| track.path.to_string_lossy().into_owned())
+            .map(|track| track.path.to_string_lossy().into_owned())
             .collect();
         let artists: Vec<Vec<&str>> = tracks
             .iter()
-            .map(|(track, _)| track.metadata.artists.iter().map(|s| s.as_str()).collect())
+            .map(|track| track.metadata.artists.iter().map(|s| s.as_str()).collect())
             .collect();
         let genres: Vec<Vec<&str>> = tracks
             .iter()
-            .map(|(track, _)| track.metadata.genres.iter().map(|s| s.as_str()).collect())
+            .map(|track| track.metadata.genres.iter().map(|s| s.as_str()).collect())
             .collect();
 
         let batch: Vec<BatchTrack<'_>> = tracks
             .iter()
             .enumerate()
-            .map(|(i, (track, _))| {
+            .map(|(i, track)| {
                 let meta = &track.metadata;
                 BatchTrack {
                     title: meta.title.as_deref().unwrap_or("Unknown"),
                     artists: &artists[i],
                     genres: &genres[i],
                     album: meta.album.as_deref(),
+                    album_artist: meta.album_artist.as_deref(),
                     file_path: &paths[i],
+                    audio_hash: &track.audio_hash,
                     duration: meta.duration.as_secs() as i32,
                     track_number: meta.track_number.map(|n| n as i32),
                     year: meta.year,
@@ -963,9 +977,7 @@ impl Scanner {
             })
             .collect();
 
-        db.upsert_tracks_batch(&batch, cache)?;
-
-        let added = tracks.iter().filter(|(_, is_new)| *is_new).count();
+        let added = db.upsert_tracks_batch(&batch, cache)?;
         Ok((added, tracks.len() - added))
     }
 }
@@ -974,12 +986,12 @@ fn process_one_file(
     path: &Path,
     existing_track_state: &HashMap<String, (i64, i64)>,
     force: bool,
-) -> Option<(Option<ScannedTrack>, bool, bool)> {
+) -> Option<(Option<ScannedTrack>, bool)> {
     let file_meta = match std::fs::metadata(path) {
         Ok(meta) => meta,
         Err(e) => {
             warn!("Failed to read metadata for {:?}: {}", path, e);
-            return Some((None, false, true));
+            return Some((None, true));
         }
     };
 
@@ -994,7 +1006,6 @@ fn process_one_file(
     let existing = existing_track_state
         .get(path.to_string_lossy().as_ref())
         .copied();
-    let is_new = existing.is_none();
 
     let identity_changed = match existing {
         Some((existing_size, existing_modified)) => {
@@ -1012,14 +1023,14 @@ fn process_one_file(
             force,
         )
     {
-        return Some((None, false, false));
+        return Some((None, false));
     }
 
-    let metadata = match read_metadata(path) {
-        Ok(metadata) => metadata,
+    let (metadata, audio_hash) = match read_track(path) {
+        Ok(track) => track,
         Err(e) => {
             warn!("Failed to read metadata for {:?}: {}", path, e);
-            return Some((None, false, true));
+            return Some((None, true));
         }
     };
 
@@ -1029,9 +1040,9 @@ fn process_one_file(
             file_size,
             file_modified,
             metadata,
+            audio_hash,
             recheck_image: identity_changed,
         }),
-        is_new,
         false,
     ))
 }
@@ -1175,6 +1186,81 @@ mod tests {
     use std::io::BufReader;
     use std::sync::atomic::AtomicUsize;
     use std::time::Instant;
+
+    #[test]
+    #[ignore]
+    fn reproduce_real_scan_stats() {
+        let root = std::env::var("VLEER_BENCH_DIR").expect("set VLEER_BENCH_DIR");
+        let mut files: Vec<PathBuf> = WalkDir::new(&root)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file() && Scanner::is_audio_file(e.path()))
+            .map(|e| e.path().to_path_buf())
+            .collect();
+        files.sort();
+
+        let empty = HashMap::new();
+        let tracks: Vec<ScannedTrack> = files
+            .iter()
+            .filter_map(|p| process_one_file(p, &empty, true))
+            .filter_map(|(t, _)| t)
+            .collect();
+
+        let db_path =
+            std::path::PathBuf::from(format!("/tmp/vleer_repro_{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(format!("{}-wal", db_path.display()));
+        let _ = std::fs::remove_file(format!("{}-shm", db_path.display()));
+        let db = Database::new(&db_path).unwrap();
+
+        let paths: Vec<String> = tracks
+            .iter()
+            .map(|t| t.path.to_string_lossy().into_owned())
+            .collect();
+        let artists: Vec<Vec<&str>> = tracks
+            .iter()
+            .map(|t| t.metadata.artists.iter().map(|s| s.as_str()).collect())
+            .collect();
+        let genres: Vec<Vec<&str>> = tracks
+            .iter()
+            .map(|t| t.metadata.genres.iter().map(|s| s.as_str()).collect())
+            .collect();
+        let batch: Vec<BatchTrack<'_>> = tracks
+            .iter()
+            .enumerate()
+            .map(|(i, t)| BatchTrack {
+                title: t.metadata.title.as_deref().unwrap_or("Unknown"),
+                artists: &artists[i],
+                genres: &genres[i],
+                album: t.metadata.album.as_deref(),
+                album_artist: t.metadata.album_artist.as_deref(),
+                file_path: &paths[i],
+                audio_hash: &t.audio_hash,
+                duration: t.metadata.duration.as_secs() as i32,
+                track_number: t.metadata.track_number.map(|n| n as i32),
+                year: t.metadata.year,
+                recheck_image: t.recheck_image,
+                file_size: t.file_size,
+                file_modified: t.file_modified,
+                lufs: t.metadata.lufs,
+            })
+            .collect();
+
+        let added = db
+            .upsert_tracks_batch(&batch, &mut ScanCache::default())
+            .unwrap();
+        let real_count = db.get_songs_count(None).unwrap();
+        println!(
+            "files: {}, tracks read: {}, added: {}, rows in db: {}",
+            files.len(),
+            tracks.len(),
+            added,
+            real_count
+        );
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(format!("{}-wal", db_path.display()));
+        let _ = std::fs::remove_file(format!("{}-shm", db_path.display()));
+    }
 
     fn bench_files() -> Vec<PathBuf> {
         let root = std::env::var("VLEER_BENCH_DIR").expect("set VLEER_BENCH_DIR");
