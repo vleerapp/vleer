@@ -141,3 +141,4 @@ template = "assets/windows/main.wxs"
 
 [patch.crates-io]
 xcb = { git = "https://github.com/rust-x-bindings/rust-xcb" }
+gpui-apple-gpui-unofficial = { git = "https://github.com/iamnbutler/gpui-unofficial", rev = "d86a20dcf11a0dab2674fa142de3ed0eed01d9eb" }

@@ -2821,8 +2821,7 @@ dependencies = [
 [[package]]
 name = "gpui-apple-gpui-unofficial"
 version = "1.19.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "673ce22646355caf876473b8469a7d1c2fc573e8f1781bbfabe5241d047e7d63"
+source = "git+https://github.com/iamnbutler/gpui-unofficial?rev=d86a20dcf11a0dab2674fa142de3ed0eed01d9eb#d86a20dcf11a0dab2674fa142de3ed0eed01d9eb"
 dependencies = [
  "anyhow",
  "block",
