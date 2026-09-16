@@ -725,7 +725,7 @@ impl Database {
         song_id: &Cuid,
         image_id: &str,
         data: Option<&[u8]>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let mut conn = self.image_write_conn.lock();
         let tx = conn.transaction()?;
 
@@ -748,7 +748,7 @@ impl Database {
         if updated > 0 {
             tx.commit()?;
         }
-        Ok(())
+        Ok(updated > 0)
     }
 
     pub fn artists_needing_metadata(&self, limit: i64) -> Result<Vec<(Cuid, String)>> {

@@ -729,6 +729,7 @@ impl Scanner {
 
         let db = db.clone();
         let cancel = self.warm_cancel.clone();
+        let background_ui = self.background_ui.clone();
 
         self.executor
             .spawn(async move {
@@ -737,10 +738,14 @@ impl Scanner {
 
                 if resolved > 0 {
                     info!(
-                        "Resolved {} cover image(s) in {:?}",
+                        "Resolved {} cover/artist image(s) in {:?}",
                         resolved,
                         started.elapsed()
                     );
+                    if let Some(ui) = background_ui {
+                        ui.notify(BackgroundUiEvent::LibraryDataChanged);
+                        ui.notify(BackgroundUiEvent::HomeDataChanged);
+                    }
                 }
             })
             .detach();
@@ -754,8 +759,7 @@ impl Scanner {
         self.executor
             .spawn(async move {
                 let started = Instant::now();
-                let resolved =
-                    crate::data::openmusicmetadata::warm_artist_metadata(db.clone(), cancel).await;
+                let resolved = crate::data::omm::warm_artist_metadata(db.clone(), cancel).await;
 
                 if resolved > 0 {
                     info!(

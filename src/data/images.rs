@@ -115,48 +115,73 @@ where
 }
 
 pub async fn resolve_song_image(db: Database, song_id: Cuid) -> Result<String> {
-    let target = db
-        .song_image_target(&song_id)?
-        .ok_or_else(|| anyhow!("song {song_id} not found"))?;
+    resolve_song_and_artist_image(db, song_id).await.0
+}
+
+async fn resolve_song_and_artist_image(db: Database, song_id: Cuid) -> (Result<String>, bool) {
+    let target = match db.song_image_target(&song_id) {
+        Ok(Some(target)) => target,
+        Ok(None) => return (Err(anyhow!("song {song_id} not found")), false),
+        Err(e) => return (Err(e), false),
+    };
 
     if let Some(image_id) = target.image_id {
-        return Ok(image_id);
+        return (Ok(image_id), false);
     }
     if target.image_checked {
-        return Err(anyhow!(NO_IMAGE));
+        return (Err(anyhow!(NO_IMAGE)), false);
     }
 
     let path = target.file_path.clone();
     let images = {
         let _permit = io_limit().acquire().await;
-        io_spawn(move || read_tag_images(Path::new(&path)))
+        match io_spawn(move || read_tag_images(Path::new(&path)))
             .await
-            .map_err(|_| anyhow!("image read cancelled"))??
+            .map_err(|_| anyhow!("image read cancelled"))
+        {
+            Ok(Ok(images)) => images,
+            Ok(Err(e)) | Err(e) => return (Err(e), false),
+        }
     };
 
-    if let Some(raw) = images.artist
-        && let Err(e) = store_song_artist_image(db.clone(), song_id.clone(), raw).await
-    {
-        debug!("artist image from song {song_id} not stored: {e}");
-    }
+    let artist_stored = match images.artist {
+        Some(raw) => match store_song_artist_image(db.clone(), song_id.clone(), raw).await {
+            Ok(stored) => stored,
+            Err(e) => {
+                debug!("artist image from song {song_id} not stored: {e}");
+                false
+            }
+        },
+        None => false,
+    };
 
     let Some(raw) = images.cover else {
         let db_for_mark = db.clone();
         let mark_song = song_id.clone();
-        write_with_retry(move || db_for_mark.mark_song_image_missing(&mark_song)).await?;
-        return Err(anyhow!(NO_IMAGE));
+        if let Err(e) =
+            write_with_retry(move || db_for_mark.mark_song_image_missing(&mark_song)).await
+        {
+            return (Err(e), artist_stored);
+        }
+        return (Err(anyhow!(NO_IMAGE)), artist_stored);
     };
 
-    let (image_id, encoded) = prepare_image(&db, raw).await?;
+    let (image_id, encoded) = match prepare_image(&db, raw).await {
+        Ok(result) => result,
+        Err(e) => return (Err(e), artist_stored),
+    };
 
     let db_for_store = db.clone();
     let (store_song, store_id) = (song_id.clone(), image_id.clone());
-    write_with_retry(move || {
+    if let Err(e) = write_with_retry(move || {
         db_for_store.store_song_image(&store_song, &store_id, encoded.as_deref())
     })
-    .await?;
+    .await
+    {
+        return (Err(e), artist_stored);
+    }
 
-    Ok(image_id)
+    (Ok(image_id), artist_stored)
 }
 
 pub(crate) async fn prepare_image(
@@ -178,9 +203,9 @@ pub(crate) async fn prepare_image(
     Ok((image_id, Some(encoded)))
 }
 
-async fn store_song_artist_image(db: Database, song_id: Cuid, raw: Vec<u8>) -> Result<()> {
+async fn store_song_artist_image(db: Database, song_id: Cuid, raw: Vec<u8>) -> Result<bool> {
     if !db.song_lead_artist_needs_image(&song_id)? {
-        return Ok(());
+        return Ok(false);
     }
 
     let (image_id, encoded) = prepare_image(&db, raw).await?;
@@ -210,7 +235,8 @@ pub async fn warm_images(db: Database, cancel: Arc<AtomicBool>) -> usize {
                 return resolved;
             }
 
-            if resolve_song_image(db.clone(), song_id).await.is_ok() {
+            let (cover, artist_stored) = resolve_song_and_artist_image(db.clone(), song_id).await;
+            if cover.is_ok() || artist_stored {
                 resolved += 1;
             }
         }
