@@ -195,14 +195,17 @@ fn pinned_item(
     };
 
     let cover_element = {
-        let container = div()
-            .size_full()
-            .bg(variables.border)
-            .children(uri.map(|uri| {
-                img(format!("{uri}?size=36"))
-                    .size_full()
-                    .object_fit(ObjectFit::Cover)
-            }));
+        let image = uri.map(|uri| {
+            let element = img(format!("{uri}?size=36"))
+                .size_full()
+                .object_fit(ObjectFit::Cover);
+            if is_artist {
+                element.rounded_full().into_any_element()
+            } else {
+                element.into_any_element()
+            }
+        });
+        let container = div().size_full().bg(variables.border).children(image);
         if is_artist {
             container.rounded_full().into_any_element()
         } else {
