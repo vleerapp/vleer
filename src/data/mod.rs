@@ -5,7 +5,7 @@ pub mod ids;
 pub mod images;
 pub mod metadata;
 pub mod models;
-pub mod openmusicmetadata;
+pub mod omm;
 pub mod scanner;
 pub mod search;
 pub mod telemetry;
