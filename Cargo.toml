@@ -10,8 +10,8 @@ license = "AGPL-3.0"
 categories = ["multimedia::audio"]
 
 [dependencies]
-gpui = { package = "gpui-unofficial", version = "1.18.1" }
-gpui-platform-gpui-unofficial = { version = "1.15.0", features = [
+gpui = { package = "gpui-unofficial", version = "1.19.2" }
+gpui-platform-gpui-unofficial = { version = "1.19.2", features = [
   "font-kit",
   "x11",
   "wayland",
@@ -54,7 +54,7 @@ sequoia-openpgp = { version = "2.4.1", default-features = false, features = [
   "allow-experimental-crypto",
   "allow-variable-time-crypto",
 ] }
-spectrum-analyzer = "1.9.0"
+spectrum-analyzer = "2.0.0"
 discord-rich-presence = "1.1.0"
 rand = "0.10.2"
 raw-window-handle = "0.6.2"
