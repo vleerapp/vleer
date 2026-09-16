@@ -98,6 +98,8 @@ Download the installer for [ARM64](https://api.vleer.app/downloads/v1?os=windows
 
 If Microsoft Defender SmartScreen appears, select **More info**, then **Run anyway**.
 
+# 
+
 ### Verifying downloads
 
 Optional. Import the signing key (fingerprint `7E48 1786 6409 4A19 EF60  EEC8 8524 0717 1261 C8A4`):
