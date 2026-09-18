@@ -5,15 +5,114 @@ use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::picture::PictureType;
 use lofty::probe::Probe;
 use lofty::tag::{Accessor, ItemKey, Tag};
+use std::cell::RefCell;
 use std::fs::File;
-use std::io::{BufReader, Cursor};
+use std::io::{self, BufReader, Cursor, Read, Seek, SeekFrom};
 use std::path::Path;
+use std::rc::Rc;
 use std::time::Duration;
 
 use crate::data::fingerprint::audio_fingerprint;
 use crate::data::models::Cuid;
 
 const PROBE_BUFFER_CAPACITY: usize = 64 * 1024;
+
+const BLOCK_SIZE: usize = 256 * 1024;
+const MAX_BLOCKS: usize = 2;
+
+struct BlockCache {
+    file: File,
+    len: u64,
+    blocks: Vec<(u64, Vec<u8>)>,
+}
+
+impl BlockCache {
+    fn open(path: &Path) -> Result<Rc<RefCell<Self>>> {
+        let file = File::open(path).with_context(|| format!("Failed to open {:?}", path))?;
+        let len = file
+            .metadata()
+            .with_context(|| format!("Failed to stat {:?}", path))?
+            .len();
+        Ok(Rc::new(RefCell::new(Self {
+            file,
+            len,
+            blocks: Vec::new(),
+        })))
+    }
+
+    fn reader(cache: &Rc<RefCell<Self>>) -> BlockCacheReader {
+        let len = cache.borrow().len;
+        BlockCacheReader {
+            cache: cache.clone(),
+            len,
+            pos: 0,
+        }
+    }
+
+    fn read_at(&mut self, pos: u64, buf: &mut [u8]) -> io::Result<usize> {
+        if pos >= self.len {
+            return Ok(0);
+        }
+
+        let idx = self
+            .blocks
+            .iter()
+            .position(|(start, block)| pos >= *start && pos < *start + block.len() as u64);
+
+        let idx = match idx {
+            Some(idx) => idx,
+            None => {
+                let want = (BLOCK_SIZE as u64).min(self.len - pos) as usize;
+                self.file.seek(SeekFrom::Start(pos))?;
+                let mut block = vec![0u8; want];
+                self.file.read_exact(&mut block)?;
+                if self.blocks.len() >= MAX_BLOCKS {
+                    self.blocks.remove(0);
+                }
+                self.blocks.push((pos, block));
+                self.blocks.len() - 1
+            }
+        };
+
+        let (start, block) = &self.blocks[idx];
+        let offset = (pos - start) as usize;
+        let n = (block.len() - offset).min(buf.len());
+        buf[..n].copy_from_slice(&block[offset..offset + n]);
+        Ok(n)
+    }
+}
+
+struct BlockCacheReader {
+    cache: Rc<RefCell<BlockCache>>,
+    len: u64,
+    pos: u64,
+}
+
+impl Read for BlockCacheReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.cache.borrow_mut().read_at(self.pos, buf)?;
+        self.pos += n as u64;
+        Ok(n)
+    }
+}
+
+impl Seek for BlockCacheReader {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        let new_pos = match pos {
+            SeekFrom::Start(p) => p as i64,
+            SeekFrom::End(p) => self.len as i64 + p,
+            SeekFrom::Current(p) => self.pos as i64 + p,
+        };
+        if new_pos < 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "seek before start of file",
+            ));
+        }
+        self.pos = new_pos as u64;
+        Ok(self.pos)
+    }
+}
 
 const COVER_SIZE: u32 = 512;
 const JPEG_QUALITY: u8 = 70;
@@ -107,8 +206,9 @@ fn open_probe(path: &Path) -> Result<Probe<BufReader<File>>> {
 }
 
 pub fn read_track(path: &Path) -> Result<(AudioMetadata, String)> {
-    let file = File::open(path).with_context(|| format!("Failed to open {:?}", path))?;
-    let tagged_file = Probe::new(BufReader::with_capacity(PROBE_BUFFER_CAPACITY, &file))
+    let cache = BlockCache::open(path)?;
+
+    let tagged_file = Probe::new(BlockCache::reader(&cache))
         .guess_file_type()?
         .options(ParseOptions::new().read_cover_art(false))
         .read()?;
@@ -119,7 +219,7 @@ pub fn read_track(path: &Path) -> Result<(AudioMetadata, String)> {
         .or_else(|| tagged_file.first_tag());
 
     let metadata = extract_metadata_from_tag(tag, duration);
-    let audio_hash = audio_fingerprint(&mut &file)
+    let audio_hash = audio_fingerprint(&mut BlockCache::reader(&cache))
         .with_context(|| format!("Failed to fingerprint {:?}", path))?;
     Ok((metadata, audio_hash))
 }
