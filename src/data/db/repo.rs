@@ -375,6 +375,8 @@ pub struct Database {
     conn: Arc<Mutex<Connection>>,
     pub image_conn: Arc<Mutex<Connection>>,
     image_write_conn: Arc<Mutex<Connection>>,
+
+    index_conn: Arc<Mutex<Connection>>,
     search_index: Arc<Mutex<SearchIndex>>,
     path: Arc<std::path::PathBuf>,
 }
@@ -428,10 +430,12 @@ impl Database {
         let image_conn = open_connection(path, 5000)?;
 
         let image_write_conn = open_connection(path, 15000)?;
+        let index_conn = open_connection(path, 5000)?;
         let db = Self {
             conn: Arc::new(Mutex::new(conn)),
             image_conn: Arc::new(Mutex::new(image_conn)),
             image_write_conn: Arc::new(Mutex::new(image_write_conn)),
+            index_conn: Arc::new(Mutex::new(index_conn)),
             search_index: Arc::new(Mutex::new(SearchIndex::default())),
             path: Arc::new(path.to_path_buf()),
         };
@@ -447,7 +451,7 @@ impl Database {
     }
 
     fn load_search_index_data(&self) -> Result<SearchIndex> {
-        let conn = self.conn.lock();
+        let conn = self.index_conn.lock();
 
         let songs = {
             let mut stmt = conn.prepare(
@@ -879,40 +883,50 @@ impl Database {
                 .optional()?;
             match at_path {
                 Some(old_id) if old_id != song_id => {
-                    let collides = tx
-                        .prepare_cached("SELECT 1 FROM songs WHERE id = ?1")?
-                        .query_row(params![song_id], |row| row.get::<_, i64>(0))
-                        .optional()?
-                        .is_some();
-                    if collides {
-                        tx.prepare_cached(
-                            "UPDATE songs SET
-                                favorite = MAX(favorite, (SELECT favorite FROM songs WHERE id = ?2)),
-                                pinned = MAX(pinned, (SELECT pinned FROM songs WHERE id = ?2))
-                             WHERE id = ?1",
-                        )?
-                        .execute(params![song_id, old_id])?;
-                        tx.prepare_cached("DELETE FROM songs WHERE id = ?1")?
-                            .execute(params![old_id])?;
-                        tx.prepare_cached("UPDATE songs SET file_path = ?1 WHERE id = ?2")?
-                            .execute(params![track.file_path, song_id])?;
-                    } else {
-                        tx.prepare_cached("UPDATE songs SET id = ?1 WHERE id = ?2")?
+                    let canonical_path: Option<String> = tx
+                        .prepare_cached("SELECT file_path FROM songs WHERE id = ?1")?
+                        .query_row(params![song_id], |row| row.get(0))
+                        .optional()?;
+                    match canonical_path {
+                        Some(canonical_path) if Path::new(&canonical_path).exists() => {
+                            continue;
+                        }
+                        Some(_) => {
+                            tx.prepare_cached(
+                                "UPDATE songs SET
+                                    favorite = MAX(favorite, (SELECT favorite FROM songs WHERE id = ?2)),
+                                    pinned = MAX(pinned, (SELECT pinned FROM songs WHERE id = ?2))
+                                 WHERE id = ?1",
+                            )?
                             .execute(params![song_id, old_id])?;
+                            tx.prepare_cached("DELETE FROM songs WHERE id = ?1")?
+                                .execute(params![old_id])?;
+                            tx.prepare_cached("UPDATE songs SET file_path = ?1 WHERE id = ?2")?
+                                .execute(params![track.file_path, song_id])?;
+                        }
+                        None => {
+                            tx.prepare_cached("UPDATE songs SET id = ?1 WHERE id = ?2")?
+                                .execute(params![song_id, old_id])?;
+                        }
                     }
                 }
                 Some(_) => {}
                 None => {
-                    let exists = tx
-                        .prepare_cached("SELECT 1 FROM songs WHERE id = ?1")?
-                        .query_row(params![song_id], |row| row.get::<_, i64>(0))
-                        .optional()?
-                        .is_some();
-                    if exists {
-                        tx.prepare_cached("UPDATE songs SET file_path = ?1 WHERE id = ?2")?
-                            .execute(params![track.file_path, song_id])?;
-                    } else {
-                        inserted += 1;
+                    let existing_path: Option<String> = tx
+                        .prepare_cached("SELECT file_path FROM songs WHERE id = ?1")?
+                        .query_row(params![song_id], |row| row.get(0))
+                        .optional()?;
+                    match existing_path {
+                        Some(existing_path) if Path::new(&existing_path).exists() => {
+                            continue;
+                        }
+                        Some(_) => {
+                            tx.prepare_cached("UPDATE songs SET file_path = ?1 WHERE id = ?2")?
+                                .execute(params![track.file_path, song_id])?;
+                        }
+                        None => {
+                            inserted += 1;
+                        }
                     }
                 }
             }
@@ -2212,6 +2226,92 @@ mod tests {
         assert_eq!(count(&db, "SELECT COUNT(*) FROM songs"), 1);
         assert!(db.get_song_by_path("/music/a/2.flac").unwrap().is_none());
         assert!(db.get_song_by_path("/music/b/2.flac").unwrap().is_some());
+        cleanup(&path);
+    }
+
+    #[test]
+    fn a_copy_does_not_steal_the_row_while_the_original_still_exists_on_disk() {
+        let (db, path) = named_db("song_copy_original_survives");
+        let dir = std::env::temp_dir().join(format!("vleer_dup_survive_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let original = dir.join("original.flac");
+        let copy = dir.join("copy.flac");
+        std::fs::write(&original, b"x").unwrap();
+        std::fs::write(&copy, b"x").unwrap();
+        let original = original.to_str().unwrap();
+        let copy = copy.to_str().unwrap();
+
+        db.upsert_tracks_batch(
+            &[BatchTrack {
+                audio_hash: "dup-survive",
+                ..track(original, false)
+            }],
+            &mut ScanCache::default(),
+        )
+        .unwrap();
+
+        let added = db
+            .upsert_tracks_batch(
+                &[BatchTrack {
+                    audio_hash: "dup-survive",
+                    ..track(copy, false)
+                }],
+                &mut ScanCache::default(),
+            )
+            .unwrap();
+
+        assert_eq!(added, 0, "the copy is a duplicate, not a new song");
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM songs"), 1);
+        assert!(
+            db.get_song_by_path(original).unwrap().is_some(),
+            "original file still on disk -- row must stay pointed at it"
+        );
+        assert!(
+            db.get_song_by_path(copy).unwrap().is_none(),
+            "the copy must not steal the row while the original survives"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+        cleanup(&path);
+    }
+
+    #[test]
+    fn a_copy_takes_over_the_row_once_the_original_is_gone() {
+        let (db, path) = named_db("song_copy_original_gone");
+        let dir = std::env::temp_dir().join(format!("vleer_dup_gone_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let original = dir.join("original.flac");
+        let copy = dir.join("copy.flac");
+        std::fs::write(&original, b"x").unwrap();
+        std::fs::write(&copy, b"x").unwrap();
+        let original_str = original.to_str().unwrap();
+        let copy_str = copy.to_str().unwrap();
+
+        db.upsert_tracks_batch(
+            &[BatchTrack {
+                audio_hash: "dup-gone",
+                ..track(original_str, false)
+            }],
+            &mut ScanCache::default(),
+        )
+        .unwrap();
+
+        std::fs::remove_file(&original).unwrap();
+
+        db.upsert_tracks_batch(
+            &[BatchTrack {
+                audio_hash: "dup-gone",
+                ..track(copy_str, false)
+            }],
+            &mut ScanCache::default(),
+        )
+        .unwrap();
+
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM songs"), 1);
+        assert!(db.get_song_by_path(original_str).unwrap().is_none());
+        assert!(db.get_song_by_path(copy_str).unwrap().is_some());
+
+        std::fs::remove_dir_all(&dir).unwrap();
         cleanup(&path);
     }
 
