@@ -2,7 +2,7 @@ use gpui::{Context, Entity, IntoElement, Render, prelude::FluentBuilder as _, *}
 
 use crate::data::config::{Config, UpdateChannel};
 use crate::data::db::repo::Database;
-use crate::data::scanner::expand_tilde;
+use crate::data::scanner::{Scanner, expand_tilde};
 use crate::media::playback::Playback;
 use crate::ui::components::context_menu::{LibraryDataChanged, QueueChanged};
 use crate::ui::components::div::{flex_col, flex_row};
@@ -62,12 +62,13 @@ impl RenderOnce for ScanPathsSection {
                                         });
 
                                         let db = cx.global::<Database>().clone();
+                                        let scanner = cx.global::<Scanner>().clone();
                                         let dir = expand_tilde(&path).to_string_lossy().into_owned();
                                         cx.spawn(async move |cx| {
                                             let bg = cx.background_executor().clone();
                                             let deleted = bg
                                                 .spawn(async move {
-                                                    db.delete_songs_under_path(&dir)
+                                                    scanner.delete_path_exclusive(&db, &dir).await
                                                 })
                                                 .await;
                                             match deleted {
@@ -112,7 +113,7 @@ impl RenderOnce for ScanPathsSection {
                                 s.text_color(variables.text)
                             })),
                     )
-                    .on_click(move |_event, _window, cx| {
+                    .on_click(move |_event, window, cx| {
                         let options = PathPromptOptions {
                             files: false,
                             directories: true,
@@ -120,6 +121,7 @@ impl RenderOnce for ScanPathsSection {
                             prompt: None,
                         };
                         let receiver = cx.prompt_for_paths(options);
+                        let window_handle = window.window_handle();
                         cx.spawn(async move |cx| {
                             if let Ok(Ok(Some(paths))) = receiver.await
                                 && let Some(path) = paths.into_iter().next()
@@ -132,6 +134,9 @@ impl RenderOnce for ScanPathsSection {
                                             s.scan.paths.push(path_str);
                                         }
                                     });
+                                });
+                                let _ = window_handle.update(cx, |_, window, _cx| {
+                                    window.refresh();
                                 });
                             }
                         })
