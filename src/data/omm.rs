@@ -12,7 +12,7 @@ use crate::data::db::repo::{ArtistMetadata, Database};
 use crate::data::images::{prepare_image, write_with_retry};
 use crate::data::models::Cuid;
 
-const BASE_URL: &str = "http://localhost:3000/metadata/v1";
+const BASE_URL: &str = "https://api.vleer.app/metadata/v1";
 const WARM_BATCH: i64 = 64;
 const MAX_NAME_CHARS: usize = 256;
 const ARTWORK_SIZE: &str = "512";
