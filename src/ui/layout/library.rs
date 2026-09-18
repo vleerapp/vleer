@@ -69,9 +69,10 @@ impl Library {
             cx.new(|cx| TextInput::new(cx, "Search Library").with_icon(icons::SEARCH));
 
         let db = cx.global::<Database>().clone();
+        let bg = cx.background_executor().clone();
 
         cx.spawn(async move |this, cx: &mut AsyncApp| {
-            let items = db.get_pinned_items();
+            let items = bg.spawn(async move { db.get_pinned_items() }).await;
 
             cx.update(|cx| {
                 this.update(cx, |lib, cx| {

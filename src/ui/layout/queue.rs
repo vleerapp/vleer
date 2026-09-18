@@ -182,15 +182,20 @@ impl QueuePane {
     fn reload_songs(&mut self, cx: &mut Context<Self>) {
         let items: Vec<Cuid> = cx.global::<Queue>().get_items();
         let db = cx.global::<Database>().clone();
+        let bg = cx.background_executor().clone();
 
         cx.spawn(async move |this, cx: &mut AsyncApp| {
-            let fetched = db.get_songs_by_ids(&items).unwrap_or_default();
-            let id_to_song: std::collections::HashMap<_, _> =
-                fetched.into_iter().map(|s| (s.id.clone(), s)).collect();
-            let songs: Vec<Song> = items
-                .iter()
-                .filter_map(|id| id_to_song.get(id).cloned())
-                .collect();
+            let songs = bg
+                .spawn(async move {
+                    let fetched = db.get_songs_by_ids(&items).unwrap_or_default();
+                    let id_to_song: std::collections::HashMap<_, _> =
+                        fetched.into_iter().map(|s| (s.id.clone(), s)).collect();
+                    items
+                        .iter()
+                        .filter_map(|id| id_to_song.get(id).cloned())
+                        .collect::<Vec<Song>>()
+                })
+                .await;
             cx.update(|cx| {
                 this.update(cx, |pane, cx| {
                     pane.songs = songs;

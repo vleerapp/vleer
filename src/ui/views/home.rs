@@ -63,11 +63,15 @@ impl HomeView {
 
     fn load_recently_played(&mut self, cx: &mut Context<Self>) {
         let db = cx.global::<Database>().clone();
+        let bg = cx.background_executor().clone();
 
         cx.spawn(async move |this, cx: &mut AsyncApp| {
-            let items = db
-                .get_recently_played_items(HOME_RECENT_ITEMS_LIMIT)
-                .unwrap_or_default();
+            let items = bg
+                .spawn(async move {
+                    db.get_recently_played_items(HOME_RECENT_ITEMS_LIMIT)
+                        .unwrap_or_default()
+                })
+                .await;
 
             cx.update(|cx| {
                 this.update(cx, |this, cx| {
@@ -82,11 +86,15 @@ impl HomeView {
 
     fn load_recently_added(&mut self, cx: &mut Context<Self>) {
         let db = cx.global::<Database>().clone();
+        let bg = cx.background_executor().clone();
 
         cx.spawn(async move |this, cx: &mut AsyncApp| {
-            let items = db
-                .get_recently_added_items(HOME_RECENT_ITEMS_LIMIT)
-                .unwrap_or_default();
+            let items = bg
+                .spawn(async move {
+                    db.get_recently_added_items(HOME_RECENT_ITEMS_LIMIT)
+                        .unwrap_or_default()
+                })
+                .await;
 
             cx.update(|cx| {
                 this.update(cx, |this, cx| {

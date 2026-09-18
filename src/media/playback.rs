@@ -157,7 +157,7 @@ impl Playback {
         let existing_mixer = self.mixer.clone();
 
         cx.spawn(async move |cx| {
-            let song = db.get_song(&song_id);
+            let song = executor.spawn(async move { db.get_song(&song_id) }).await;
 
             let Ok(Some(song)) = song else {
                 cx.update(|cx| {
