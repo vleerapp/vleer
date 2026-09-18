@@ -115,12 +115,47 @@ fn fuzzy_ids<'a>(
     results
 }
 
+fn best_song_score(
+    pattern: &Pattern,
+    query: &str,
+    title: &str,
+    haystack: &str,
+    matcher: &mut Matcher,
+    buf: &mut Vec<char>,
+) -> Option<u32> {
+    if title.trim().eq_ignore_ascii_case(query.trim()) {
+        return Some(u32::MAX);
+    }
+    let title_score = score_entry(pattern, title, matcher, buf);
+    let haystack_score = score_entry(pattern, haystack, matcher, buf);
+    title_score.into_iter().chain(haystack_score).max()
+}
+
 impl SearchIndex {
     pub fn fuzzy_song_ids(&self, query: &str) -> Vec<(u32, Cuid)> {
-        fuzzy_ids(
-            query,
-            self.songs.iter().map(|e| (e.haystack.as_str(), &e.id)),
-        )
+        if query.is_empty() {
+            return Vec::new();
+        }
+        let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
+        let mut matcher = make_matcher();
+        let mut buf: Vec<char> = Vec::new();
+        let mut results: Vec<(u32, Cuid)> = self
+            .songs
+            .iter()
+            .filter_map(|e| {
+                best_song_score(
+                    &pattern,
+                    query,
+                    &e.title,
+                    &e.haystack,
+                    &mut matcher,
+                    &mut buf,
+                )
+                .map(|s| (s, e.id.clone()))
+            })
+            .collect();
+        results.sort_unstable_by_key(|b| std::cmp::Reverse(b.0));
+        results
     }
 
     pub fn fuzzy_artist_ids(&self, query: &str) -> Vec<(u32, Cuid)> {
@@ -161,7 +196,14 @@ impl SearchIndex {
         let mut results: Vec<(u32, SearchResultRow)> = Vec::new();
 
         for e in &self.songs {
-            if let Some(score) = score_entry(&pattern, &e.haystack, &mut matcher, &mut buf) {
+            if let Some(score) = best_song_score(
+                &pattern,
+                query,
+                &e.title,
+                &e.haystack,
+                &mut matcher,
+                &mut buf,
+            ) {
                 results.push((
                     score,
                     SearchResultRow {
