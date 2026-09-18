@@ -9,11 +9,11 @@ use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 use std::time::{Instant, UNIX_EPOCH};
 use tracing::{debug, error, info, warn};
-use walkdir::WalkDir;
 
 use crate::data::config::Config;
 use crate::data::db::repo::{BatchTrack, Database, ScanCache};
@@ -28,8 +28,7 @@ const SUPPORTED_EXTENSIONS: &[&str] = &[
     "aac", "aiff", "aif", "flac", "mp3", "mp4", "m4a", "mp4a", "ogg", "oga", "opus", "wav", "wv",
 ];
 
-const READ_CHUNK_SIZE: usize = 256;
-
+const READ_CHUNK_SIZE: usize = 4096;
 const DB_FLUSH_SIZE: usize = 4096;
 const UI_REFRESH_INTERVAL: Duration = Duration::from_millis(500);
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
@@ -138,29 +137,40 @@ impl Scanner {
             return;
         }
 
-        if let Ok(mut watcher_slot) = self.watcher.lock()
-            && let Some(watcher) = watcher_slot.as_mut()
-        {
-            for old in &old_paths {
-                if !new_paths.contains(old)
-                    && let Err(e) = watcher.unwatch(old)
+        let watcher = self.watcher.clone();
+        self.executor
+            .spawn(async move {
+                if let Ok(mut watcher_slot) = watcher.lock()
+                    && let Some(watcher) = watcher_slot.as_mut()
                 {
-                    warn!("Failed to unwatch {:?}: {}", old, e);
+                    for old in &old_paths {
+                        if !new_paths.contains(old)
+                            && let Err(e) = watcher.unwatch(old)
+                        {
+                            warn!("Failed to unwatch {:?}: {}", old, e);
+                        }
+                    }
+                    for new_p in &new_paths {
+                        if !old_paths.contains(new_p)
+                            && new_p.exists()
+                            && let Err(e) = watcher.watch(new_p, RecursiveMode::Recursive)
+                        {
+                            warn!("Failed to watch {:?}: {}", new_p, e);
+                        }
+                    }
                 }
-            }
-            for new_p in &new_paths {
-                if !old_paths.contains(new_p)
-                    && new_p.exists()
-                    && let Err(e) = watcher.watch(new_p, RecursiveMode::Recursive)
-                {
-                    warn!("Failed to watch {:?}: {}", new_p, e);
-                }
-            }
-        }
+            })
+            .detach();
     }
 
     fn request_cancel(&self) {
         self.cancel_flag.store(true, Ordering::Release);
+    }
+
+    pub async fn delete_path_exclusive(&self, db: &Database, dir: &str) -> Result<usize> {
+        self.request_cancel();
+        let _scan_guard = self.scan_lock.lock().await;
+        db.delete_songs_under_path(dir)
     }
 
     fn is_cancelled(&self) -> bool {
@@ -411,22 +421,7 @@ impl Scanner {
             let cancel_flag = self.cancel_flag.clone();
             let files = self
                 .executor
-                .spawn(async move {
-                    let mut files = Vec::new();
-                    for entry in WalkDir::new(&root)
-                        .follow_links(false)
-                        .into_iter()
-                        .filter_map(|e| e.ok())
-                    {
-                        if cancel_flag.load(Ordering::Acquire) {
-                            break;
-                        }
-                        if entry.file_type().is_file() && Scanner::is_audio_file(entry.path()) {
-                            files.push(entry.path().to_path_buf());
-                        }
-                    }
-                    files
-                })
+                .spawn(async move { walk_dir_fast(&root, &cancel_flag) })
                 .await;
 
             all_files.extend(files);
@@ -522,28 +517,49 @@ impl Scanner {
         let files = Arc::new(audio_files);
         let chunk_count = files.len().div_ceil(READ_CHUNK_SIZE);
 
+        let files_done = Arc::new(AtomicUsize::new(0));
+
         let read_chunk = |index: usize| {
             let files = files.clone();
             let state = existing_track_state.clone();
+            let files_done = files_done.clone();
             let (tx, rx) = futures::channel::oneshot::channel();
-            rayon::spawn(move || {
+            process_pool().spawn(move || {
                 let start = index * READ_CHUNK_SIZE;
                 let end = (start + READ_CHUNK_SIZE).min(files.len());
                 let outcomes: Vec<_> = files[start..end]
                     .par_iter()
-                    .map(|path| process_one_file(path, &state, force))
+                    .map(|path| {
+                        let outcome = process_one_file(path, &state, force);
+                        files_done.fetch_add(1, Ordering::Relaxed);
+                        outcome
+                    })
                     .collect();
                 let _ = tx.send(outcomes);
             });
             rx
         };
 
+        let progress_scanner = self.clone();
+        let progress_counter = files_done.clone();
+        let progress_executor = self.executor.clone();
+        let progress_total = total_files.max(1);
+        let _progress_ticker = self.executor.spawn(async move {
+            loop {
+                progress_executor.timer(PROGRESS_INTERVAL).await;
+                progress_scanner.update_scan_progress(ScanProgress {
+                    current: progress_counter.load(Ordering::Relaxed),
+                    total: progress_total,
+                    phase: ScanPhase::Scanning,
+                });
+            }
+        });
+
         let mut read_time = Duration::ZERO;
         let mut write_time = Duration::ZERO;
         let mut cache = ScanCache::default();
         let mut pending: Vec<ScannedTrack> = Vec::with_capacity(DB_FLUSH_SIZE);
         let mut last_ui_refresh = Instant::now();
-        let mut last_progress = Instant::now();
         let mut dirty = false;
         let mut cancelled = false;
 
@@ -594,8 +610,6 @@ impl Scanner {
                 pending.clear();
             }
 
-            let current = scanned + pending.len() + skipped + failed;
-
             if dirty
                 && last_ui_refresh.elapsed() >= UI_REFRESH_INTERVAL
                 && let Some(ref ui) = self.background_ui
@@ -603,15 +617,6 @@ impl Scanner {
                 ui.notify(BackgroundUiEvent::LibraryDataChanged);
                 last_ui_refresh = Instant::now();
                 dirty = false;
-            }
-
-            if last_progress.elapsed() >= PROGRESS_INTERVAL {
-                self.update_scan_progress(ScanProgress {
-                    current,
-                    total: total_files.max(1),
-                    phase: ScanPhase::Scanning,
-                });
-                last_progress = Instant::now();
             }
         }
 
@@ -986,6 +991,64 @@ impl Scanner {
     }
 }
 
+fn walk_dir_fast(root: &Path, cancel_flag: &AtomicBool) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let mut pending_dirs = vec![root.to_path_buf()];
+
+    while let Some(dir) = pending_dirs.pop() {
+        if cancel_flag.load(Ordering::Acquire) {
+            break;
+        }
+
+        let entries: Vec<std::fs::DirEntry> = match std::fs::read_dir(&dir) {
+            Ok(read_dir) => read_dir.filter_map(|e| e.ok()).collect(),
+            Err(_) => continue,
+        };
+
+        let mut maybe_dirs = Vec::new();
+        for entry in entries {
+            let path = entry.path();
+            if Scanner::is_audio_file(&path) {
+                files.push(path);
+            } else {
+                maybe_dirs.push(path);
+            }
+        }
+
+        if maybe_dirs.is_empty() {
+            continue;
+        }
+
+        let subdirs: Vec<PathBuf> = process_pool().install(|| {
+            maybe_dirs
+                .into_par_iter()
+                .filter(|path| {
+                    std::fs::symlink_metadata(path)
+                        .map(|m| m.is_dir())
+                        .unwrap_or(false)
+                })
+                .collect()
+        });
+        pending_dirs.extend(subdirs);
+    }
+
+    files
+}
+
+fn process_pool() -> &'static rayon::ThreadPool {
+    static POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+    POOL.get_or_init(|| {
+        let cores = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(8);
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(cores * 2)
+            .thread_name(|i| format!("scan-io-{i}"))
+            .build()
+            .expect("failed to build scan IO thread pool")
+    })
+}
+
 fn process_one_file(
     path: &Path,
     existing_track_state: &HashMap<String, (i64, i64)>,
@@ -1190,6 +1253,84 @@ mod tests {
     use std::io::BufReader;
     use std::sync::atomic::AtomicUsize;
     use std::time::Instant;
+    use walkdir::WalkDir;
+
+    #[test]
+    #[ignore]
+    fn find_duplicate_audio() {
+        let root = std::env::var("VLEER_BENCH_DIR").expect("set VLEER_BENCH_DIR");
+        let files: Vec<PathBuf> = WalkDir::new(&root)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file() && Scanner::is_audio_file(e.path()))
+            .map(|e| e.path().to_path_buf())
+            .collect();
+        println!("{} files", files.len());
+
+        let hashes: Vec<(String, PathBuf)> = process_pool().install(|| {
+            files
+                .par_iter()
+                .filter_map(|p| {
+                    crate::data::metadata::read_track(p)
+                        .ok()
+                        .map(|(_, h)| (h, p.clone()))
+                })
+                .collect()
+        });
+
+        let mut by_hash: HashMap<String, Vec<PathBuf>> = HashMap::new();
+        for (hash, path) in hashes {
+            by_hash.entry(hash).or_default().push(path);
+        }
+
+        let mut dupes: Vec<(&String, &Vec<PathBuf>)> = by_hash
+            .iter()
+            .filter(|(_, paths)| paths.len() > 1)
+            .collect();
+        dupes.sort_by_key(|(_, paths)| std::cmp::Reverse(paths.len()));
+
+        let dup_files: usize = dupes.iter().map(|(_, p)| p.len()).sum();
+        let excess: usize = dupes.iter().map(|(_, p)| p.len() - 1).sum();
+        println!(
+            "{} distinct hashes with duplicates, {} files involved, {} excess (would collapse to 1 row each)",
+            dupes.len(),
+            dup_files,
+            excess
+        );
+        for (hash, paths) in dupes {
+            println!("hash {hash} ({} files):", paths.len());
+            for p in paths {
+                println!("  {}", p.display());
+            }
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_process_pool_flat() {
+        let root = std::env::var("VLEER_BENCH_DIR").expect("set VLEER_BENCH_DIR");
+        let files: Vec<PathBuf> = WalkDir::new(&root)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file() && Scanner::is_audio_file(e.path()))
+            .map(|e| e.path().to_path_buf())
+            .collect();
+        println!("{} files", files.len());
+
+        let empty = HashMap::new();
+        let started = Instant::now();
+        let count = process_pool().install(|| {
+            files
+                .par_iter()
+                .map(|p| process_one_file(p, &empty, true))
+                .count()
+        });
+        let elapsed = started.elapsed();
+        println!(
+            "flat process_pool: {count} files in {elapsed:?} ({:?}/file)",
+            elapsed / files.len().max(1) as u32
+        );
+    }
 
     #[test]
     #[ignore]
