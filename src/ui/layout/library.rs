@@ -543,7 +543,7 @@ impl Render for Library {
                                     div()
                                         .flex_1()
                                         .min_h_0()
-                                        .image_cache(vleer_cache("library-image-cache", 64))
+                                        .image_cache(vleer_cache("library-image-cache"))
                                         .overflow_y_scrollbar()
                                         .child(
                                             flex_col()
