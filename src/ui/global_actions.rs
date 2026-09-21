@@ -4,7 +4,7 @@ use tracing::{debug, error, info};
 use crate::{
     data::{config::Config, db::repo::Database, scanner::Scanner},
     media::playback::Playback,
-    ui::app::MainWindow,
+    ui::{app::MainWindow, views::AppView},
     updater::{Updater, run_check_in_background},
 };
 
@@ -12,7 +12,7 @@ actions!(
     vleer,
     [Quit, ReloadConfig, Scan, ForceScan, CheckForUpdates]
 );
-actions!(navigation, [GoBack, GoForward]);
+actions!(navigation, [GoBack, GoForward, OpenSettings]);
 actions!(player, [PlayPause, Next, Previous]);
 
 pub fn register_actions(cx: &mut App) {
@@ -24,6 +24,7 @@ pub fn register_actions(cx: &mut App) {
 
     cx.on_action(go_back);
     cx.on_action(go_forward);
+    cx.on_action(open_settings);
     cx.on_action(play_pause);
     cx.on_action(next);
     cx.on_action(previous);
@@ -45,6 +46,7 @@ pub fn register_actions(cx: &mut App) {
     };
     cx.bind_keys([KeyBinding::new(back_key, GoBack, None)]);
     cx.bind_keys([KeyBinding::new(forward_key, GoForward, None)]);
+    cx.bind_keys([KeyBinding::new("secondary-,", OpenSettings, None)]);
     cx.bind_keys([KeyBinding::new("space", PlayPause, None)]);
 
     debug!("Actions: {:?}", cx.all_action_names());
@@ -85,6 +87,12 @@ fn go_back(_: &GoBack, cx: &mut App) {
 fn go_forward(_: &GoForward, cx: &mut App) {
     debug!("GoForward");
     navigate(cx, MainWindow::go_forward);
+}
+
+fn open_settings(_: &OpenSettings, cx: &mut App) {
+    navigate(cx, |view, window, cx| {
+        view.set_current_view(AppView::Settings, window, cx)
+    });
 }
 
 fn play_pause(_: &PlayPause, cx: &mut App) {
