@@ -68,6 +68,83 @@ pub struct SelectedPlaylist {
 
 impl Global for SelectedPlaylist {}
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NavEntry {
+    pub view: AppView,
+    pub album: Option<Cuid>,
+    pub playlist: Option<Cuid>,
+}
+
+impl NavEntry {
+    pub fn capture(view: AppView, cx: &App) -> Self {
+        Self {
+            view,
+            album: (view == AppView::Album)
+                .then(|| cx.global::<SelectedAlbum>().0.clone())
+                .flatten(),
+            playlist: (view == AppView::Playlist)
+                .then(|| cx.global::<SelectedPlaylist>().id.clone())
+                .flatten(),
+        }
+    }
+
+    pub fn restore(&self, cx: &mut App) {
+        if let Some(album) = self.album.clone() {
+            cx.set_global(SelectedAlbum(Some(album)));
+        }
+        if let Some(playlist) = self.playlist.clone() {
+            cx.update_global::<SelectedPlaylist, _>(|sel, _| {
+                sel.id = Some(playlist);
+                sel.focus_title = false;
+            });
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct NavHistory {
+    current: NavEntry,
+    back: Vec<NavEntry>,
+    forward: Vec<NavEntry>,
+}
+
+impl NavHistory {
+    pub fn new(view: AppView) -> Self {
+        Self {
+            current: NavEntry {
+                view,
+                album: None,
+                playlist: None,
+            },
+            back: Vec::new(),
+            forward: Vec::new(),
+        }
+    }
+
+    pub fn push(&mut self, entry: NavEntry) -> bool {
+        if self.current == entry {
+            return false;
+        }
+        self.back.push(std::mem::replace(&mut self.current, entry));
+        self.forward.clear();
+        true
+    }
+
+    pub fn go_back(&mut self) -> Option<NavEntry> {
+        let entry = self.back.pop()?;
+        self.forward
+            .push(std::mem::replace(&mut self.current, entry.clone()));
+        Some(entry)
+    }
+
+    pub fn go_forward(&mut self) -> Option<NavEntry> {
+        let entry = self.forward.pop()?;
+        self.back
+            .push(std::mem::replace(&mut self.current, entry.clone()));
+        Some(entry)
+    }
+}
+
 pub struct ViewRegistry;
 
 impl ViewRegistry {

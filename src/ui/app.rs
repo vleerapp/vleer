@@ -32,7 +32,10 @@ use crate::{
             queue::{QueuePane, QueueVisible},
         },
         variables::Variables,
-        views::{ActiveView, AppView, SelectedAlbum, SelectedPlaylist, ViewRegistry},
+        views::{
+            ActiveView, AppView, NavEntry, NavHistory, SelectedAlbum, SelectedPlaylist,
+            ViewRegistry,
+        },
     },
     updater::Updater,
 };
@@ -45,6 +48,7 @@ pub(crate) struct MainWindow {
     queue: Entity<QueuePane>,
     views: HashMap<AppView, AnyView>,
     current_view: AppView,
+    history: NavHistory,
     titlebar_should_move: bool,
 }
 
@@ -54,9 +58,28 @@ impl MainWindow {
     }
 
     pub fn set_current_view(&mut self, view: AppView, window: &mut Window, cx: &mut Context<Self>) {
-        if self.current_view == view {
-            return;
+        let entry = NavEntry::capture(view, cx);
+        if self.history.push(entry.clone()) {
+            self.apply_entry(entry, window, cx);
         }
+    }
+
+    pub fn go_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(entry) = self.history.go_back() {
+            self.apply_entry(entry, window, cx);
+        }
+    }
+
+    pub fn go_forward(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(entry) = self.history.go_forward() {
+            self.apply_entry(entry, window, cx);
+        }
+    }
+
+    fn apply_entry(&mut self, entry: NavEntry, window: &mut Window, cx: &mut Context<Self>) {
+        let view = entry.view;
+        entry.restore(cx);
+
         self.current_view = view;
         if view == AppView::Settings {
             navbar::status().clear("telemetry.consent");
@@ -94,7 +117,15 @@ impl Render for MainWindow {
             .size_full()
             .min_h_0()
             .bg(variables.background)
-            .image_cache(chrome_image_cache());
+            .image_cache(chrome_image_cache())
+            .on_mouse_down(
+                MouseButton::Navigate(NavigationDirection::Back),
+                cx.listener(|this, _ev, window, cx| this.go_back(window, cx)),
+            )
+            .on_mouse_down(
+                MouseButton::Navigate(NavigationDirection::Forward),
+                cx.listener(|this, _ev, window, cx| this.go_forward(window, cx)),
+            );
 
         if show_titlebar {
             let mut titlebar = flex_row()
@@ -344,6 +375,7 @@ pub async fn run() -> Result<()> {
             find_fonts(cx)
                 .inspect_err(|e| error!(?e, "Failed to load fonts"))
                 .ok();
+            cx.set_cursor_hide_mode(CursorHideMode::Never);
             register_actions(cx);
             bind_input_keys(cx);
 
@@ -400,6 +432,7 @@ pub async fn run() -> Result<()> {
                             queue: queue_entity,
                             views,
                             current_view: AppView::Home,
+                            history: NavHistory::new(AppView::Home),
                             titlebar_should_move: false,
                         }
                     })
