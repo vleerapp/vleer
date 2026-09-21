@@ -10,8 +10,8 @@ license = "AGPL-3.0"
 categories = ["multimedia::audio"]
 
 [dependencies]
-gpui = { package = "gpui-unofficial", version = "1.19.2" }
-gpui-platform-gpui-unofficial = { version = "1.19.2", features = [
+gpui = { package = "gpui-unofficial", version = "1.20.2" }
+gpui-platform-gpui-unofficial = { version = "1.20.2", features = [
   "font-kit",
   "x11",
   "wayland",
@@ -28,7 +28,7 @@ rusqlite_migration = { version = "2.6.0", features = ["from-directory"] }
 parking_lot = "0.12.5"
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.6"
-rodio = { git = "https://github.com/vleerapp/rodio", rev = "5d3f8b52847c848625881b80da97000435bddd0b", features = [
+rodio = { git = "https://github.com/vleerapp/rodio", rev = "8e5961ca2cc88cbff5f1a5686d8253b6e655ad8d", features = [
   "symphonia",
   "symphonia-all",
 ] }
@@ -36,7 +36,7 @@ symphonia-adapter-libopus = "0.3.0"
 cuid2 = "0.1.6"
 url = "2.5.8"
 rust-embed = { version = "8.12.0", features = ["include-exclude"] }
-lofty = "0.25.2"
+lofty = "0.25.4"
 rayon = "1.12.0"
 walkdir = "2.5.0"
 notify = "8.2.0"
@@ -56,7 +56,7 @@ sequoia-openpgp = { version = "2.4.1", default-features = false, features = [
 ] }
 spectrum-analyzer = "2.0.0"
 discord-rich-presence = "1.1.0"
-rand = "0.10.2"
+rand = "0.10.3"
 raw-window-handle = "0.6.2"
 interprocess = "2.4.4"
 libc = "0.2.189"
@@ -138,7 +138,3 @@ signing_identity = "-"
 
 [package.metadata.packager.wix]
 template = "assets/windows/main.wxs"
-
-[patch.crates-io]
-xcb = { git = "https://github.com/rust-x-bindings/rust-xcb" }
-gpui-apple-gpui-unofficial = { git = "https://github.com/iamnbutler/gpui-unofficial", rev = "d86a20dcf11a0dab2674fa142de3ed0eed01d9eb" }
