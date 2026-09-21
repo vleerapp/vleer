@@ -140,10 +140,14 @@ impl RenderOnce for Card {
         let image_hover_group: SharedString = format!("{tile_id}-image-hover").into();
 
         let image = image_uri.map(|uri| {
-            let element = img(format!("{}?size={}", uri, image_size as u32))
-                .id(ElementId::Name(format!("{tile_id}-image").into()))
-                .size(px(image_size))
-                .object_fit(ObjectFit::Cover);
+            let element = img(format!(
+                "{}?size={}",
+                uri,
+                crate::ui::assets::bucket_size(image_size)
+            ))
+            .id(ElementId::Name(format!("{tile_id}-image").into()))
+            .size(px(image_size))
+            .object_fit(ObjectFit::Cover);
             match image_shape {
                 CardImageShape::Square => element.into_any_element(),
                 CardImageShape::Circle => element.rounded_full().into_any_element(),

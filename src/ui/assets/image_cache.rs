@@ -1,16 +1,17 @@
 use std::{
-    collections::VecDeque,
+    cell::RefCell,
     mem::take,
+    rc::Rc,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
+    time::{Duration, Instant},
 };
 
-use futures::FutureExt;
 use gpui::{
     App, AppContext, Asset, AssetLogger, ElementId, Entity, ImageAssetLoader, ImageCache,
-    ImageCacheItem, ImageCacheProvider, ImageSource, Resource, hash,
+    ImageCacheError, ImageCacheProvider, ImageSource, RenderImage, Resource, hash,
 };
 use rustc_hash::{FxBuildHasher, FxHashMap};
 use tracing::{error, trace};
@@ -18,27 +19,25 @@ use tracing::{error, trace};
 use crate::data::images::is_missing_image;
 use crate::ui::assets::{VleerImageLoader, is_vleer_image};
 
-pub fn vleer_cache(id: impl Into<ElementId>, max_items: usize) -> VleerImageCacheProvider {
-    VleerImageCacheProvider {
-        id: id.into(),
-        max_items,
-    }
+const BUFFER: usize = 10;
+const FRAME_WINDOW: Duration = Duration::from_millis(50);
+
+pub fn vleer_cache(id: impl Into<ElementId>) -> VleerImageCacheProvider {
+    VleerImageCacheProvider { id: id.into() }
 }
 
 pub fn chrome_image_cache() -> VleerImageCacheProvider {
-    vleer_cache("vleer-chrome-image-cache", 24)
+    vleer_cache("vleer-chrome-image-cache")
 }
 
 pub fn view_image_cache(view: crate::ui::views::AppView) -> VleerImageCacheProvider {
-    vleer_cache(
-        ElementId::Name(format!("vleer-view-image-cache-{}", view.title()).into()),
-        64,
-    )
+    vleer_cache(ElementId::Name(
+        format!("vleer-view-image-cache-{}", view.title()).into(),
+    ))
 }
 
 pub struct VleerImageCacheProvider {
     id: ElementId,
-    max_items: usize,
 }
 
 impl ImageCacheProvider for VleerImageCacheProvider {
@@ -46,14 +45,7 @@ impl ImageCacheProvider for VleerImageCacheProvider {
         window
             .with_global_id(self.id.clone(), |id, window| {
                 window.with_element_state(id, |cache: Option<Entity<VleerImageCache>>, _| {
-                    let cache = if let Some(cache) = cache {
-                        cache.update(cx, |cache, _| {
-                            cache.ensure_capacity(self.max_items);
-                        });
-                        cache
-                    } else {
-                        VleerImageCache::new(self.max_items, cx)
-                    };
+                    let cache = cache.unwrap_or_else(|| VleerImageCache::new(cx));
 
                     (cache.clone(), cache)
                 })
@@ -62,19 +54,31 @@ impl ImageCacheProvider for VleerImageCacheProvider {
     }
 }
 
+type ImageResult = Result<Arc<RenderImage>, ImageCacheError>;
+
+struct CacheItem(
+    Rc<RefCell<Option<ImageResult>>>,
+    #[allow(dead_code)] gpui::Task<()>,
+);
+
+impl CacheItem {
+    fn get(&self) -> Option<ImageResult> {
+        self.0.borrow().clone()
+    }
+}
+
 pub struct VleerImageCache {
-    max_items: usize,
-    usage_list: VecDeque<u64>,
-    cache: FxHashMap<u64, (ImageCacheItem, Resource)>,
+    cache: FxHashMap<u64, (CacheItem, Resource, Instant)>,
+    newest: Instant,
     notify_pending: Arc<AtomicBool>,
 }
 
 impl VleerImageCache {
-    pub fn new(max_items: usize, cx: &mut App) -> Entity<Self> {
+    pub fn new(cx: &mut App) -> Entity<Self> {
         cx.new(|cx| {
             trace!("Creating VleerImageCache");
             cx.on_release(|this: &mut Self, cx| {
-                for (idx, (mut image, resource)) in take(&mut this.cache) {
+                for (idx, (image, resource, _)) in take(&mut this.cache) {
                     if let Some(Ok(image)) = image.get() {
                         trace!("Dropping image {idx}");
                         cx.drop_image(image, None);
@@ -86,23 +90,41 @@ impl VleerImageCache {
             .detach();
 
             VleerImageCache {
-                max_items,
-                usage_list: VecDeque::with_capacity(max_items),
-                cache: FxHashMap::with_capacity_and_hasher(max_items, FxBuildHasher),
+                cache: FxHashMap::with_hasher(FxBuildHasher),
+                newest: Instant::now(),
                 notify_pending: Arc::new(AtomicBool::new(false)),
             }
         })
     }
 
-    fn ensure_capacity(&mut self, max_items: usize) {
-        if max_items <= self.max_items {
+    fn evict_stale(&mut self, window: &mut gpui::Window, cx: &mut App) {
+        let cutoff = self.newest.checked_sub(FRAME_WINDOW);
+        let is_visible = |used: &Instant| cutoff.is_none_or(|cutoff| *used >= cutoff);
+
+        let mut stale: Vec<(u64, Instant)> = self
+            .cache
+            .iter()
+            .filter(|(_, (_, _, u))| !is_visible(u))
+            .map(|(h, (_, _, u))| (*h, *u))
+            .collect();
+
+        if stale.len() <= BUFFER {
             return;
         }
 
-        let additional = max_items - self.max_items;
-        self.max_items = max_items;
-        self.usage_list.reserve(additional);
-        self.cache.reserve(additional);
+        stale.sort_by_key(|(_, used)| *used);
+        let evict = stale.len() - BUFFER;
+        for (hash, _) in stale.into_iter().take(evict) {
+            let Some((item, resource, _)) = self.cache.remove(&hash) else {
+                continue;
+            };
+
+            if let Some(Ok(image)) = item.get() {
+                cx.drop_image(image, Some(window));
+            }
+
+            ImageSource::Resource(resource).remove_asset(cx);
+        }
     }
 }
 
@@ -114,73 +136,60 @@ impl ImageCache for VleerImageCache {
         cx: &mut App,
     ) -> Option<Result<Arc<gpui::RenderImage>, gpui::ImageCacheError>> {
         let hash = hash(resource);
+        let now = Instant::now();
 
         if let Some(item) = self.cache.get_mut(&hash) {
-            if let Some(current_idx) = self.usage_list.iter().position(|h| *h == hash) {
-                self.usage_list.remove(current_idx);
-                self.usage_list.push_front(hash);
-            } else {
-                self.usage_list.push_front(hash);
-            }
-
-            return item.0.get();
+            item.2 = now;
+            let result = item.0.get();
+            self.newest = now;
+            return result;
         }
+
+        self.evict_stale(window, cx);
 
         let task = if is_vleer_image(resource) {
             let future = VleerImageLoader::load(resource.clone(), cx);
-            cx.background_executor().spawn(future).shared()
+            cx.background_executor().spawn(future)
         } else {
             let future = AssetLogger::<ImageAssetLoader>::load(resource.clone(), cx);
-            cx.background_executor().spawn(future).shared()
+            cx.background_executor().spawn(future)
         };
 
-        if self.usage_list.len() >= self.max_items {
-            trace!("Image cache is full, evicting oldest item");
-
-            let oldest = self.usage_list.pop_back()?;
-            let mut image = self.cache.remove(&oldest)?;
-
-            if let Some(Ok(image)) = image.0.get() {
-                trace!("requesting image to be dropped");
-                cx.drop_image(image, Some(window));
-            }
-
-            ImageSource::Resource(image.1).remove_asset(cx);
-        }
-
-        self.cache.insert(
-            hash,
-            (ImageCacheItem::Loading(task.clone()), resource.clone()),
-        );
-        self.usage_list.push_front(hash);
+        let slot = Rc::new(RefCell::new(None));
+        let slot_for_item = slot.clone();
 
         let entity = window.current_view();
         let notify_pending = self.notify_pending.clone();
 
-        window
-            .spawn(cx, async move |cx| {
-                let result = task.await;
+        let load_task = window.spawn(cx, async move |cx| {
+            let result = task.await;
+            *slot.borrow_mut() = Some(result.clone());
 
-                match result {
-                    Err(gpui::ImageCacheError::Asset(message))
-                        if is_missing_image(message.as_ref()) =>
-                    {
-                        trace!("no cover image for {message}");
-                    }
-                    Err(err) => error!("error loading image into cache: {:?}", err),
-                    Ok(_) => {}
+            match result {
+                Err(gpui::ImageCacheError::Asset(message))
+                    if is_missing_image(message.as_ref()) =>
+                {
+                    trace!("no cover image for {message}");
                 }
+                Err(err) => error!("error loading image into cache: {:?}", err),
+                Ok(_) => {}
+            }
 
-                if !notify_pending.swap(true, Ordering::AcqRel) {
-                    let notify_pending = notify_pending.clone();
-                    cx.update(move |_, cx| {
-                        notify_pending.store(false, Ordering::Release);
-                        cx.notify(entity);
-                    })
-                    .ok();
-                }
-            })
-            .detach();
+            if !notify_pending.swap(true, Ordering::AcqRel) {
+                let notify_pending = notify_pending.clone();
+                cx.update(move |_, cx| {
+                    notify_pending.store(false, Ordering::Release);
+                    cx.notify(entity);
+                })
+                .ok();
+            }
+        });
+
+        self.cache.insert(
+            hash,
+            (CacheItem(slot_for_item, load_task), resource.clone(), now),
+        );
+        self.newest = now;
 
         None
     }

@@ -87,6 +87,10 @@ impl Asset for VleerImageLoader {
     }
 }
 
+pub fn bucket_size(size: f32) -> u32 {
+    ((size.max(1.0) as u32).div_ceil(64)) * 64
+}
+
 pub fn cover_uri(image_id: Option<&str>, fallback: ImageRequest) -> String {
     match image_id {
         Some(id) => format!("!image://{id}"),
