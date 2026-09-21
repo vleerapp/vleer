@@ -37,6 +37,7 @@ actions!(
         Cut,
         Copy,
         Enter,
+        Escape,
         DeleteToPreviousWord,
         WordLeft,
         WordRight,
@@ -56,6 +57,7 @@ pub fn bind_input_keys(cx: &mut App) {
         KeyBinding::new("home", Home, None),
         KeyBinding::new("end", End, None),
         KeyBinding::new("enter", Enter, None),
+        KeyBinding::new("escape", Escape, None),
         KeyBinding::new("secondary-a", SelectAll, None),
         KeyBinding::new("secondary-v", Paste, None),
         KeyBinding::new("secondary-c", Copy, None),
@@ -684,6 +686,7 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(Self::copy))
             .on_action(cx.listener(Self::enter))
+            .on_action(|_: &Escape, window, cx| window.blur(cx))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_down_out(|_, window, cx| window.blur(cx))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
