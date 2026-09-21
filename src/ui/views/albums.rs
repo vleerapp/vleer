@@ -1,4 +1,5 @@
 use crate::media::playback::play_album_now;
+use crate::ui::components::scroller::SmoothScrollable;
 use gpui::{Context, IntoElement, Render, prelude::FluentBuilder, *};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::rc::Rc;
@@ -489,5 +490,6 @@ impl Render for AlbumsView {
                         ),
                 )
             })
+            .smooth_scroll(&self.scroll_handle)
     }
 }

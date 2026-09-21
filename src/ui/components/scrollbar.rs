@@ -2,6 +2,7 @@ use gpui::prelude::FluentBuilder;
 use gpui::*;
 use std::{cell::Cell, ops::Deref, panic::Location, rc::Rc, time::Instant};
 
+use super::scroller::SmoothScrollable;
 use crate::ui::variables::Variables;
 
 const DEFAULT_WIDTH: Pixels = px(16.);
@@ -46,10 +47,14 @@ pub trait ScrollbarHandle: 'static {
     fn offset(&self) -> Point<Pixels>;
     fn set_offset(&self, offset: Point<Pixels>);
     fn content_size(&self) -> Size<Pixels>;
+    fn max_offset(&self) -> Point<Pixels>;
     fn start_drag(&self) {}
     fn end_drag(&self) {}
 }
 impl ScrollbarHandle for ScrollHandle {
+    fn max_offset(&self) -> Point<Pixels> {
+        self.max_offset()
+    }
     fn offset(&self) -> Point<Pixels> {
         self.offset()
     }
@@ -61,6 +66,9 @@ impl ScrollbarHandle for ScrollHandle {
     }
 }
 impl ScrollbarHandle for UniformListScrollHandle {
+    fn max_offset(&self) -> Point<Pixels> {
+        self.0.borrow().base_handle.max_offset()
+    }
     fn offset(&self) -> Point<Pixels> {
         self.0.borrow().base_handle.offset()
     }
@@ -73,6 +81,9 @@ impl ScrollbarHandle for UniformListScrollHandle {
     }
 }
 impl ScrollbarHandle for ListState {
+    fn max_offset(&self) -> Point<Pixels> {
+        self.max_offset_for_scrollbar()
+    }
     fn offset(&self) -> Point<Pixels> {
         self.scroll_px_offset_for_scrollbar()
     }
@@ -694,5 +705,6 @@ where
                             .axis(self.axis),
                     ),
             )
+            .smooth_scroll(&scroll_handle)
     }
 }

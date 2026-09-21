@@ -7,6 +7,7 @@ use crate::ui::components::context_menu::{ContextMenu, QueueChanged, song_contex
 use crate::ui::components::div::{flex_col, flex_row};
 use crate::ui::components::icons::{self, icon};
 use crate::ui::components::scrollbar::{Scrollbar, ScrollbarAxis, ScrollbarHandle};
+use crate::ui::components::scroller::SmoothScrollable;
 use crate::ui::variables::Variables;
 use crate::ui::views::{AppView, SelectedAlbum};
 use gpui::{prelude::*, *};
@@ -384,8 +385,11 @@ impl Render for SongTableItem {
                                 .relative()
                                 .group("cover-container")
                                 .when_some(data.cover_uri.clone(), |div, image| {
-                                    let sized_image =
-                                        format!("{}?size={}", image, image_size as u32);
+                                    let sized_image = format!(
+                                        "{}?size={}",
+                                        image,
+                                        crate::ui::assets::bucket_size(image_size)
+                                    );
                                     div.child(
                                         img(sized_image)
                                             .size(px(image_size))
@@ -976,7 +980,8 @@ impl Render for SongTable {
                         .left_0()
                         .child(Scrollbar::new(&self.scroll_handle).axis(ScrollbarAxis::Vertical)),
                 )
-            });
+            })
+            .smooth_scroll(&self.scroll_handle);
 
         div()
             .h_full()

@@ -1,4 +1,5 @@
 use crate::media::playback::play_playlist_now;
+use crate::ui::components::scroller::SmoothScrollable;
 use gpui::{Context, IntoElement, Render, prelude::FluentBuilder, *};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -466,5 +467,6 @@ impl Render for PlaylistsView {
                         ),
                 )
             })
+            .smooth_scroll(&self.scroll_handle)
     }
 }

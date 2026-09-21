@@ -8,6 +8,7 @@ pub mod nav_button;
 pub mod pane;
 pub mod progress_bar;
 pub mod scrollbar;
+pub mod scroller;
 pub mod slider;
 pub mod song_table;
 pub mod switch;

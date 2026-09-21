@@ -8,6 +8,7 @@ use crate::ui::app::MainWindow;
 use crate::ui::assets::image_cache::vleer_cache;
 use crate::ui::components::div::{flex_col, flex_row};
 use crate::ui::components::icons::{self, icon};
+use crate::ui::components::scroller::SmoothScrollable;
 use crate::ui::variables::Variables;
 use crate::ui::views::{AppView, SelectedAlbum, SelectedPlaylist};
 use futures::channel::mpsc;
@@ -185,11 +186,15 @@ impl ContextMenu {
 }
 
 impl Render for ContextMenu {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(position) = self.position else {
             return div().into_any_element();
         };
 
+        let submenu_scroll = window
+            .use_state(cx, |_, _| ScrollHandle::new())
+            .read(cx)
+            .clone();
         let variables = *cx.global::<Variables>();
         let entity = cx.entity().downgrade();
         let entity_out = entity.clone();
@@ -412,7 +417,7 @@ impl Render for ContextMenu {
                         deferred(
                             anchored().position(sub_pos).child(
                                 div()
-                                    .image_cache(vleer_cache("ctx-submenu-image-cache", 50))
+                                    .image_cache(vleer_cache("ctx-submenu-image-cache"))
                                     .id("context-submenu-container")
                                     .occlude()
                                     .on_hover(move |is_hovering: &bool, _, cx| {
@@ -433,6 +438,7 @@ impl Render for ContextMenu {
                                     .w(px(250.0))
                                     .max_h(px(320.0))
                                     .overflow_y_scroll()
+                                    .track_scroll(&submenu_scroll)
                                     .bg(variables.element)
                                     .border_1()
                                     .border_color(variables.border)
@@ -441,7 +447,8 @@ impl Render for ContextMenu {
                                             .w_full()
                                             .children(playlist_items)
                                             .child(create_btn),
-                                    ),
+                                    )
+                                    .smooth_scroll(&submenu_scroll),
                             ),
                         )
                         .with_priority(2),

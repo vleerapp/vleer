@@ -1,3 +1,4 @@
+use crate::ui::components::scroller::SmoothScrollable;
 use gpui::{Context, IntoElement, Render, prelude::FluentBuilder, *};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -436,5 +437,6 @@ impl Render for ArtistsView {
                         ),
                 )
             })
+            .smooth_scroll(&self.scroll_handle)
     }
 }

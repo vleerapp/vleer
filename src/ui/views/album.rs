@@ -1,3 +1,4 @@
+use crate::ui::components::scroller::SmoothScrollable;
 use gpui::*;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -526,7 +527,8 @@ impl Render for AlbumView {
                                     Scrollbar::new(&self.artists_scroll_handle)
                                         .axis(ScrollbarAxis::Vertical),
                                 ),
-                        ),
+                        )
+                        .smooth_scroll(&self.artists_scroll_handle),
                 );
 
             flex_row()
