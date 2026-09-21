@@ -2,7 +2,7 @@ use anyhow::Ok;
 use futures::StreamExt;
 use gpui::*;
 use gpui_platform_gpui_unofficial::application;
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
 use tracing::{debug, error};
 
 use crate::{
@@ -21,6 +21,8 @@ use crate::{
             div::{flex_col, flex_row},
             input::bind_input_keys,
             pane::pane,
+            scroller::modifier_wheel_horizontal,
+            scrollbar::{Scrollbar, ScrollbarAxis, set_vertical_pin},
             window_controls::WindowControls,
         },
         discord_presence::DiscordPresence,
@@ -47,6 +49,7 @@ pub(crate) struct MainWindow {
     player: Entity<Player>,
     queue: Entity<QueuePane>,
     views: HashMap<AppView, AnyView>,
+    view_scroll: ScrollHandle,
     current_view: AppView,
     history: NavHistory,
     titlebar_should_move: bool,
@@ -81,6 +84,7 @@ impl MainWindow {
         entry.restore(cx);
 
         self.current_view = view;
+        self.view_scroll.set_offset(point(px(0.0), px(0.0)));
         if view == AppView::Settings {
             navbar::status().clear("telemetry.consent");
         }
@@ -179,11 +183,13 @@ impl Render for MainWindow {
                 .pl(px(variables.padding_16))
                 .gap(px(variables.padding_16))
                 .flex_1()
+                .min_w_0()
                 .min_h_0()
                 .size_full()
                 .child(
                     flex_row()
                         .flex_1()
+                        .min_w_0()
                         .min_h_0()
                         .size_full()
                         .gap(px(variables.padding_16))
@@ -201,6 +207,7 @@ impl Render for MainWindow {
                         .child(
                             flex_col()
                                 .flex_1()
+                                .min_w_0()
                                 .min_h_0()
                                 .h_full()
                                 .gap(px(variables.padding_16))
@@ -223,6 +230,7 @@ impl Render for MainWindow {
                                         .flex()
                                         .flex_row()
                                         .flex_1()
+                                        .min_w_0()
                                         .min_h_0()
                                         .size_full()
                                         .gap(px(variables.padding_16))
@@ -237,7 +245,75 @@ impl Render for MainWindow {
                                                 .child(
                                                     pane("current-view")
                                                         .title(self.current_view.title())
-                                                        .child(content),
+                                                        .child(
+                                                            div()
+                                                                .relative()
+                                                                .size_full()
+                                                                .min_w_0()
+                                                                .min_h_0()
+                                                                .child({
+                                                                    let scroll = Rc::new(self.view_scroll.clone());
+                                                                    canvas(
+                                                                        |bounds, _, _| {
+                                                                            set_vertical_pin(Some(bounds));
+                                                                            bounds
+                                                                        },
+                                                                        move |bounds, _, window, cx| {
+                                                                            modifier_wheel_horizontal(
+                                                                                scroll.clone(),
+                                                                                bounds,
+                                                                                "current-view-hwheel".into(),
+                                                                                window,
+                                                                                cx,
+                                                                            );
+                                                                        },
+                                                                    )
+                                                                    .absolute()
+                                                                    .size_full()
+                                                                })
+                                                                .child(
+                                                                    div()
+                                                                        .id("current-view-scroll")
+                                                                        .restrict_scroll_to_axis()
+                                                                        .size_full()
+                                                                        .min_w_0()
+                                                                        .min_h_0()
+                                                                        .flex()
+                                                                        .overflow_x_scroll()
+                                                                        .track_scroll(&self.view_scroll)
+                                                                        .child(
+                                                                            div()
+                                                                                .relative()
+                                                                                .flex()
+                                                                                .flex_col()
+                                                                                .flex_shrink_0()
+                                                                                .min_w_full()
+                                                                                .h_full()
+                                                                                .child(content),
+                                                                        ),
+                                                                )
+                                                                .child(
+                                                                    div()
+                                                                        .absolute()
+                                                                        .top_0()
+                                                                        .right_0()
+                                                                        .bottom_0()
+                                                                        .left_0()
+                                                                        .child(
+                                                                            Scrollbar::new(&self.view_scroll)
+                                                                                .id("current-view-hscroll")
+                                                                                .axis(ScrollbarAxis::Horizontal),
+                                                                        ),
+                                                                )
+                                                                .child(
+                                                                    canvas(
+                                                                        |_, _, _| set_vertical_pin(None),
+                                                                        |_, _, _, _| {},
+                                                                    )
+                                                                    .absolute()
+                                                                    .size_0(),
+                                                                ),
+                                                        ),
                                                 ),
                                         );
                                     if queue_visible {
@@ -431,6 +507,7 @@ pub async fn run() -> Result<()> {
                             player: player_entity,
                             queue: queue_entity,
                             views,
+                            view_scroll: ScrollHandle::new(),
                             current_view: AppView::Home,
                             history: NavHistory::new(AppView::Home),
                             titlebar_should_move: false,

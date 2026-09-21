@@ -1,6 +1,12 @@
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use std::{cell::Cell, ops::Deref, panic::Location, rc::Rc, time::Instant};
+use std::{
+    cell::Cell,
+    ops::Deref,
+    panic::Location,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 use super::scroller::SmoothScrollable;
 use crate::ui::variables::Variables;
@@ -9,6 +15,45 @@ const DEFAULT_WIDTH: Pixels = px(16.);
 const THUMB_WIDTH: Pixels = px(4.);
 const MIN_THUMB_SIZE: f32 = 48.;
 const FADE_OUT_DURATION: f32 = 3.0;
+
+thread_local! {
+    static VERTICAL_PIN: Cell<Option<Bounds<Pixels>>> = const { Cell::new(None) };
+}
+
+const RESIZE_VISIBLE: Duration = Duration::from_millis(300);
+
+#[derive(Clone, Copy, Default)]
+struct ResizeTracker {
+    size: Option<Size<Pixels>>,
+    width_changed: Option<Instant>,
+    height_changed: Option<Instant>,
+}
+
+thread_local! {
+    static RESIZE: Cell<ResizeTracker> = Cell::new(ResizeTracker::default());
+}
+
+fn resizing_axes(window: &Window) -> (bool, bool) {
+    let now = Instant::now();
+    let size = window.viewport_size();
+    let mut tracker = RESIZE.with(|t| t.get());
+    if let Some(last) = tracker.size {
+        if last.width != size.width {
+            tracker.width_changed = Some(now);
+        }
+        if last.height != size.height {
+            tracker.height_changed = Some(now);
+        }
+    }
+    tracker.size = Some(size);
+    RESIZE.with(|t| t.set(tracker));
+    let recent = |t: Option<Instant>| t.is_some_and(|t| now.duration_since(t) < RESIZE_VISIBLE);
+    (recent(tracker.width_changed), recent(tracker.height_changed))
+}
+
+pub fn set_vertical_pin(viewport: Option<Bounds<Pixels>>) {
+    VERTICAL_PIN.with(|pin| pin.set(viewport));
+}
 
 pub trait AxisExt {
     fn is_vertical(&self) -> bool;
@@ -227,6 +272,7 @@ impl Scrollbar {
         cx: &App,
         state: &ScrollbarStateInner,
         axis: Axis,
+        resizing: bool,
     ) -> (Hsla, Hsla, Pixels) {
         let variables = cx.global::<Variables>();
         let default_thumb = variables.accent;
@@ -237,7 +283,7 @@ impl Scrollbar {
         let is_hovered_bar = state.hovered_axis == Some(axis);
         if is_dragged || is_hovered_thumb {
             (hover_thumb.into(), default_track, THUMB_WIDTH)
-        } else if is_hovered_bar || state.is_scrollbar_visible() {
+        } else if resizing || is_hovered_bar || state.is_scrollbar_visible() {
             (default_thumb.into(), default_track, THUMB_WIDTH)
         } else {
             (default_track, default_track, THUMB_WIDTH)
@@ -313,6 +359,10 @@ impl Element for Scrollbar {
             .use_state(cx, |_, _| ScrollbarState::default())
             .read(cx)
             .clone();
+        let (resizing_width, resizing_height) = resizing_axes(window);
+        if resizing_width || resizing_height {
+            window.request_animation_frame();
+        }
         let mut states = vec![];
         let mut has_both = matches!(self.axis, ScrollbarAxis::Both);
         let scroll_size = self
@@ -320,6 +370,11 @@ impl Element for Scrollbar {
             .unwrap_or(self.scroll_handle.content_size());
         for axis in self.axis.all() {
             let is_vertical = axis.is_vertical();
+            let resizing = if is_vertical {
+                resizing_height
+            } else {
+                resizing_width
+            };
             let (scroll_area_size, container_size, scroll_position) = if is_vertical {
                 (
                     scroll_size.height,
@@ -349,10 +404,11 @@ impl Element for Scrollbar {
             let thumb_end = (thumb_start + thumb_length).min(container_size - margin_end);
             let bounds = Bounds {
                 origin: if is_vertical {
-                    point(
-                        hitbox.origin.x + hitbox.size.width - self.width,
-                        hitbox.origin.y,
-                    )
+                    let right = match VERTICAL_PIN.with(|pin| pin.get()) {
+                        Some(viewport) => viewport.right().min(hitbox.right()),
+                        None => hitbox.right(),
+                    };
+                    point(right - self.width, hitbox.origin.y)
                 } else {
                     point(
                         hitbox.origin.x,
@@ -365,7 +421,7 @@ impl Element for Scrollbar {
                     size(hitbox.size.width, self.width)
                 },
             };
-            let (thumb_color, track_color, thumb_width) = self.get_colors(cx, &state.get(), axis);
+            let (thumb_color, track_color, thumb_width) = self.get_colors(cx, &state.get(), axis, resizing);
             let thumb_length = thumb_end - thumb_start;
             let thumb_bounds = if is_vertical {
                 Bounds {

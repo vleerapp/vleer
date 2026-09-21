@@ -5,7 +5,8 @@ use std::{
 };
 
 use gpui::{
-    App, ElementId, Entity, IntoElement, Pixels, Point, RenderOnce, Window, point, prelude::*, px,
+    App, Bounds, DispatchPhase, ElementId, Entity, IntoElement, Pixels, Point, RenderOnce,
+    ScrollWheelEvent, Window, point, prelude::*, px,
 };
 
 use super::scrollbar::ScrollbarHandle;
@@ -117,6 +118,46 @@ fn schedule_frame(
             cx.notify();
         });
         schedule_frame(&motion, scroll, window, cx);
+    });
+}
+
+pub fn modifier_wheel_horizontal(
+    scroll: Rc<dyn ScrollbarHandle>,
+    bounds: Bounds<Pixels>,
+    id: ElementId,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let motion = window.use_keyed_state(id, cx, |_, _| ScrollMotion::new(scroll.offset()));
+    window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
+        if phase != DispatchPhase::Capture
+            || !event.modifiers.secondary()
+            || !bounds.contains(&event.position)
+        {
+            return;
+        }
+        let maximum = scroll.max_offset();
+        if maximum.x <= REST {
+            return;
+        }
+        cx.stop_propagation();
+
+        let delta = event.delta.pixel_delta(window.line_height());
+        let offset = scroll.offset();
+        scroll.set_offset(clamp_offset(
+            point(offset.x + delta.x + delta.y, offset.y),
+            maximum,
+        ));
+        motion.update(cx, |motion, _| {
+            if event.delta.precise() {
+                motion.stop(scroll.offset());
+            } else {
+                motion.nudge(scroll.offset(), maximum);
+                scroll.set_offset(motion.shown);
+            }
+        });
+        schedule_frame(&motion, scroll.clone(), window, cx);
+        window.refresh();
     });
 }
 
