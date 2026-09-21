@@ -153,7 +153,7 @@ impl Element for Slider {
                     let mouse_in_1 = mouse_in.clone();
 
                     cx.on_mouse_event(move |ev: &MouseDownEvent, _, window, cx| {
-                        if !bounds.contains(&ev.position) {
+                        if ev.button != MouseButton::Left || !bounds.contains(&ev.position) {
                             return;
                         }
 

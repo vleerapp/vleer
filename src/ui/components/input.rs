@@ -2,7 +2,7 @@ use gpui::{
     App, Bounds, ClipboardItem, ContentMask, Context, CursorStyle, Element, ElementId,
     ElementInputHandler, Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable,
     GlobalElementId, IntoElement, KeyBinding, LayoutId, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, Render, Rgba, ShapedLine, SharedString,
+    MouseMoveEvent, MouseUpEvent, NavigationDirection, PaintQuad, Pixels, Point, Render, Rgba, ShapedLine, SharedString,
     Style, TextRun, UTF16Selection, Window, actions, fill, point, prelude::*, px, relative, rgba,
     size,
 };
@@ -688,7 +688,19 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::enter))
             .on_action(|_: &Escape, window, cx| window.blur(cx))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
-            .on_mouse_down_out(|_, window, cx| window.blur(cx))
+            .on_mouse_down(
+                MouseButton::Navigate(NavigationDirection::Back),
+                |_, window, _| window.prevent_default(),
+            )
+            .on_mouse_down(
+                MouseButton::Navigate(NavigationDirection::Forward),
+                |_, window, _| window.prevent_default(),
+            )
+            .on_mouse_down_out(|event, window, cx| {
+                if event.button == MouseButton::Left {
+                    window.blur(cx);
+                }
+            })
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
