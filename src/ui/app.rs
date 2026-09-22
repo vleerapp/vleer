@@ -8,6 +8,7 @@ use tracing::{debug, error};
 use crate::{
     data::{config::Config, db::repo::Database, scanner::Scanner, telemetry::Telemetry},
     media::{controller::MediaController, playback::Playback, queue::Queue},
+    services::lastfm::{LastfmClient, LastfmScrobbler},
     ui::{
         assets::{
             VleerAssetSource,
@@ -416,6 +417,8 @@ pub async fn run() -> Result<()> {
             Queue::init(cx);
             Variables::init(cx);
             Telemetry::init(cx, data_dir.clone());
+            LastfmClient::init(cx);
+            LastfmScrobbler::init(cx);
             Updater::init(cx, navbar::status());
             MediaController::init(cx);
 

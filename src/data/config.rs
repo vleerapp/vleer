@@ -89,6 +89,26 @@ impl Default for AudioSettings {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LastfmSettings {
+    #[serde(default)]
+    pub session_key: Option<String>,
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default = "defaults::scrobble_threshold")]
+    pub scrobble_threshold: f32,
+}
+
+impl Default for LastfmSettings {
+    fn default() -> Self {
+        Self {
+            session_key: None,
+            username: None,
+            scrobble_threshold: defaults::scrobble_threshold(),
+        }
+    }
+}
+
 pub use crate::updater::UpdateChannel;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,6 +144,8 @@ pub struct SettingsConfig {
     pub audio: AudioSettings,
     #[serde(default)]
     pub updater: UpdaterSettings,
+    #[serde(default)]
+    pub lastfm: LastfmSettings,
 }
 
 mod defaults {
@@ -142,6 +164,9 @@ mod defaults {
     pub fn channel() -> super::UpdateChannel {
         super::UpdateChannel::of_running_build()
     }
+    pub fn scrobble_threshold() -> f32 {
+        0.5
+    }
 }
 
 impl Default for SettingsConfig {
@@ -154,6 +179,7 @@ impl Default for SettingsConfig {
             scan: ScanSettings::default(),
             audio: AudioSettings::default(),
             updater: UpdaterSettings::default(),
+            lastfm: LastfmSettings::default(),
         }
     }
 }
@@ -265,6 +291,8 @@ impl Config {
         }
         f(&mut self.config);
         self.config.audio.volume = self.config.audio.volume.clamp(0.0, 1.0);
+        self.config.lastfm.scrobble_threshold =
+            self.config.lastfm.scrobble_threshold.clamp(0.05, 1.0);
         let scan_paths: Vec<String> = self
             .config
             .scan

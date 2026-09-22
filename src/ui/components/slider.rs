@@ -240,9 +240,9 @@ impl Slider {
 
                 let color = if render_full {
                     if x < thumb_right {
-                        track_color
-                    } else {
                         fill_color
+                    } else {
+                        track_color
                     }
                 } else {
                     fill_color

@@ -4,6 +4,7 @@ use crate::data::config::{Config, UpdateChannel};
 use crate::data::db::repo::Database;
 use crate::data::scanner::{Scanner, expand_tilde};
 use crate::media::playback::Playback;
+use crate::services::lastfm::{LastfmAuthStatus, LastfmClient};
 use crate::ui::components::context_menu::{LibraryDataChanged, QueueChanged};
 use crate::ui::components::div::{flex_col, flex_row};
 use crate::ui::components::icons::{self, LINK, icon};
@@ -291,10 +292,201 @@ impl RenderOnce for EqSection {
     }
 }
 
+#[derive(IntoElement)]
+struct LastfmSection {
+    threshold_input: Entity<TextInput>,
+}
+
+impl RenderOnce for LastfmSection {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let variables = cx.global::<Variables>();
+        let lastfm = cx.global::<Config>().get().lastfm.clone();
+        let threshold_input = self.threshold_input.clone();
+        let auth_status = cx.global::<LastfmAuthStatus>().clone();
+        let connected = lastfm.session_key.is_some();
+
+        let status_text = match &auth_status {
+            LastfmAuthStatus::Connecting => "Requesting authorization…".to_string(),
+            LastfmAuthStatus::WaitingForBrowser => {
+                "Waiting for authorization in your browser…".to_string()
+            }
+            LastfmAuthStatus::Error(e) => format!("Error: {e}"),
+            LastfmAuthStatus::Idle => match &lastfm.username {
+                Some(name) if connected => format!("Connected as {name}"),
+                _ => "Not connected".to_string(),
+            },
+        };
+
+        let busy = matches!(
+            auth_status,
+            LastfmAuthStatus::Connecting | LastfmAuthStatus::WaitingForBrowser
+        );
+
+        flex_col()
+            .gap(px(variables.padding_16))
+            .child(
+                div()
+                    .text_color(variables.text)
+                    .text_xl()
+                    .font_weight(FontWeight::BOLD)
+                    .child("Last.fm"),
+            )
+            .when(!LastfmClient::is_configured(), |col| {
+                col.child(
+                    div()
+                        .text_color(variables.text_secondary)
+                        .child("Last.fm integration is not configured for this build."),
+                )
+            })
+            .when(LastfmClient::is_configured(), |col| {
+                col.child(
+                    flex_row()
+                        .items_center()
+                        .gap(px(variables.padding_16))
+                        .child(
+                            div()
+                                .id("lastfm-connect-btn")
+                                .cursor_pointer()
+                                .px(px(variables.padding_16))
+                                .py(px(variables.padding_8))
+                                .bg(variables.element)
+                                .text_color(variables.text)
+                                .hover(|s| s.bg(variables.element_hover))
+                                .child(if connected {
+                                    "Log out"
+                                } else if busy {
+                                    "Connecting…"
+                                } else {
+                                    "Connect"
+                                })
+                                .on_click(move |_event, _window, cx| {
+                                    if busy {
+                                        return;
+                                    }
+                                    if connected {
+                                        cx.update_global::<Config, _>(|config, _cx| {
+                                            config.set(|s| {
+                                                s.lastfm.session_key = None;
+                                                s.lastfm.username = None;
+                                            });
+                                        });
+                                        return;
+                                    }
+                                    start_lastfm_connect(cx);
+                                }),
+                        )
+                        .child(
+                            div()
+                                .text_color(variables.text_secondary)
+                                .child(status_text),
+                        ),
+                )
+                .child(
+                    flex_col()
+                        .gap(px(variables.padding_8))
+                        .child(
+                            div()
+                                .text_color(variables.text_secondary)
+                                .child("Scrobble after this much of a song is listened to"),
+                        )
+                        .child(
+                            flex_row()
+                                .items_center()
+                                .gap(px(variables.padding_16))
+                                .child(
+                                    slider()
+                                        .id("lastfm-scrobble-threshold-slider")
+                                        .w(px(220.0))
+                                        .h(px(16.0))
+                                        .render_full(true)
+                                        .value(lastfm.scrobble_threshold)
+                                        .on_change(move |val, _win, cx| {
+                                            let val = val.clamp(0.05, 1.0);
+                                            cx.update_global::<Config, _>(|config, _cx| {
+                                                config.set(|s| s.lastfm.scrobble_threshold = val);
+                                            });
+                                            threshold_input.update(cx, |inp, cx| {
+                                                inp.set_text(format!("{:.0}", val * 100.0), cx);
+                                            });
+                                        }),
+                                )
+                                .child(
+                                    div()
+                                        .w(px(50.0))
+                                        .h(px(24.0))
+                                        .flex_shrink_0()
+                                        .overflow_hidden()
+                                        .child(self.threshold_input),
+                                )
+                                .child(div().text_color(variables.text_secondary).child("%")),
+                        ),
+                )
+            })
+    }
+}
+
+fn start_lastfm_connect(cx: &mut App) {
+    let client = cx.global::<LastfmClient>().clone();
+    cx.set_global(LastfmAuthStatus::Connecting);
+
+    cx.spawn(async move |cx| {
+        let bg = cx.background_executor().clone();
+
+        let token = {
+            let client = client.clone();
+            bg.spawn(async move { client.request_token() }).await
+        };
+
+        let token = match token {
+            Ok(t) => t,
+            Err(e) => {
+                cx.update(|app| app.set_global(LastfmAuthStatus::Error(e.to_string())));
+                return;
+            }
+        };
+
+        cx.update(|app| {
+            app.open_url(&LastfmClient::auth_url(&token));
+            app.set_global(LastfmAuthStatus::WaitingForBrowser);
+        });
+
+        for _ in 0..40 {
+            bg.timer(std::time::Duration::from_secs(3)).await;
+
+            let result = {
+                let client = client.clone();
+                let token = token.clone();
+                bg.spawn(async move { client.get_session(&token) }).await
+            };
+
+            if let Ok((session_key, username)) = result {
+                cx.update(|app| {
+                    app.update_global::<Config, _>(|config, _cx| {
+                        config.set(|s| {
+                            s.lastfm.session_key = Some(session_key);
+                            s.lastfm.username = Some(username);
+                        });
+                    });
+                    app.set_global(LastfmAuthStatus::Idle);
+                });
+                return;
+            }
+        }
+
+        cx.update(|app| {
+            app.set_global(LastfmAuthStatus::Error(
+                "Authorization timed out".to_string(),
+            ));
+        });
+    })
+    .detach();
+}
+
 pub struct SettingsView {
     gain_inputs: Vec<Entity<TextInput>>,
     freq_inputs: Vec<Entity<TextInput>>,
     q_inputs: Vec<Entity<TextInput>>,
+    lastfm_threshold_input: Entity<TextInput>,
 }
 
 impl SettingsView {
@@ -323,6 +515,15 @@ impl SettingsView {
                     inp.set_text(format!("{:.2}", q), cx);
                 });
             }
+            let threshold = cx.global::<Config>().get().lastfm.scrobble_threshold;
+            this.lastfm_threshold_input.update(cx, |inp, cx| {
+                inp.set_text(format!("{:.0}", threshold * 100.0), cx);
+            });
+            cx.notify();
+        })
+        .detach();
+
+        cx.observe_global::<LastfmAuthStatus>(|_this, cx| {
             cx.notify();
         })
         .detach();
@@ -478,10 +679,41 @@ impl SettingsView {
             .detach();
         }
 
+        let lastfm_threshold = cx.global::<Config>().get().lastfm.scrobble_threshold;
+        let lastfm_threshold_input = cx.new(|cx| {
+            TextInput::new(cx, "")
+                .with_text(format!("{:.0}", lastfm_threshold * 100.0))
+                .with_background(element_hover)
+                .with_text_color(text_secondary)
+                .with_height(px(24.0))
+                .centered()
+                .with_validator(|s| {
+                    if s.is_empty() {
+                        return true;
+                    }
+                    s.parse::<f32>()
+                        .map(|v| (5.0..=100.0).contains(&v))
+                        .unwrap_or(false)
+                })
+        });
+
+        cx.subscribe(&lastfm_threshold_input, move |_this, _entity, event, cx| {
+            if let InputEvent::Submit(text) = event
+                && let Ok(new_pct) = text.parse::<f32>()
+            {
+                let new_pct = new_pct.clamp(5.0, 100.0);
+                cx.update_global::<Config, _>(|config, _cx| {
+                    config.set(|s| s.lastfm.scrobble_threshold = new_pct / 100.0);
+                });
+            }
+        })
+        .detach();
+
         Self {
             gain_inputs,
             freq_inputs,
             q_inputs,
+            lastfm_threshold_input,
         }
     }
 }
@@ -657,6 +889,9 @@ impl Render for SettingsView {
                             )
                             .child(ScanPathsSection),
                     )
+                    .child(LastfmSection {
+                        threshold_input: self.lastfm_threshold_input.clone(),
+                    })
                     .child(UpdatesSection),
             )
     }

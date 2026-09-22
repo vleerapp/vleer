@@ -111,6 +111,8 @@ jobs:
       S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
       S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
       S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+      LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+      LASTFM_API_SECRET: ${{ secrets.LASTFM_API_SECRET }}
 
     steps:
       - uses: actions/checkout@v5

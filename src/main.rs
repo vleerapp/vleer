@@ -9,6 +9,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 mod data;
 mod media;
+mod services;
 mod single_instance;
 mod status;
 mod ui;
