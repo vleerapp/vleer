@@ -109,6 +109,10 @@ windows = { version = "0.62.2", features = [
 ] }
 windows-future = "0.3.2"
 
+[patch.crates-io]
+gpui-unofficial = { git = "https://github.com/iamnbutler/gpui-unofficial", tag = "v1.20.2" }
+gpui-apple-gpui-unofficial = { git = "https://github.com/iamnbutler/gpui-unofficial", tag = "v1.20.2" }
+
 [profile.dist]
 inherits = "release"
 strip = true

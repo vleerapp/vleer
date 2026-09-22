@@ -1818,6 +1818,15 @@ dependencies = [
 
 [[package]]
 name = "dirs"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3e8aa94d75141228480295a7d0e7feb620b1a5ad9f12bc40be62411e38cce4e"
+dependencies = [
+ "dirs-sys 0.5.0",
+]
+
+[[package]]
+name = "dirs"
 version = "7.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d57d423b3c82e89b9a24ca3091fee61f456a26edbd28d26c65906f4bc1dcd8f"
@@ -2801,8 +2810,7 @@ dependencies = [
 [[package]]
 name = "gpui-apple-gpui-unofficial"
 version = "1.20.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "769f233435bc69b8c7611fd64013098189d515337d45002e61c912ed259b95ef"
+source = "git+https://github.com/iamnbutler/gpui-unofficial?tag=v1.20.2#82a4cabf5b68cd82c970af97c7a3d9195e185d73"
 dependencies = [
  "anyhow",
  "block",
@@ -2913,7 +2921,7 @@ dependencies = [
  "smallvec",
  "strum",
  "uuid 1.26.1",
- "zed-font-kit",
+ "zed-font-kit 0.14.1-zed (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -2956,8 +2964,7 @@ dependencies = [
 [[package]]
 name = "gpui-unofficial"
 version = "1.20.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39f7d727331b492cab8e3952f70d00cfe263246cb56f6f42e79c697f5809438d"
+source = "git+https://github.com/iamnbutler/gpui-unofficial?tag=v1.20.2#82a4cabf5b68cd82c970af97c7a3d9195e185d73"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -3018,7 +3025,7 @@ dependencies = [
  "waker-fn",
  "web-time",
  "windows 0.62.2",
- "zed-font-kit",
+ "zed-font-kit 0.14.1-zed (git+https://github.com/zed-industries/font-kit?rev=94b0f28166665e8fd2f53ff6d268a14955c82269)",
  "zed-scap",
  "ztracing-gpui-unofficial",
 ]
@@ -3083,7 +3090,7 @@ dependencies = [
  "unicode-segmentation",
  "web-sys",
  "wgpu",
- "zed-font-kit",
+ "zed-font-kit 0.14.1-zed (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -9642,6 +9649,30 @@ dependencies = [
  "core-graphics 0.24.0",
  "core-text",
  "dirs 5.0.1",
+ "dwrote",
+ "float-ord",
+ "freetype-sys",
+ "lazy_static",
+ "libc",
+ "log",
+ "pathfinder_geometry",
+ "pathfinder_simd",
+ "walkdir",
+ "winapi",
+ "yeslogic-fontconfig-sys",
+]
+
+[[package]]
+name = "zed-font-kit"
+version = "0.14.1-zed"
+source = "git+https://github.com/zed-industries/font-kit?rev=94b0f28166665e8fd2f53ff6d268a14955c82269#94b0f28166665e8fd2f53ff6d268a14955c82269"
+dependencies = [
+ "bitflags 2.13.2",
+ "byteorder",
+ "core-foundation 0.10.1",
+ "core-graphics 0.24.0",
+ "core-text",
+ "dirs 6.0.0",
  "dwrote",
  "float-ord",
  "freetype-sys",
