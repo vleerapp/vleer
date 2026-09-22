@@ -3,11 +3,14 @@ use crate::data::models::Cuid;
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
 use crate::ui::app::MainWindow;
-use crate::ui::components::context_menu::{ContextMenu, QueueChanged, song_context_menu_items};
+use crate::ui::assets::image_cache::view_image_cache;
+use crate::ui::components::context_menu::{
+    ContextMenu, QueueChanged, song_context_menu_items, song_in_playlist_context_menu_items,
+};
 use crate::ui::components::div::{flex_col, flex_row};
 use crate::ui::components::icons::{self, icon};
 use crate::ui::components::scrollbar::{Scrollbar, ScrollbarAxis, ScrollbarHandle};
-use crate::ui::components::scroller::SmoothScrollable;
+use crate::ui::components::scroller::{ShiftAnimator, SmoothScrollable, drive_shift};
 use crate::ui::variables::Variables;
 use crate::ui::views::{AppView, SelectedAlbum};
 use gpui::{prelude::*, *};
@@ -19,6 +22,7 @@ use tracing::debug;
 
 const ANIMATION_FPS: f32 = 15.0;
 const COVER_SIZE: f32 = 36.0;
+const ROW_PITCH: f32 = COVER_SIZE + 16.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ColumnSize {
@@ -97,6 +101,85 @@ impl SongEntry {
     }
 }
 
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum SortKey {
+    Text(String),
+    Seconds(u32),
+}
+
+fn sort_key(entry: &SongEntry, column: SongColumn) -> SortKey {
+    match column {
+        SongColumn::Number => SortKey::Seconds(entry.track_number.unwrap_or(0).max(0) as u32),
+        SongColumn::Title => SortKey::Text(entry.title.to_lowercase()),
+        SongColumn::Album => SortKey::Text(entry.album.to_lowercase()),
+        SongColumn::Genre => SortKey::Text(entry.genre.to_lowercase()),
+        SongColumn::Duration => {
+            let (minutes, seconds) = entry.duration.split_once(':').unwrap_or(("0", "0"));
+            SortKey::Seconds(
+                minutes.parse::<u32>().unwrap_or(0) * 60 + seconds.parse::<u32>().unwrap_or(0),
+            )
+        }
+    }
+}
+
+struct SortMemo {
+    column: SongColumn,
+    ascending: bool,
+    len: usize,
+    first: usize,
+    rows: Vec<Arc<SongEntry>>,
+}
+
+pub struct SongSorter {
+    source: Rc<std::cell::RefCell<Vec<Arc<SongEntry>>>>,
+    memo: std::cell::RefCell<Option<SortMemo>>,
+}
+
+impl SongSorter {
+    pub fn new(source: Rc<std::cell::RefCell<Vec<Arc<SongEntry>>>>) -> Rc<Self> {
+        Rc::new(Self {
+            source,
+            memo: std::cell::RefCell::new(None),
+        })
+    }
+
+    pub fn with_rows<R>(
+        &self,
+        sort: Option<TableSort>,
+        f: impl FnOnce(&[Arc<SongEntry>]) -> R,
+    ) -> R {
+        let source = self.source.borrow();
+        let Some(sort) = sort else {
+            return f(&source);
+        };
+
+        let len = source.len();
+        let first = source.first().map_or(0, |e| Arc::as_ptr(e) as usize);
+        let mut memo = self.memo.borrow_mut();
+        let stale = memo.as_ref().is_none_or(|m| {
+            m.column != sort.column
+                || m.ascending != sort.ascending
+                || m.len != len
+                || m.first != first
+        });
+        if stale {
+            let mut rows = source.clone();
+            rows.sort_by_cached_key(|e| sort_key(e, sort.column));
+            if !sort.ascending {
+                rows.reverse();
+            }
+            *memo = Some(SortMemo {
+                column: sort.column,
+                ascending: sort.ascending,
+                len,
+                first,
+                rows,
+            });
+        }
+        f(&memo.as_ref().unwrap().rows)
+    }
+}
+
 pub fn join_artists(artists: &[String]) -> (String, Vec<Range<usize>>) {
     let separator = " \u{00B7} ";
     let mut result = String::new();
@@ -129,6 +212,79 @@ pub fn format_artist_line(artist_name: &Option<String>) -> (String, Vec<Range<us
     }
 }
 
+pub type PlaylistContext = Rc<std::cell::RefCell<Option<Cuid>>>;
+#[derive(Default)]
+pub struct ReorderState {
+    from: Option<usize>,
+    over: Option<usize>,
+}
+
+pub type ReorderHandler = Rc<dyn Fn(&mut App, usize, usize) + 'static>;
+
+#[derive(Clone)]
+pub struct ReorderContext {
+    state: Entity<ReorderState>,
+    on_reorder: ReorderHandler,
+    row_width: Rc<std::cell::Cell<Pixels>>,
+    cache_view: AppView,
+}
+
+#[derive(Clone)]
+struct SongDragPayload {
+    from_index: usize,
+}
+
+struct SongDragPreview {
+    item: Entity<SongTableItem>,
+    width: Pixels,
+    cache_view: AppView,
+}
+
+impl Render for SongDragPreview {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let text = cx.global::<Variables>().text;
+
+        div()
+            .font_family("Feature Mono")
+            .text_size(px(14.0))
+            .line_height(px(14.0))
+            .text_color(text)
+            .w(self.width)
+            .shadow_md()
+            .image_cache(view_image_cache(self.cache_view))
+            .child(self.item.clone())
+    }
+}
+
+pub fn display_source(display_idx: usize, from: usize, over: usize) -> Option<usize> {
+    if display_idx == over {
+        return None;
+    }
+    let remaining = if display_idx < over {
+        display_idx
+    } else {
+        display_idx - 1
+    };
+    Some(if remaining < from {
+        remaining
+    } else {
+        remaining + 1
+    })
+}
+
+fn finish_reorder(context: &ReorderContext, from: usize, cx: &mut App) {
+    let to = context.state.update(cx, |state, cx| {
+        let to = state.over.unwrap_or(from);
+        state.from = None;
+        state.over = None;
+        cx.notify();
+        to
+    });
+    if to != from {
+        (context.on_reorder)(cx, from, to);
+    }
+}
+
 pub type OnSelectHandler = Rc<dyn Fn(&mut App, &Cuid) + 'static>;
 pub type GetRowCountHandler = Rc<dyn Fn(&mut App, Option<TableSort>) -> usize + 'static>;
 pub type GetRowHandler =
@@ -153,6 +309,8 @@ pub struct SongTableHandlers {
     pub get_row: GetRowHandler,
     pub on_select: Option<OnSelectHandler>,
     pub get_queue: Option<QueueHandler>,
+    pub playlist: Option<PlaylistContext>,
+    pub reorder: Option<ReorderContext>,
 }
 
 const MAX_CACHED_ROWS: usize = 500;
@@ -204,6 +362,9 @@ pub struct SongTableItem {
     is_animating: bool,
     hovered_artist: Option<usize>,
     context_menu: Entity<ContextMenu>,
+    playlist: Option<PlaylistContext>,
+    reorder: Option<ReorderContext>,
+    is_preview: bool,
 }
 
 impl SongTableItem {
@@ -228,6 +389,9 @@ impl SongTableItem {
             is_animating: false,
             hovered_artist: None,
             context_menu: cx.new(|_| ContextMenu::new()),
+            playlist: handlers.playlist,
+            reorder: handlers.reorder,
+            is_preview: false,
         })
     }
 }
@@ -248,6 +412,8 @@ impl Render for SongTableItem {
         let show_cover = self.show_cover;
         let show_genre = self.show_genre;
         let context_menu_entity = self.context_menu.clone();
+        let row_hover = self.reorder.is_some();
+        let is_preview = self.is_preview;
 
         let mut row = flex_row()
             .w_full()
@@ -255,7 +421,11 @@ impl Render for SongTableItem {
             .group("song-row")
             .items_center()
             .gap(px(variables.padding_8))
-            .pb(px(variables.padding_16))
+            .when(!row_hover && !is_preview, |div| {
+                div.pb(px(variables.padding_16))
+            })
+            .when(row_hover, |div| div.hover(|s| s.bg(variables.element)))
+            .when(is_preview, |div| div.bg(variables.element))
             .when_some(on_select, move |div, handler| {
                 let row_data = row_data_for_select.clone();
                 div.on_click(move |_, _, cx| {
@@ -268,8 +438,15 @@ impl Render for SongTableItem {
             .when_some(row_data.clone(), |div, data| {
                 let song_id = data.id.clone();
                 let ctx_menu = context_menu_entity.clone();
+                let playlist = self.playlist.clone();
                 div.on_mouse_down(MouseButton::Right, move |event, _window, cx| {
-                    let items = song_context_menu_items(song_id.clone(), cx);
+                    let playlist_id = playlist.as_ref().and_then(|p| p.borrow().clone());
+                    let items = match playlist_id {
+                        Some(playlist_id) => {
+                            song_in_playlist_context_menu_items(song_id.clone(), playlist_id, cx)
+                        }
+                        None => song_context_menu_items(song_id.clone(), cx),
+                    };
                     ctx_menu.update(cx, |menu, cx| {
                         menu.show(event.position, items, cx);
                     });
@@ -278,6 +455,29 @@ impl Render for SongTableItem {
             .child(div().absolute().size_0().child(context_menu_entity));
 
         if let Some(data) = &row_data {
+            if let Some(reorder) = self.reorder.clone().filter(|_| self.sort_method.is_none()) {
+                let payload = SongDragPayload {
+                    from_index: self.row_index,
+                };
+                let mut template = self.clone();
+                template.reorder = None;
+                template.is_preview = true;
+                template.is_animating = false;
+                row = row
+                    .on_drag(
+                        payload,
+                        move |_payload: &SongDragPayload, _offset, _window, cx| {
+                            let item = cx.new(|_| template.clone());
+                            cx.new(|_| SongDragPreview {
+                                item,
+                                width: reorder.row_width.get(),
+                                cache_view: reorder.cache_view,
+                            })
+                        },
+                    )
+                    .cursor_move();
+            }
+
             let is_current = cx
                 .global::<Queue>()
                 .get_current_song(cx)
@@ -519,15 +719,15 @@ impl Render for SongTableItem {
                     );
                 } else if matches!(column, SongColumn::Album) {
                     let album_id = data.album_id.clone();
-                    column_div = column_div.items_start().child(
+                    column_div = column_div.flex().flex_row().items_start().child(
                         div()
                             .id(ElementId::Name(
                                 format!("song-{}-album", self.row_index).into(),
                             ))
+                            .min_w_0()
                             .text_color(variables.text_secondary)
                             .when_some(album_id.clone(), |div, album_id| {
-                                div.cursor_pointer().hover(|s| s.underline()).on_mouse_down(
-                                    MouseButton::Left,
+                                div.cursor_pointer().hover(|s| s.underline()).on_click(
                                     move |_event, window, cx| {
                                         cx.set_global(SelectedAlbum(Some(album_id.clone())));
                                         if let Some(Some(root)) = window.root::<MainWindow>() {
@@ -540,6 +740,7 @@ impl Render for SongTableItem {
                             })
                             .child(
                                 div()
+                                    .overflow_x_hidden()
                                     .whitespace_nowrap()
                                     .text_ellipsis()
                                     .child(data.album.clone()),
@@ -664,7 +865,14 @@ impl Render for SongTableItem {
             }
         }
 
-        row
+        if row_hover {
+            div()
+                .pb(px(variables.padding_16))
+                .child(row)
+                .into_any_element()
+        } else {
+            row.into_any_element()
+        }
     }
 }
 
@@ -691,6 +899,9 @@ pub struct SongTable {
     show_genre: bool,
     scrollbar_inset: Pixels,
     scroll_handle: UniformListScrollHandle,
+    playlist_context: Option<PlaylistContext>,
+    reorder: Option<ReorderContext>,
+    shift: Entity<ShiftAnimator>,
 }
 
 impl EventEmitter<SongTableEvent> for SongTable {}
@@ -724,6 +935,8 @@ impl SongTable {
             let views = cx.new(|_| FxHashMap::default());
             let render_counter = cx.new(|_| 0);
             let sort_method = cx.new(|_| None);
+            let shift = cx.new(|_| ShiftAnimator::default());
+            cx.observe(&shift, |_, _, cx| cx.notify()).detach();
 
             let row_count = get_row_count(cx, None);
             let (number_width, duration_width) = calculate_column_widths(row_count);
@@ -798,8 +1011,33 @@ impl SongTable {
                 show_genre,
                 scrollbar_inset,
                 scroll_handle: UniformListScrollHandle::default(),
+                playlist_context: None,
+                reorder: None,
+                shift,
             }
         })
+    }
+
+    pub fn set_playlist_context(&mut self, context: PlaylistContext) {
+        self.playlist_context = Some(context);
+    }
+
+    pub fn set_reorder(
+        &mut self,
+        cache_view: AppView,
+        on_reorder: ReorderHandler,
+        cx: &mut Context<Self>,
+    ) {
+        let state = cx.new(|_| ReorderState::default());
+        cx.observe(&state, |_, _, cx| cx.notify()).detach();
+        self.reorder = Some(ReorderContext {
+            state,
+            on_reorder,
+            row_width: Rc::new(std::cell::Cell::new(px(0.0))),
+            cache_view,
+        });
+        self.views.update(cx, |views, _| views.clear());
+        cx.notify();
     }
 }
 
@@ -812,6 +1050,10 @@ impl Render for SongTable {
         let handler = self.on_select.clone();
         let get_row = self.get_row.clone();
         let get_queue = self.get_queue.clone();
+        let playlist_context = self.playlist_context.clone();
+        let reorder = self.reorder.clone().filter(|_| sort_method.is_none());
+        let reorder_for_reset = reorder.clone();
+        let shift = self.shift.clone();
         let number_width = self.number_width;
         let duration_width = self.duration_width;
         let show_numbers = self.show_numbers;
@@ -916,7 +1158,11 @@ impl Render for SongTable {
             header = header.child(header_col);
         }
 
+        let width_tracker = reorder_for_reset.as_ref().map(|c| c.row_width.clone());
         let scroll_handle = self.scroll_handle.clone();
+        let padding_top: f32 = variables.padding_16;
+        let list_reorder = reorder_for_reset.clone();
+        let list_scroll_handle = scroll_handle.clone();
         let list = div()
             .flex_1()
             .size_full()
@@ -924,45 +1170,142 @@ impl Render for SongTable {
             .relative()
             .id("song-table-view")
             .gap(px(variables.padding_16))
+            .when_some(list_reorder, |this, context| {
+                this.on_drag_move(move |e: &DragMoveEvent<SongDragPayload>, _window, cx| {
+                    if row_count == 0 {
+                        return;
+                    }
+                    let scroll_offset = list_scroll_handle.offset();
+                    let rel_y = e.event.position.y - e.bounds.top() - scroll_offset.y
+                        - px(padding_top);
+                    let ratio: f32 = rel_y / px(ROW_PITCH);
+                    let idx = ratio.floor().clamp(0.0, (row_count - 1) as f32) as usize;
+                    let from = e.drag(cx).from_index;
+                    context.state.update(cx, |state, cx| {
+                        if state.over != Some(idx) || state.from != Some(from) {
+                            state.from = Some(from);
+                            state.over = Some(idx);
+                            cx.notify();
+                        }
+                    });
+                })
+            })
             .when(row_count > 0, |this| {
                 this.child(
                     div().size_full().child(
                         uniform_list(
                             ElementId::Name("song-table-list".into()),
                             row_count,
-                            move |range, _, cx| {
-                                range
-                                    .map(|idx| {
-                                        prune_views(&views_model, &render_counter, idx, cx);
-                                        let get_queue_clone = get_queue.clone();
-                                        create_or_retrieve_view(
-                                            &views_model,
-                                            idx,
-                                            |cx| {
-                                                SongTableItem::new(
-                                                    cx,
-                                                    idx,
-                                                    SongTableLayout {
-                                                        number_width,
-                                                        duration_width,
-                                                        show_numbers,
-                                                        show_album,
-                                                        show_cover,
-                                                        show_genre,
-                                                        sort_method,
-                                                    },
-                                                    SongTableHandlers {
-                                                        get_row: get_row.clone(),
-                                                        on_select: handler.clone(),
-                                                        get_queue: get_queue_clone,
-                                                    },
-                                                )
-                                            },
-                                            cx,
-                                        )
-                                        .into_any_element()
+                            move |range, window, cx| {
+                                let drag = reorder.as_ref().and_then(|context| {
+                                    let state = context.state.read(cx);
+                                    state.from.filter(|from| *from < row_count).map(|from| {
+                                        let over = state.over.unwrap_or(from).min(row_count - 1);
+                                        (from, over)
                                     })
-                                    .collect()
+                                });
+                                let slot_height = px(ROW_PITCH);
+                                if drag.is_none() {
+                                    shift.update(cx, |shift, _| shift.clear());
+                                }
+
+                                let items = range
+                                    .map(|display_idx| {
+                                        prune_views(&views_model, &render_counter, display_idx, cx);
+
+                                        let source = match drag {
+                                            Some((from, over)) => {
+                                                display_source(display_idx, from, over)
+                                            }
+                                            None => Some(display_idx),
+                                        };
+
+                                        let content = match source {
+                                            Some(idx) => {
+                                                let get_queue_clone = get_queue.clone();
+                                                let playlist_clone = playlist_context.clone();
+                                                let reorder_clone = reorder.clone();
+                                                create_or_retrieve_view(
+                                                    &views_model,
+                                                    idx,
+                                                    |cx| {
+                                                        SongTableItem::new(
+                                                            cx,
+                                                            idx,
+                                                            SongTableLayout {
+                                                                number_width,
+                                                                duration_width,
+                                                                show_numbers,
+                                                                show_album,
+                                                                show_cover,
+                                                                show_genre,
+                                                                sort_method,
+                                                            },
+                                                            SongTableHandlers {
+                                                                get_row: get_row.clone(),
+                                                                on_select: handler.clone(),
+                                                                get_queue: get_queue_clone,
+                                                                playlist: playlist_clone,
+                                                                reorder: reorder_clone,
+                                                            },
+                                                        )
+                                                    },
+                                                    cx,
+                                                )
+                                                .into_any_element()
+                                            }
+                                            None => div().w_full().h(slot_height).into_any_element(),
+                                        };
+
+                                        let Some(context) = reorder.clone() else {
+                                            return content;
+                                        };
+                                        let drop_context = context.clone();
+                                        let shift_offset = match source {
+                                            Some(idx) => shift.update(cx, |shift, _| {
+                                                shift.offset(idx, display_idx as f32 * ROW_PITCH)
+                                            }),
+                                            None => 0.0,
+                                        };
+
+                                        div()
+                                            .id(ElementId::Name(
+                                                format!("song-row-wrap-{display_idx}").into(),
+                                            ))
+                                            .w_full()
+                                            .on_drag_move(
+                                                move |e: &DragMoveEvent<SongDragPayload>,
+                                                      _window,
+                                                      cx| {
+                                                    if !e.bounds.contains(&e.event.position) {
+                                                        return;
+                                                    }
+                                                    let from = e.drag(cx).from_index;
+                                                    context.state.update(cx, |state, cx| {
+                                                        if state.over != Some(display_idx)
+                                                            || state.from != Some(from)
+                                                        {
+                                                            state.from = Some(from);
+                                                            state.over = Some(display_idx);
+                                                            cx.notify();
+                                                        }
+                                                    });
+                                                },
+                                            )
+                                            .on_drop(move |payload: &SongDragPayload, _window, cx| {
+                                                finish_reorder(&drop_context, payload.from_index, cx);
+                                            })
+                                            .child(
+                                                div()
+                                                    .relative()
+                                                    .top(px(shift_offset))
+                                                    .child(content),
+                                            )
+                                            .into_any_element()
+                                    })
+                                    .collect::<Vec<_>>();
+                                drive_shift(&shift, window, cx);
+                                items
                             },
                         )
                         .track_scroll(&scroll_handle)
@@ -971,6 +1314,13 @@ impl Render for SongTable {
                         .pb(px(variables.padding_24 - variables.padding_16)),
                     ),
                 )
+                .when_some(width_tracker, |this, cell| {
+                    this.child(
+                        canvas(move |bounds, _, _| cell.set(bounds.size.width), |_, _, _, _| {})
+                            .absolute()
+                            .size_full(),
+                    )
+                })
                 .child(
                     div()
                         .absolute()
@@ -983,10 +1333,29 @@ impl Render for SongTable {
             })
             .smooth_scroll(&self.scroll_handle);
 
+        let reset_up = reorder_for_reset.clone();
+        let reset_out = reorder_for_reset;
+        let reset = |context: &ReorderContext, cx: &mut App| {
+            let from = context.state.read(cx).from;
+            if let Some(from) = from {
+                finish_reorder(context, from, cx);
+            }
+        };
+
         div()
             .h_full()
             .w_full()
             .min_h_0()
+            .on_mouse_up(MouseButton::Left, move |_, _, cx| {
+                if let Some(context) = &reset_up {
+                    reset(context, cx);
+                }
+            })
+            .on_mouse_up_out(MouseButton::Left, move |_, _, cx| {
+                if let Some(context) = &reset_out {
+                    reset(context, cx);
+                }
+            })
             .child(div().h_full().w_full().flex_col().child(header).child(list))
     }
 }

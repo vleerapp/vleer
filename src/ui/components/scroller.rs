@@ -9,6 +9,8 @@ use gpui::{
     ScrollWheelEvent, Window, point, prelude::*, px,
 };
 
+use rustc_hash::FxHashMap;
+
 use super::scrollbar::ScrollbarHandle;
 
 const EASE: f32 = 0.12;
@@ -118,6 +120,88 @@ fn schedule_frame(
             cx.notify();
         });
         schedule_frame(&motion, scroll, window, cx);
+    });
+}
+
+#[derive(Default)]
+pub struct ShiftAnimator {
+    items: FxHashMap<usize, (f32, f32)>,
+    active: bool,
+    frame_pending: bool,
+    last_frame: Option<Instant>,
+}
+
+impl ShiftAnimator {
+    pub fn offset(&mut self, key: usize, target: f32) -> f32 {
+        let entry = self.items.entry(key).or_insert((target, target));
+        if entry.1 != target {
+            entry.1 = target;
+            self.active = true;
+        }
+        entry.0 - target
+    }
+
+    pub fn clear(&mut self) {
+        if self.items.is_empty() && !self.active {
+            return;
+        }
+        self.items.clear();
+        self.active = false;
+        self.last_frame = None;
+    }
+
+    fn advance(&mut self, elapsed: Duration) {
+        let ease = 1.0 - (1.0 - EASE).powf(elapsed.min(MAX_FRAME_TIME).as_secs_f32() * HERTZ);
+        let rest: f32 = REST.into();
+        let mut moving = false;
+        for (shown, target) in self.items.values_mut() {
+            let distance = *target - *shown;
+            if distance.abs() < rest {
+                *shown = *target;
+            } else {
+                *shown += distance * ease;
+                moving = true;
+            }
+        }
+        self.active = moving;
+        if !moving {
+            self.last_frame = None;
+        }
+    }
+}
+
+pub fn drive_shift(animator: &Entity<ShiftAnimator>, window: &mut Window, cx: &mut App) {
+    let schedule = animator.update(cx, |animator, _| {
+        if !animator.active || animator.frame_pending {
+            return false;
+        }
+        animator.frame_pending = true;
+        true
+    });
+    if !schedule {
+        return;
+    }
+
+    let animator = animator.downgrade();
+    window.on_next_frame(move |window, cx| {
+        let Some(animator) = animator.upgrade() else {
+            return;
+        };
+        animator.update(cx, |animator, cx| {
+            animator.frame_pending = false;
+            if !animator.active {
+                return;
+            }
+            let now = Instant::now();
+            let elapsed = animator
+                .last_frame
+                .replace(now)
+                .map(|last| now.duration_since(last))
+                .unwrap_or(Duration::from_secs_f32(1.0 / HERTZ));
+            animator.advance(elapsed);
+            cx.notify();
+        });
+        drive_shift(&animator, window, cx);
     });
 }
 

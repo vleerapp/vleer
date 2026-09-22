@@ -533,7 +533,7 @@ pub fn song_context_menu_items(song_id: Cuid, cx: &App) -> Vec<ContextMenuItem> 
                 cx.set_global(QueueChanged);
             }
         }),
-        ContextMenuItem::entry("Play last", icons::PLAY_LAST, {
+        ContextMenuItem::entry("Add to Queue", icons::PLAY_LAST, {
             let id = song_id.clone();
             move |_, cx| {
                 cx.update_global::<Queue, _>(|queue, _| {
@@ -608,6 +608,27 @@ pub fn song_context_menu_items(song_id: Cuid, cx: &App) -> Vec<ContextMenuItem> 
     ]
 }
 
+pub fn song_in_playlist_context_menu_items(
+    song_id: Cuid,
+    playlist_id: Cuid,
+    cx: &App,
+) -> Vec<ContextMenuItem> {
+    let mut items = song_context_menu_items(song_id.clone(), cx);
+    let remove = ContextMenuItem::entry("Remove from playlist", icons::X, move |_, cx| {
+        let db = cx.global::<Database>().clone();
+        if let Err(e) = db.delete_playlist_song(&playlist_id, &song_id) {
+            error!("remove_song_from_playlist failed: {e}");
+        }
+        cx.set_global(LibraryDataChanged);
+    });
+    let at = items
+        .iter()
+        .position(|item| item.label.as_ref() == "Remove from library")
+        .unwrap_or(items.len());
+    items.insert(at, remove);
+    items
+}
+
 pub fn album_context_menu_items(album_id: Cuid, cx: &App) -> Vec<ContextMenuItem> {
     let db = cx.global::<Database>().clone();
     let album = db.get_album(&album_id).ok().flatten();
@@ -631,7 +652,7 @@ pub fn album_context_menu_items(album_id: Cuid, cx: &App) -> Vec<ContextMenuItem
             let id = album_id.clone();
             move |_, cx| play_album_next(id.clone(), cx)
         }),
-        ContextMenuItem::entry("Play last", icons::PLAY_LAST, {
+        ContextMenuItem::entry("Add to Queue", icons::PLAY_LAST, {
             let id = album_id.clone();
             move |_, cx| play_album_last(id.clone(), cx)
         }),
@@ -750,7 +771,7 @@ pub fn playlist_context_menu_items(playlist_id: Cuid, cx: &App) -> Vec<ContextMe
             let id = playlist_id.clone();
             move |_, cx| play_playlist_next(id.clone(), cx)
         }),
-        ContextMenuItem::entry("Play last", icons::PLAY_LAST, {
+        ContextMenuItem::entry("Add to Queue", icons::PLAY_LAST, {
             let id = playlist_id.clone();
             move |_, cx| play_playlist_last(id.clone(), cx)
         }),
