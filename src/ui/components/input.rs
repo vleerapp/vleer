@@ -2,9 +2,9 @@ use gpui::{
     App, Bounds, ClipboardItem, ContentMask, Context, CursorStyle, Element, ElementId,
     ElementInputHandler, Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable,
     GlobalElementId, IntoElement, KeyBinding, LayoutId, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, NavigationDirection, PaintQuad, Pixels, Point, Render, Rgba, ShapedLine, SharedString,
-    Style, TextRun, UTF16Selection, Window, actions, fill, point, prelude::*, px, relative, rgba,
-    size,
+    MouseMoveEvent, MouseUpEvent, NavigationDirection, PaintQuad, Pixels, Point, Render, Rgba,
+    ShapedLine, SharedString, Style, Subscription, TextRun, UTF16Selection, Window, actions, fill,
+    point, prelude::*, px, relative, rgba, size,
 };
 use std::cell::RefCell;
 use std::ops::Range;
@@ -106,6 +106,7 @@ pub struct TextInput {
     last_click_time: Option<Instant>,
     last_click_position: Point<Pixels>,
     click_count: u8,
+    blur_subscription: Option<Subscription>,
 }
 
 impl TextInput {
@@ -133,6 +134,7 @@ impl TextInput {
             last_click_time: None,
             last_click_position: Point::new(px(0.0), px(0.0)),
             click_count: 0,
+            blur_subscription: None,
         }
     }
 
@@ -492,6 +494,7 @@ impl TextInput {
 pub enum InputEvent {
     Change(String),
     Submit(String),
+    Blur,
 }
 
 impl EventEmitter<InputEvent> for TextInput {}
@@ -649,6 +652,11 @@ impl Render for TextInput {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focus = self.focus_handle.clone();
         let is_focused = focus.is_focused(window);
+        if self.blur_subscription.is_none() {
+            self.blur_subscription = Some(cx.on_focus_out(&focus, window, |_, _, _, cx| {
+                cx.emit(InputEvent::Blur);
+            }));
+        }
         let variables = cx.global::<Variables>();
 
         if is_focused {

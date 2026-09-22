@@ -87,6 +87,7 @@ impl Library {
         cx.subscribe(&search_input, |_, _, event: &InputEvent, cx| {
             let query = match event {
                 InputEvent::Change(text) | InputEvent::Submit(text) => text.trim().to_string(),
+                InputEvent::Blur => return,
             };
             cx.update_global::<Search, _>(|s, _| s.query = query.into());
         })
