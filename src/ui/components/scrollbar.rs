@@ -48,7 +48,10 @@ fn resizing_axes(window: &Window) -> (bool, bool) {
     tracker.size = Some(size);
     RESIZE.with(|t| t.set(tracker));
     let recent = |t: Option<Instant>| t.is_some_and(|t| now.duration_since(t) < RESIZE_VISIBLE);
-    (recent(tracker.width_changed), recent(tracker.height_changed))
+    (
+        recent(tracker.width_changed),
+        recent(tracker.height_changed),
+    )
 }
 
 pub fn set_vertical_pin(viewport: Option<Bounds<Pixels>>) {
@@ -421,7 +424,8 @@ impl Element for Scrollbar {
                     size(hitbox.size.width, self.width)
                 },
             };
-            let (thumb_color, track_color, thumb_width) = self.get_colors(cx, &state.get(), axis, resizing);
+            let (thumb_color, track_color, thumb_width) =
+                self.get_colors(cx, &state.get(), axis, resizing);
             let thumb_length = thumb_end - thumb_start;
             let thumb_bounds = if is_vertical {
                 Bounds {
