@@ -1094,7 +1094,7 @@ impl Render for SongTable {
                 .id(ElementId::Name(format!("header-col-{}", i).into()))
                 .gap(px(variables.padding_8))
                 .items_center()
-                .when(number_no_cover, |this| this.pl(px(variables.padding_8)))
+                .when(number_no_cover, |this| this.justify_center())
                 .when(is_sortable, |div| div.cursor_pointer());
 
             match size {
