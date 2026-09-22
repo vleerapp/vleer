@@ -24,7 +24,7 @@ use crate::{
             icons,
             scrollbar::{Scrollbar, ScrollbarAxis},
             song_table::{
-                GetRowCountHandler, GetRowHandler, QueueHandler, SongEntry, SongTable,
+                GetRowCountHandler, GetRowHandler, QueueHandler, SongEntry, SongSorter, SongTable,
                 SongTableEvent, join_artists,
             },
         },
@@ -92,20 +92,24 @@ impl AlbumView {
             Rc::new(move |_cx, _sort| cache.borrow().len())
         };
 
+        let sorter = SongSorter::new(songs_cache.clone());
+
         let get_row: GetRowHandler = {
-            let cache = songs_cache.clone();
-            Rc::new(move |_cx, idx, _sort| cache.borrow().get(idx).cloned())
+            let sorter = sorter.clone();
+            Rc::new(move |_cx, idx, sort| sorter.with_rows(sort, |rows| rows.get(idx).cloned()))
         };
 
         let queue_handler: QueueHandler = {
-            let cache = songs_cache.clone();
-            Rc::new(move |cx, current_id, index, _sort| {
-                let rest: Vec<Cuid> = {
-                    let cache = cache.borrow();
-                    if cache.get(index).map(|e| &e.id) != Some(&current_id) {
-                        return;
+            let sorter = sorter.clone();
+            Rc::new(move |cx, current_id, index, sort| {
+                let rest: Option<Vec<Cuid>> = sorter.with_rows(sort, |rows| {
+                    if rows.get(index).map(|e| &e.id) != Some(&current_id) {
+                        return None;
                     }
-                    cache.iter().skip(index + 1).map(|e| e.id.clone()).collect()
+                    Some(rows.iter().skip(index + 1).map(|e| e.id.clone()).collect())
+                });
+                let Some(rest) = rest else {
+                    return;
                 };
                 if rest.is_empty() {
                     return;
