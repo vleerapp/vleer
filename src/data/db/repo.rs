@@ -1406,6 +1406,19 @@ impl Database {
         Ok(())
     }
 
+    pub fn set_playlist_order(&self, playlist_id: &Cuid, song_ids: &[Cuid]) -> Result<()> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        for (position, song_id) in song_ids.iter().enumerate() {
+            tx.execute(
+                "UPDATE playlist_songs SET position = ?1 WHERE playlist_id = ?2 AND song_id = ?3",
+                params![position as i64, playlist_id, song_id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn clear_playlist(&self, playlist_id: &Cuid) -> Result<()> {
         let conn = self.conn.lock();
         conn.execute(

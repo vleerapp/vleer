@@ -24,8 +24,8 @@ use crate::{
             icons,
             input::{InputEvent, TextInput},
             song_table::{
-                GetRowCountHandler, GetRowHandler, QueueHandler, SongEntry, SongTable,
-                SongTableEvent, join_artists,
+                GetRowCountHandler, GetRowHandler, PlaylistContext, QueueHandler, ReorderHandler,
+                SongEntry, SongSorter, SongTable, SongTableEvent, join_artists,
             },
         },
         variables::Variables,
@@ -45,6 +45,7 @@ pub struct PlaylistView {
     title_input: Entity<TextInput>,
     context_menu: Entity<ContextMenu>,
     pending_title_focus: bool,
+    playlist_context: PlaylistContext,
 }
 
 fn song_entry_from_track(track: &PlaylistTrack) -> Arc<SongEntry> {
@@ -86,20 +87,24 @@ impl PlaylistView {
             Rc::new(move |_cx, _sort| cache.borrow().len())
         };
 
+        let sorter = SongSorter::new(songs_cache.clone());
+
         let get_row: GetRowHandler = {
-            let cache = songs_cache.clone();
-            Rc::new(move |_cx, idx, _sort| cache.borrow().get(idx).cloned())
+            let sorter = sorter.clone();
+            Rc::new(move |_cx, idx, sort| sorter.with_rows(sort, |rows| rows.get(idx).cloned()))
         };
 
         let queue_handler: QueueHandler = {
-            let cache = songs_cache.clone();
-            Rc::new(move |cx, current_id, index, _sort| {
-                let rest: Vec<Cuid> = {
-                    let cache = cache.borrow();
-                    if cache.get(index).map(|e| &e.id) != Some(&current_id) {
-                        return;
+            let sorter = sorter.clone();
+            Rc::new(move |cx, current_id, index, sort| {
+                let rest: Option<Vec<Cuid>> = sorter.with_rows(sort, |rows| {
+                    if rows.get(index).map(|e| &e.id) != Some(&current_id) {
+                        return None;
                     }
-                    cache.iter().skip(index + 1).map(|e| e.id.clone()).collect()
+                    Some(rows.iter().skip(index + 1).map(|e| e.id.clone()).collect())
+                });
+                let Some(rest) = rest else {
+                    return;
                 };
                 if rest.is_empty() {
                     return;
@@ -124,6 +129,43 @@ impl PlaylistView {
             px(0.0),
         );
 
+        let playlist_context: PlaylistContext = Rc::new(RefCell::new(None));
+        table.update(cx, |table, _| {
+            table.set_playlist_context(playlist_context.clone())
+        });
+
+        let on_reorder: ReorderHandler = {
+            let cache = songs_cache.clone();
+            let playlist_context = playlist_context.clone();
+            let table = table.downgrade();
+            Rc::new(move |cx, from, to| {
+                let Some(playlist_id) = playlist_context.borrow().clone() else {
+                    return;
+                };
+                let ordered: Vec<Cuid> = {
+                    let mut cache = cache.borrow_mut();
+                    if from >= cache.len() || to >= cache.len() {
+                        return;
+                    }
+                    let entry = cache.remove(from);
+                    cache.insert(to, entry);
+                    cache.iter().map(|e| e.id.clone()).collect()
+                };
+                table
+                    .update(cx, |_, cx| cx.emit(SongTableEvent::NewRows))
+                    .ok();
+
+                let db = cx.global::<Database>().clone();
+                if let Err(e) = db.set_playlist_order(&playlist_id, &ordered) {
+                    tracing::error!("Failed to reorder playlist: {}", e);
+                }
+                cx.set_global(LibraryDataChanged);
+            })
+        };
+        table.update(cx, |table, cx| {
+            table.set_reorder(AppView::Playlist, on_reorder, cx)
+        });
+
         let title_input = cx.new(|cx| {
             TextInput::new(cx, "Playlist name")
                 .with_background(transparent_black())
@@ -145,6 +187,7 @@ impl PlaylistView {
             title_input: title_input.clone(),
             context_menu: cx.new(|_| ContextMenu::new()),
             pending_title_focus: initial_focus,
+            playlist_context,
         };
 
         if cx.global::<ActiveView>().0 == AppView::Playlist {
@@ -155,6 +198,10 @@ impl PlaylistView {
             let (text, is_submit) = match event {
                 InputEvent::Submit(t) => (t.clone(), true),
                 InputEvent::Change(t) => (t.clone(), false),
+                InputEvent::Blur => {
+                    cx.set_global(LibraryDataChanged);
+                    return;
+                }
             };
             let name = text.trim().to_string();
             if name.is_empty() {
@@ -296,6 +343,7 @@ impl Render for PlaylistView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = *cx.global::<Variables>();
         let context_menu = self.context_menu.clone();
+        *self.playlist_context.borrow_mut() = self.playlist_id.clone();
 
         if self.pending_title_focus {
             self.pending_title_focus = false;
