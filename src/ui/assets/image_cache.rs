@@ -40,17 +40,26 @@ pub struct VleerImageCacheProvider {
     id: ElementId,
 }
 
-impl ImageCacheProvider for VleerImageCacheProvider {
-    fn provide(&mut self, window: &mut gpui::Window, cx: &mut App) -> gpui::AnyImageCache {
-        window
-            .with_global_id(self.id.clone(), |id, window| {
-                window.with_element_state(id, |cache: Option<Entity<VleerImageCache>>, _| {
-                    let cache = cache.unwrap_or_else(|| VleerImageCache::new(cx));
+#[derive(Default)]
+struct CacheRegistry(FxHashMap<ElementId, Entity<VleerImageCache>>);
 
-                    (cache.clone(), cache)
-                })
-            })
-            .into()
+impl gpui::Global for CacheRegistry {}
+
+impl ImageCacheProvider for VleerImageCacheProvider {
+    fn provide(&mut self, _window: &mut gpui::Window, cx: &mut App) -> gpui::AnyImageCache {
+        let existing = cx
+            .default_global::<CacheRegistry>()
+            .0
+            .get(&self.id)
+            .cloned();
+        let cache = existing.unwrap_or_else(|| {
+            let cache = VleerImageCache::new(cx);
+            cx.default_global::<CacheRegistry>()
+                .0
+                .insert(self.id.clone(), cache.clone());
+            cache
+        });
+        cache.into()
     }
 }
 
