@@ -1,6 +1,6 @@
 use crate::ui::assets::image_cache::vleer_cache;
 use crate::ui::assets::{ImageRequest, cover_uri};
-use crate::ui::components::scroller::SmoothScrollable;
+use crate::ui::components::scroller::{ShiftAnimator, SmoothScrollable, drive_shift};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 
@@ -12,12 +12,14 @@ use crate::media::queue::Queue;
 use crate::ui::components::context_menu::{ContextMenu, QueueChanged, song_context_menu_items};
 use crate::ui::components::div::{flex_col, flex_row};
 use crate::ui::components::icons::{self, icon};
-use crate::ui::components::scrollbar::{Scrollbar, ScrollbarAxis};
+use crate::ui::components::scrollbar::{Scrollbar, ScrollbarAxis, ScrollbarHandle};
+use crate::ui::components::song_table::display_source;
 use crate::ui::variables::Variables;
 
 const ANIMATION_FPS: f32 = 15.0;
 const ROW_HEIGHT: f32 = 36.0;
 const QUEUE_WIDTH: f32 = 300.0;
+const ROW_PITCH: f32 = ROW_HEIGHT + 8.0;
 
 #[derive(Clone, Default)]
 pub struct QueueVisible(pub bool);
@@ -28,21 +30,12 @@ impl Global for QueueVisible {}
 struct QueueDragPayload {
     from_index: usize,
     song: Song,
-    position: Point<Pixels>,
-}
-
-impl QueueDragPayload {
-    fn with_position(mut self, pos: Point<Pixels>) -> Self {
-        self.position = pos;
-        self
-    }
 }
 
 impl Render for QueueDragPayload {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = *cx.global::<Variables>();
         let song = self.song.clone();
-        let pos = self.position;
 
         let is_current = cx
             .global::<Queue>()
@@ -73,8 +66,7 @@ impl Render for QueueDragPayload {
             .font_family("Feature Mono")
             .text_size(px(14.0))
             .line_height(px(14.0))
-            .pl(pos.x - px(ROW_HEIGHT / 2.0))
-            .pt(pos.y - px(ROW_HEIGHT / 2.0))
+            .image_cache(vleer_cache("queue-image-cache"))
             .child(
                 flex_row()
                     .w(px(drag_w))
@@ -114,6 +106,7 @@ pub struct QueuePane {
     scroll_handle: UniformListScrollHandle,
     last_current_song_id: Option<Cuid>,
     context_menu: Entity<ContextMenu>,
+    shift: Entity<ShiftAnimator>,
 }
 
 impl QueuePane {
@@ -125,6 +118,9 @@ impl QueuePane {
         })
         .detach();
 
+        let shift = cx.new(|_| ShiftAnimator::default());
+        cx.observe(&shift, |_, _, cx| cx.notify()).detach();
+
         let mut pane = Self {
             songs: Vec::new(),
             drag_from: None,
@@ -133,6 +129,7 @@ impl QueuePane {
             scroll_handle: UniformListScrollHandle::default(),
             last_current_song_id: None,
             context_menu: cx.new(|_| ContextMenu::new()),
+            shift,
         };
         pane.reload_songs(cx);
         pane
@@ -180,6 +177,20 @@ impl QueuePane {
         .detach();
     }
 
+    fn commit_drag(&mut self, cx: &mut Context<Self>) {
+        let Some(from) = self.drag_from.take() else {
+            return;
+        };
+        let to = self.drag_over.take().unwrap_or(from);
+        cx.notify();
+        if from != to {
+            cx.update_global::<Queue, _>(|q, _| {
+                q.move_song_display(from, to);
+            });
+            cx.set_global(QueueChanged);
+        }
+    }
+
     fn reload_songs(&mut self, cx: &mut Context<Self>) {
         let items: Vec<Cuid> = cx.global::<Queue>().get_items();
         let db = cx.global::<Database>().clone();
@@ -209,15 +220,10 @@ impl QueuePane {
     }
 }
 
-fn build_display_order(len: usize, from: usize, to: usize) -> Vec<usize> {
-    let mut order: Vec<usize> = (0..len).collect();
-    let item = order.remove(from);
-    order.insert(to, item);
-    order
-}
-
 struct RowState<'a> {
     display_idx: usize,
+    slot_idx: usize,
+    shift: f32,
     song: &'a Song,
     is_current: bool,
     spectrum: [f32; 4],
@@ -232,6 +238,8 @@ fn render_row(
 ) -> impl IntoElement {
     let RowState {
         display_idx,
+        slot_idx,
+        shift,
         song,
         is_current,
         spectrum,
@@ -260,7 +268,6 @@ fn render_row(
     let drag_payload = QueueDragPayload {
         from_index: display_idx,
         song: song.clone(),
-        position: Point::default(),
     };
 
     let drag_view = view.clone();
@@ -272,6 +279,8 @@ fn render_row(
         .pb(px(variables.padding_8))
         .child(
             flex_row()
+                .relative()
+                .top(px(shift))
                 .w_full()
                 .id(ElementId::Name(
                     format!("queue-item-{}", display_idx).into(),
@@ -288,36 +297,26 @@ fn render_row(
                     });
                 })
                 .on_drag_move(move |e: &DragMoveEvent<QueueDragPayload>, _window, cx| {
-                    if !e.bounds.contains(&e.event.position) {
+                    let mut bounds = e.bounds;
+                    bounds.origin.y -= px(shift);
+                    if !bounds.contains(&e.event.position) {
                         return;
                     }
                     drag_view.update(cx, |this, cx| {
-                        if this.drag_over != Some(display_idx) {
+                        if this.drag_over != Some(slot_idx) {
                             this.drag_from = Some(e.drag(cx).from_index);
-                            this.drag_over = Some(display_idx);
+                            this.drag_over = Some(slot_idx);
                             cx.notify();
                         }
                     });
                 })
                 .on_drop(move |payload: &QueueDragPayload, _window, cx| {
-                    let from = payload.from_index;
-                    drop_view.update(cx, |this, cx| {
-                        this.drag_from = None;
-                        this.drag_over = None;
-                        if from != display_idx {
-                            cx.update_global::<Queue, _>(|q, _| {
-                                q.move_song_display(from, display_idx);
-                            });
-                            cx.set_global(QueueChanged);
-                        } else {
-                            cx.notify();
-                        }
-                    });
+                    finish_drop(&drop_view, payload.from_index, cx);
                 })
                 .on_drag(
                     drag_payload,
-                    move |payload: &QueueDragPayload, pos, _window, cx| {
-                        cx.new(|_| payload.clone().with_position(pos))
+                    move |payload: &QueueDragPayload, _offset, _window, cx| {
+                        cx.new(|_| payload.clone())
                     },
                 )
                 .cursor_move()
@@ -445,20 +444,24 @@ fn render_drop_slot(
             });
         })
         .on_drop(move |payload: &QueueDragPayload, _window, cx| {
-            let from = payload.from_index;
-            drop_view.update(cx, |this, cx| {
-                this.drag_from = None;
-                this.drag_over = None;
-                if from != display_idx {
-                    cx.update_global::<Queue, _>(|q, _| {
-                        q.move_song_display(from, display_idx);
-                    });
-                    cx.set_global(QueueChanged);
-                } else {
-                    cx.notify();
-                }
-            });
+            finish_drop(&drop_view, payload.from_index, cx);
         })
+}
+
+fn finish_drop(view: &Entity<QueuePane>, from: usize, cx: &mut App) {
+    view.update(cx, |this, cx| {
+        let to = this.drag_over.unwrap_or(from);
+        this.drag_from = None;
+        this.drag_over = None;
+        if from != to {
+            cx.update_global::<Queue, _>(|q, _| {
+                q.move_song_display(from, to);
+            });
+            cx.set_global(QueueChanged);
+        } else {
+            cx.notify();
+        }
+    });
 }
 
 impl Render for QueuePane {
@@ -503,15 +506,13 @@ impl Render for QueuePane {
         let row_count = songs.len();
         let view_handle = cx.entity();
         let context_menu = self.context_menu.clone();
+        let shift = self.shift.clone();
 
-        let display_order: Vec<usize> = if let (Some(from), Some(over)) = (drag_from, drag_over) {
-            if from < row_count && over < row_count {
-                build_display_order(row_count, from, over)
-            } else {
-                (0..row_count).collect()
+        let drag = match drag_from {
+            Some(from) if from < row_count => {
+                Some((from, drag_over.unwrap_or(from).min(row_count - 1)))
             }
-        } else {
-            (0..row_count).collect()
+            _ => None,
         };
 
         let reset_view = cx.entity();
@@ -523,20 +524,12 @@ impl Render for QueuePane {
             .min_h_0()
             .on_mouse_up(MouseButton::Left, move |_, _, cx| {
                 reset_view.update(cx, |this: &mut QueuePane, cx| {
-                    if this.drag_from.is_some() {
-                        this.drag_from = None;
-                        this.drag_over = None;
-                        cx.notify();
-                    }
+                    this.commit_drag(cx);
                 });
             })
             .on_mouse_up_out(MouseButton::Left, move |_, _, cx| {
                 reset_view_out.update(cx, |this: &mut QueuePane, cx| {
-                    if this.drag_from.is_some() {
-                        this.drag_from = None;
-                        this.drag_over = None;
-                        cx.notify();
-                    }
+                    this.commit_drag(cx);
                 });
             })
             .when(is_empty, |this| {
@@ -550,53 +543,93 @@ impl Render for QueuePane {
             })
             .when(!is_empty, |this| {
                 let scroll_handle = self.scroll_handle.clone();
+                let container_view = view_handle.clone();
+                let container_scroll_handle = self.scroll_handle.clone();
+                let padding_top: f32 = variables.padding_16;
                 this.child(
                     div()
                         .size_full()
                         .min_h_0()
                         .relative()
                         .image_cache(vleer_cache("queue-image-cache"))
+                        .on_drag_move(move |e: &DragMoveEvent<QueueDragPayload>, _window, cx| {
+                            if row_count == 0 {
+                                return;
+                            }
+                            let scroll_offset = container_scroll_handle.offset();
+                            let rel_y = e.event.position.y
+                                - e.bounds.top()
+                                - scroll_offset.y
+                                - px(padding_top);
+                            let ratio: f32 = rel_y / px(ROW_PITCH);
+                            let idx = ratio.floor().clamp(0.0, (row_count - 1) as f32) as usize;
+                            let from = e.drag(cx).from_index;
+                            container_view.update(cx, |this, cx| {
+                                if this.drag_over != Some(idx) || this.drag_from != Some(from) {
+                                    this.drag_from = Some(from);
+                                    this.drag_over = Some(idx);
+                                    cx.notify();
+                                }
+                            });
+                        })
                         .child(
                             div().size_full().child(
                                 uniform_list(
                                     ElementId::Name("queue-list".into()),
                                     row_count,
-                                    move |range, _window, _cx| {
-                                        range
+                                    move |range, window, cx| {
+                                        if drag.is_none() {
+                                            shift.update(cx, |shift, _| shift.clear());
+                                        }
+                                        let items = range
                                             .map(|display_idx| {
-                                                let real_idx = display_order[display_idx];
-                                                let song = &songs[real_idx];
+                                                let source = match drag {
+                                                    Some((from, over)) => {
+                                                        display_source(display_idx, from, over)
+                                                    }
+                                                    None => Some(display_idx),
+                                                };
+
+                                                let Some(source) = source else {
+                                                    return render_drop_slot(
+                                                        &view_handle,
+                                                        display_idx,
+                                                        &variables,
+                                                    )
+                                                    .into_any_element();
+                                                };
+
+                                                let shift_offset = shift.update(cx, |shift, _| {
+                                                    shift.offset(
+                                                        source,
+                                                        display_idx as f32 * ROW_PITCH,
+                                                    )
+                                                });
+                                                let song = &songs[source];
                                                 let is_current = current_song_id
                                                     .as_ref()
                                                     .map(|id| id == &song.id)
                                                     .unwrap_or(false);
 
-                                                let is_slot = drag_from == Some(display_idx);
-
-                                                if is_slot {
-                                                    render_drop_slot(
-                                                        &view_handle,
-                                                        display_idx,
-                                                        &variables,
-                                                    )
-                                                    .into_any_element()
-                                                } else {
-                                                    render_row(
-                                                        &view_handle,
-                                                        RowState {
-                                                            display_idx,
-                                                            song,
-                                                            is_current,
-                                                            spectrum,
-                                                            visualizer_enabled,
-                                                        },
-                                                        &variables,
-                                                        context_menu.clone(),
-                                                    )
-                                                    .into_any_element()
-                                                }
+                                                render_row(
+                                                    &view_handle,
+                                                    RowState {
+                                                        display_idx: source,
+                                                        slot_idx: display_idx,
+                                                        shift: shift_offset,
+                                                        song,
+                                                        is_current,
+                                                        spectrum,
+                                                        visualizer_enabled,
+                                                    },
+                                                    &variables,
+                                                    context_menu.clone(),
+                                                )
+                                                .into_any_element()
                                             })
-                                            .collect()
+                                            .collect::<Vec<_>>();
+                                        drive_shift(&shift, window, cx);
+                                        items
                                     },
                                 )
                                 .track_scroll(&scroll_handle)
