@@ -23,6 +23,8 @@ use tracing::debug;
 const ANIMATION_FPS: f32 = 15.0;
 const COVER_SIZE: f32 = 36.0;
 const ROW_PITCH: f32 = COVER_SIZE + 16.0;
+const GENRE_HIDE_WIDTH: f32 = 800.0;
+const ALBUM_HIDE_WIDTH: f32 = 600.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ColumnSize {
@@ -247,7 +249,7 @@ impl Render for SongDragPreview {
         div()
             .font_family("Feature Mono")
             .text_size(px(14.0))
-            .line_height(px(14.0))
+            .line_height(px(18.0))
             .text_color(text)
             .w(self.width)
             .shadow_md()
@@ -902,6 +904,9 @@ pub struct SongTable {
     playlist_context: Option<PlaylistContext>,
     reorder: Option<ReorderContext>,
     shift: Entity<ShiftAnimator>,
+    content_width: Entity<f32>,
+    visible_album: bool,
+    visible_genre: bool,
 }
 
 impl EventEmitter<SongTableEvent> for SongTable {}
@@ -937,6 +942,9 @@ impl SongTable {
             let sort_method = cx.new(|_| None);
             let shift = cx.new(|_| ShiftAnimator::default());
             cx.observe(&shift, |_, _, cx| cx.notify()).detach();
+
+            let content_width = cx.new(|_| f32::MAX);
+            cx.observe(&content_width, |_, _, cx| cx.notify()).detach();
 
             let row_count = get_row_count(cx, None);
             let (number_width, duration_width) = calculate_column_widths(row_count);
@@ -1014,6 +1022,9 @@ impl SongTable {
                 playlist_context: None,
                 reorder: None,
                 shift,
+                content_width,
+                visible_album: show_album,
+                visible_genre: show_genre,
             }
         })
     }
@@ -1043,7 +1054,7 @@ impl SongTable {
 
 impl Render for SongTable {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let variables = cx.global::<Variables>();
+        let variables = *cx.global::<Variables>();
         let sort_method = *self.sort_method.read(cx);
         let views_model = self.views.clone();
         let render_counter = self.render_counter.clone();
@@ -1057,11 +1068,19 @@ impl Render for SongTable {
         let number_width = self.number_width;
         let duration_width = self.duration_width;
         let show_numbers = self.show_numbers;
-        let show_album = self.show_album;
         let show_cover = self.show_cover;
-        let show_genre = self.show_genre;
+        let content_width = *self.content_width.read(cx);
+        let show_album = self.show_album && content_width >= ALBUM_HIDE_WIDTH;
+        let show_genre = self.show_genre && content_width >= GENRE_HIDE_WIDTH;
+        if show_album != self.visible_album || show_genre != self.visible_genre {
+            self.visible_album = show_album;
+            self.visible_genre = show_genre;
+            self.views.update(cx, |v, _| v.clear());
+            self.render_counter.update(cx, |c, _| *c = 0);
+        }
         let row_count = self.row_count;
         let scrollbar_inset = self.scrollbar_inset;
+        let content_width_entity = self.content_width.clone();
 
         let mut header = flex_row()
             .w_full()
@@ -1346,6 +1365,7 @@ impl Render for SongTable {
             .h_full()
             .w_full()
             .min_h_0()
+            .relative()
             .on_mouse_up(MouseButton::Left, move |_, _, cx| {
                 if let Some(context) = &reset_up {
                     reset(context, cx);
@@ -1356,6 +1376,22 @@ impl Render for SongTable {
                     reset(context, cx);
                 }
             })
+            .child(
+                canvas(
+                    move |bounds, _, cx| {
+                        let width = f32::from(bounds.size.width);
+                        content_width_entity.update(cx, |current, cx| {
+                            if (*current - width).abs() > 0.5 {
+                                *current = width;
+                                cx.notify();
+                            }
+                        });
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
             .child(div().h_full().w_full().flex_col().child(header).child(list))
     }
 }
