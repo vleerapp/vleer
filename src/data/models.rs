@@ -112,6 +112,13 @@ pub struct Album {
     pub pinned: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GenreListItem {
+    pub id: Cuid,
+    pub name: String,
+    pub song_count: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AlbumListItem {
     pub id: Cuid,

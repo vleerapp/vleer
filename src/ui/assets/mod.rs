@@ -2,28 +2,46 @@ pub mod bundled;
 pub mod image_cache;
 
 use crate::data::db::repo::Database;
-use crate::data::images::{decode_limit, resolve_album_image, resolve_song_image};
+use crate::data::images::{NO_IMAGE, decode_limit, resolve_album_image, resolve_song_image};
 use crate::data::models::Cuid;
 use crate::ui::assets::bundled::BundledAssets;
 use gpui::{App, Asset, ImageCacheError, RenderImage, Resource};
 use gpui::{AssetSource, Result as GpuiResult};
 use image::imageops::FilterType;
 use image::{Frame, ImageError};
+use rand::SeedableRng;
+use rand::rngs::StdRng;
+use rand::seq::SliceRandom;
 use rusqlite::{OptionalExtension, params};
 use std::borrow::Cow;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use url::Url;
 
 const RENDER_SCALE: u32 = 2;
 
 const TRACK_NAMESPACE: &str = "track";
 const ALBUM_NAMESPACE: &str = "album";
+const GENRE_NAMESPACE: &str = "genre";
+
+const GENRE_TINTS: [[f32; 3]; 10] = [
+    [0.0, 190.0, 110.0],
+    [240.0, 100.0, 50.0],
+    [255.0, 0.0, 60.0],
+    [230.0, 180.0, 0.0],
+    [240.0, 90.0, 140.0],
+    [90.0, 130.0, 240.0],
+    [140.0, 70.0, 200.0],
+    [0.0, 150.0, 160.0],
+    [190.0, 200.0, 0.0],
+    [255.0, 120.0, 0.0],
+];
 
 #[derive(Debug, PartialEq)]
 pub enum ImageRequest {
     Stored(String),
     Track(Cuid),
     Album(Cuid),
+    Genre(Cuid),
 }
 
 pub enum VleerImageLoader {}
@@ -56,6 +74,10 @@ impl Asset for VleerImageLoader {
 
             executor
                 .spawn(async move {
+                    if let ImageRequest::Genre(genre_id) = &request {
+                        return compose_genre_cover(&db, &image_conn, genre_id, target).await;
+                    }
+
                     let image_id = match request {
                         ImageRequest::Stored(id) => id,
                         ImageRequest::Track(song_id) => resolve_song_image(db, song_id)
@@ -64,6 +86,7 @@ impl Asset for VleerImageLoader {
                         ImageRequest::Album(album_id) => resolve_album_image(db, album_id)
                             .await
                             .map_err(|e| ImageCacheError::Asset(e.to_string().into()))?,
+                        ImageRequest::Genre(_) => unreachable!("genre covers are composed above"),
                     };
 
                     let bytes: Option<Vec<u8>> = {
@@ -98,8 +121,13 @@ pub fn cover_uri(image_id: Option<&str>, fallback: ImageRequest) -> String {
             ImageRequest::Stored(id) => format!("!image://{id}"),
             ImageRequest::Track(id) => format!("!image://{TRACK_NAMESPACE}/{id}"),
             ImageRequest::Album(id) => format!("!image://{ALBUM_NAMESPACE}/{id}"),
+            ImageRequest::Genre(id) => format!("!image://{GENRE_NAMESPACE}/{id}"),
         },
     }
+}
+
+pub fn genre_cover_uri(genre_id: &Cuid) -> String {
+    cover_uri(None, ImageRequest::Genre(genre_id.clone()))
 }
 
 pub fn is_vleer_image(resource: &Resource) -> bool {
@@ -111,6 +139,105 @@ pub fn is_vleer_image(resource: &Resource) -> bool {
         }
         _ => false,
     }
+}
+
+fn genre_seed(genre_id: &Cuid) -> u64 {
+    static SESSION: OnceLock<u64> = OnceLock::new();
+    let session = *SESSION.get_or_init(rand::random::<u64>);
+    xxhash_rust::xxh3::xxh3_64_with_seed(genre_id.to_string().as_bytes(), session)
+}
+
+async fn compose_genre_cover(
+    db: &Database,
+    image_conn: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
+    genre_id: &Cuid,
+    target: Option<u32>,
+) -> Result<Arc<RenderImage>, ImageCacheError> {
+    let mut image_ids = db
+        .genre_cover_image_ids(genre_id)
+        .map_err(|e| ImageCacheError::Asset(e.to_string().into()))?;
+    if image_ids.is_empty() {
+        return Err(ImageCacheError::Asset(NO_IMAGE.into()));
+    }
+
+    let seed = genre_seed(genre_id);
+    image_ids.sort();
+    image_ids.shuffle(&mut StdRng::seed_from_u64(seed));
+    image_ids.truncate(4);
+
+    let mut blobs = Vec::with_capacity(image_ids.len());
+    for image_id in &image_ids {
+        let bytes: Option<Vec<u8>> = {
+            let conn = image_conn.lock();
+            conn.query_row(
+                "SELECT data FROM images WHERE id = ?1",
+                params![image_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| ImageCacheError::Asset(format!("rusqlite: {}", e).into()))?
+        };
+        if let Some(bytes) = bytes {
+            blobs.push(bytes);
+        }
+    }
+    if blobs.is_empty() {
+        return Err(ImageCacheError::Asset(NO_IMAGE.into()));
+    }
+
+    let _permit = decode_limit().acquire().await;
+    let size = target
+        .map(|t| t.saturating_mul(RENDER_SCALE))
+        .unwrap_or(512)
+        .clamp(64, 1024)
+        & !1;
+    let tint = GENRE_TINTS[(seed >> 32) as usize % GENRE_TINTS.len()];
+    compose_tinted_grid(&blobs, size, tint)
+}
+
+fn compose_tinted_grid(
+    blobs: &[Vec<u8>],
+    size: u32,
+    tint: [f32; 3],
+) -> Result<Arc<RenderImage>, ImageCacheError> {
+    let tiles = blobs
+        .iter()
+        .map(|bytes| {
+            let format = image::guess_format(bytes).map_err(image_err)?;
+            image::load_from_memory_with_format(bytes, format).map_err(image_err)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut canvas = image::RgbaImage::new(size, size);
+    if tiles.len() == 1 {
+        let tile = tiles[0].resize_to_fill(size, size, FilterType::Triangle);
+        image::imageops::replace(&mut canvas, &tile.into_rgba8(), 0, 0);
+    } else {
+        let half = size / 2;
+        for slot in 0..4u32 {
+            let tile = tiles[slot as usize % tiles.len()]
+                .resize_to_fill(half, half, FilterType::Triangle)
+                .into_rgba8();
+            image::imageops::replace(
+                &mut canvas,
+                &tile,
+                i64::from((slot % 2) * half),
+                i64::from((slot / 2) * half),
+            );
+        }
+    }
+
+    for pixel in canvas.chunks_exact_mut(4) {
+        let luma =
+            (0.299 * pixel[0] as f32 + 0.587 * pixel[1] as f32 + 0.114 * pixel[2] as f32) / 255.0;
+        let factor = 0.3 + 0.85 * luma;
+        pixel[0] = (tint[2] * factor).min(255.0) as u8;
+        pixel[1] = (tint[1] * factor).min(255.0) as u8;
+        pixel[2] = (tint[0] * factor).min(255.0) as u8;
+        pixel[3] = 255;
+    }
+
+    Ok(Arc::new(RenderImage::new(vec![Frame::new(canvas)])))
 }
 
 fn decode_bytes(bytes: &[u8], target: Option<u32>) -> Result<Arc<RenderImage>, ImageCacheError> {
@@ -155,13 +282,13 @@ fn parse_image_request(path: &str) -> Option<(ImageRequest, Option<u32>)> {
     }
 
     let request = match head {
-        TRACK_NAMESPACE | ALBUM_NAMESPACE => {
+        TRACK_NAMESPACE | ALBUM_NAMESPACE | GENRE_NAMESPACE => {
             let id = segments.next().filter(|id| !id.is_empty())?;
             let id = Cuid::from(id.to_string());
-            if head == TRACK_NAMESPACE {
-                ImageRequest::Track(id)
-            } else {
-                ImageRequest::Album(id)
+            match head {
+                TRACK_NAMESPACE => ImageRequest::Track(id),
+                ALBUM_NAMESPACE => ImageRequest::Album(id),
+                _ => ImageRequest::Genre(id),
             }
         }
         id => ImageRequest::Stored(id.to_string()),

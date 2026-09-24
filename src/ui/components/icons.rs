@@ -7,6 +7,7 @@ pub const ARTIST: &str = "!bundled:icons/artist.svg";
 pub const DURATION: &str = "!bundled:icons/duration.svg";
 pub const FAVORITE: &str = "!bundled:icons/favorite.svg";
 pub const UNFAVORITE: &str = "!bundled:icons/unfavorite.svg";
+pub const GENRES: &str = "!bundled:icons/genres.svg";
 pub const HOME: &str = "!bundled:icons/home.svg";
 pub const NEXT: &str = "!bundled:icons/next.svg";
 pub const PAUSE: &str = "!bundled:icons/pause.svg";

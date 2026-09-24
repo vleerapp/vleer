@@ -1,6 +1,7 @@
 mod album;
 mod albums;
 mod artists;
+mod genres;
 mod home;
 mod playlist;
 mod playlists;
@@ -12,7 +13,7 @@ use std::collections::HashMap;
 
 use crate::data::models::Cuid;
 use crate::ui::views::{
-    album::AlbumView, albums::AlbumsView, artists::ArtistsView, home::HomeView,
+    album::AlbumView, albums::AlbumsView, artists::ArtistsView, genres::GenresView, home::HomeView,
     playlist::PlaylistView, playlists::PlaylistsView, settings::SettingsView, songs::SongsView,
 };
 
@@ -25,6 +26,7 @@ pub enum AppView {
     Albums,
     Album,
     Artists,
+    Genres,
     Playlists,
     Playlist,
 }
@@ -38,6 +40,7 @@ impl AppView {
             AppView::Albums => "Albums",
             AppView::Album => "Album",
             AppView::Artists => "Artists",
+            AppView::Genres => "Genres",
             AppView::Playlists => "Playlists",
             AppView::Playlist => "Playlist",
         }
@@ -176,6 +179,11 @@ impl ViewRegistry {
         views.insert(
             AppView::Artists,
             cx.new(|cx| ArtistsView::new(window, cx)).into(),
+        );
+
+        views.insert(
+            AppView::Genres,
+            cx.new(|cx| GenresView::new(window, cx)).into(),
         );
 
         views.insert(

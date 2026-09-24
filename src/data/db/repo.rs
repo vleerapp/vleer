@@ -2,9 +2,9 @@ use crate::data::{
     db::models::*,
     ids::fold_key,
     models::{
-        Album, AlbumListItem, Artist, ArtistListItem, Cuid, Event, EventContext, EventType, Image,
-        PinnedItem, Playlist, PlaylistListItem, PlaylistTrack, RecentItem, Song, SongListItem,
-        SongSort,
+        Album, AlbumListItem, Artist, ArtistListItem, Cuid, Event, EventContext, EventType,
+        GenreListItem, Image, PinnedItem, Playlist, PlaylistListItem, PlaylistTrack, RecentItem,
+        Song, SongListItem, SongSort,
     },
     search::{
         AlbumSearchEntry, ArtistSearchEntry, PlaylistSearchEntry, SearchIndex, SongSearchEntry,
@@ -1324,6 +1324,65 @@ impl Database {
         };
         let conn = self.conn.lock();
         fetch_albums_by_ids(&conn, &page_ids)
+    }
+
+    pub fn get_genres(&self, query: &str) -> Result<Vec<GenreListItem>> {
+        let pattern = format!(
+            "%{}%",
+            query
+                .trim()
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_")
+        );
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare_cached(
+            "SELECT g.id, g.name, COUNT(sg.song_id)
+             FROM genres g
+             JOIN songs_genres sg ON sg.genre_id = g.id
+             WHERE g.name LIKE ?1 ESCAPE '\\'
+             GROUP BY g.id
+             ORDER BY g.name COLLATE NOCASE ASC",
+        )?;
+        let rows = stmt
+            .query_map(params![pattern], |row| {
+                Ok(GenreListItem {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    song_count: row.get::<_, i64>(2)?.max(0) as usize,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn get_genre_song_ids(&self, genre_id: &Cuid) -> Result<Vec<Cuid>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare_cached(
+            "SELECT song_id FROM songs_genres WHERE genre_id = ?1 ORDER BY rowid",
+        )?;
+        let ids = stmt
+            .query_map(params![genre_id], |row| row.get(0))?
+            .collect::<rusqlite::Result<Vec<Cuid>>>()?;
+        Ok(ids)
+    }
+
+    pub fn genre_cover_image_ids(&self, genre_id: &Cuid) -> Result<Vec<String>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare_cached(
+            "SELECT s.image_id FROM songs s
+             JOIN songs_genres sg ON sg.song_id = s.id
+             WHERE sg.genre_id = ?1 AND s.image_id IS NOT NULL
+             UNION
+             SELECT a.image_id FROM albums a
+             JOIN songs s ON s.album_id = a.id
+             JOIN songs_genres sg ON sg.song_id = s.id
+             WHERE sg.genre_id = ?1 AND a.image_id IS NOT NULL",
+        )?;
+        let ids = stmt
+            .query_map(params![genre_id], |row| row.get(0))?
+            .collect::<rusqlite::Result<Vec<String>>>()?;
+        Ok(ids)
     }
 
     pub fn delete_album(&self, id: &Cuid) -> Result<()> {

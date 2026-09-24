@@ -424,6 +424,12 @@ impl Render for Library {
                                 Some(ar_count),
                                 AppView::Artists,
                             ))
+                            .child(NavButton::new(
+                                icons::GENRES,
+                                Some("Genres"),
+                                None,
+                                AppView::Genres,
+                            ))
                             .child({
                                 let is_active = window
                                     .root::<MainWindow>()
