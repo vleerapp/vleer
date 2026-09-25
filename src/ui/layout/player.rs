@@ -1,4 +1,6 @@
+use crate::ui::app::MainWindow;
 use crate::ui::assets::{ImageRequest, cover_uri};
+use gpui::prelude::FluentBuilder;
 use gpui::*;
 use std::ops::Range;
 use std::time::Duration;
@@ -18,8 +20,9 @@ use crate::{
             progress_bar::progress_slider,
             slider::slider,
         },
-        layout::queue::QueueVisible,
+        layout::SidePanel,
         variables::Variables,
+        views::{AppView, SelectedAlbum},
     },
 };
 
@@ -145,10 +148,9 @@ impl Render for Player {
         let volume = cx.global::<Playback>().get_volume();
         let repeat_mode = cx.global::<Queue>().get_repeat_mode();
         let is_shuffle = cx.global::<Queue>().get_shuffle();
-        let queue_visible = cx
-            .try_global::<QueueVisible>()
-            .map(|q| q.0)
-            .unwrap_or(false);
+        let side_panel = cx.try_global::<SidePanel>().copied().unwrap_or_default();
+        let queue_visible = side_panel == SidePanel::Queue;
+        let lyrics_visible = side_panel == SidePanel::Lyrics;
 
         let play_button = Button::new("play_pause")
             .icon(if is_playing {
@@ -236,102 +238,122 @@ impl Render for Player {
             .child(next_button)
             .child(repeat_button);
 
-        let track_info =
-            if let Some((title, artist, cover_uri, _album_id, artist_ranges)) = current_song {
-                let ctx_menu = self.context_menu.clone();
-                let song_id = cx.global::<Queue>().get_current_song_id();
+        let track_info = if let Some((title, artist, cover_uri, album_id, artist_ranges)) =
+            current_song
+        {
+            let ctx_menu = self.context_menu.clone();
+            let song_id = cx.global::<Queue>().get_current_song_id();
 
-                let styled = StyledText::new(artist.clone());
+            let styled = StyledText::new(artist.clone());
 
-                let weak = cx.weak_entity();
-                let ranges = artist_ranges.clone();
-                let artist_line = InteractiveText::new("artist-line", styled)
-                    .on_hover(move |hovered_ix, _event, _window, cx| {
-                        let new_hovered =
-                            hovered_ix.and_then(|ix| ranges.iter().position(|r| r.contains(&ix)));
-                        let _ = weak.update(cx, |this, cx| {
-                            if this.hovered_artist != new_hovered {
-                                this.hovered_artist = new_hovered;
-                                cx.notify();
-                            }
-                        });
-                    })
-                    .into_any_element();
-
-                let weak_for_leave = cx.weak_entity();
-                flex_row()
-                    .gap(px(variables.padding_8))
-                    .items_center()
-                    .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
-                        if let Some(id) = &song_id {
-                            let items = song_context_menu_items(id.clone(), cx);
-                            ctx_menu.update(cx, |menu, cx| {
-                                menu.show(event.position, items, cx);
-                            });
+            let weak = cx.weak_entity();
+            let ranges = artist_ranges.clone();
+            let artist_line = InteractiveText::new("artist-line", styled)
+                .on_hover(move |hovered_ix, _event, _window, cx| {
+                    let new_hovered =
+                        hovered_ix.and_then(|ix| ranges.iter().position(|r| r.contains(&ix)));
+                    let _ = weak.update(cx, |this, cx| {
+                        if this.hovered_artist != new_hovered {
+                            this.hovered_artist = new_hovered;
+                            cx.notify();
                         }
-                    })
-                    .child(
-                        div()
-                            .size(px(36.0))
-                            .flex_shrink_0()
-                            .bg(variables.border)
-                            .children(cover_uri.map(|uri| {
-                                img(format!("{}?size=50", uri))
-                                    .size(px(36.0))
-                                    .object_fit(ObjectFit::Cover)
-                            })),
-                    )
-                    .child(
-                        flex_col()
-                            .gap(px(2.0))
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .font_weight(FontWeight(500.0))
-                                    .whitespace_nowrap()
-                                    .text_ellipsis()
-                                    .child(title),
-                            )
-                            .child(
-                                div()
-                                    .id("player-artist-line")
-                                    .w_full()
-                                    .whitespace_nowrap()
-                                    .text_ellipsis()
-                                    .text_color(variables.text_secondary)
-                                    .on_hover(move |hovered, _window, cx| {
-                                        if !hovered {
-                                            let _ = weak_for_leave.update(cx, |this, cx| {
-                                                if this.hovered_artist.is_some() {
-                                                    this.hovered_artist = None;
-                                                    cx.notify();
-                                                }
-                                            });
-                                        }
-                                    })
-                                    .child(artist_line),
-                            ),
-                    )
-                    .into_any_element()
-            } else {
-                flex_row()
-                    .gap(px(variables.padding_8))
-                    .items_center()
-                    .child(div().size(px(36.0)).bg(variables.border).into_any_element())
-                    .child(
-                        flex_col()
-                            .gap(px(2.0))
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .font_weight(FontWeight(500.0))
-                                    .text_color(variables.text_secondary)
-                                    .child("No Song Playing"),
-                            )
-                            .child(div().text_color(variables.text_muted).child("")),
-                    )
-                    .into_any_element()
-            };
+                    });
+                })
+                .into_any_element();
+
+            let weak_for_leave = cx.weak_entity();
+            flex_row()
+                .gap(px(variables.padding_8))
+                .items_center()
+                .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
+                    if let Some(id) = &song_id {
+                        let items = song_context_menu_items(id.clone(), cx);
+                        ctx_menu.update(cx, |menu, cx| {
+                            menu.show(event.position, items, cx);
+                        });
+                    }
+                })
+                .child(
+                    div()
+                        .size(px(36.0))
+                        .flex_shrink_0()
+                        .bg(variables.border)
+                        .children(cover_uri.map(|uri| {
+                            img(format!("{}?size=50", uri))
+                                .size(px(36.0))
+                                .object_fit(ObjectFit::Cover)
+                        })),
+                )
+                .child(
+                    flex_col()
+                        .gap(px(2.0))
+                        .min_w_0()
+                        .child(
+                            div()
+                                .id("player-title")
+                                .self_start()
+                                .max_w_full()
+                                .font_weight(FontWeight(500.0))
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .when_some(album_id, |title, album_id| {
+                                    title.cursor_pointer().hover(|s| s.underline()).on_click(
+                                        move |_event, window, cx| {
+                                            cx.set_global(SelectedAlbum(Some(album_id.clone())));
+                                            if let Some(Some(root)) = window.root::<MainWindow>() {
+                                                root.update(cx, |view, cx| {
+                                                    view.set_current_view(
+                                                        AppView::Album,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                });
+                                            }
+                                        },
+                                    )
+                                })
+                                .child(title),
+                        )
+                        .child(
+                            div()
+                                .id("player-artist-line")
+                                .w_full()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .text_color(variables.text_secondary)
+                                .on_hover(move |hovered, _window, cx| {
+                                    if !hovered {
+                                        let _ = weak_for_leave.update(cx, |this, cx| {
+                                            if this.hovered_artist.is_some() {
+                                                this.hovered_artist = None;
+                                                cx.notify();
+                                            }
+                                        });
+                                    }
+                                })
+                                .child(artist_line),
+                        ),
+                )
+                .into_any_element()
+        } else {
+            flex_row()
+                .gap(px(variables.padding_8))
+                .items_center()
+                .child(div().size(px(36.0)).bg(variables.border).into_any_element())
+                .child(
+                    flex_col()
+                        .gap(px(2.0))
+                        .min_w_0()
+                        .child(
+                            div()
+                                .font_weight(FontWeight(500.0))
+                                .text_color(variables.text_secondary)
+                                .child("No Song Playing"),
+                        )
+                        .child(div().text_color(variables.text_muted).child("")),
+                )
+                .into_any_element()
+        };
 
         let volume_icon = match volume {
             0.0 => icons::VOLUME_MUTE,
@@ -355,8 +377,27 @@ impl Render for Player {
                 variables.text
             })
             .on_click(cx.listener(|_this, _event, _window, cx| {
-                cx.update_global::<QueueVisible, _>(|q, _cx| {
-                    q.0 = !q.0;
+                cx.update_global::<SidePanel, _>(|panel, _cx| {
+                    panel.toggle(SidePanel::Queue);
+                });
+                cx.notify();
+            }));
+
+        let lyrics_button = Button::new("lyrics-toggle")
+            .icon(icons::LYRICS)
+            .color(if lyrics_visible {
+                variables.accent
+            } else {
+                variables.text_secondary
+            })
+            .hover_color(if lyrics_visible {
+                variables.accent
+            } else {
+                variables.text
+            })
+            .on_click(cx.listener(|_this, _event, _window, cx| {
+                cx.update_global::<SidePanel, _>(|panel, _cx| {
+                    panel.toggle(SidePanel::Lyrics);
                 });
                 cx.notify();
             }));
@@ -365,8 +406,9 @@ impl Render for Player {
             .gap(px(variables.padding_8))
             .items_center()
             .justify_end()
+            .child(lyrics_button)
             .child(queue_button)
-            .child(icon(volume_icon))
+            .child(div().pl(px(8.0)).child(icon(volume_icon)))
             .child(
                 slider()
                     .id("volume-slider")

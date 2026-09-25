@@ -8,7 +8,10 @@ use tracing::{debug, error};
 use crate::{
     data::{config::Config, db::repo::Database, scanner::Scanner, telemetry::Telemetry},
     media::{controller::MediaController, playback::Playback, queue::Queue},
-    services::lastfm::{LastfmClient, LastfmScrobbler},
+    services::{
+        lastfm::{LastfmClient, LastfmScrobbler},
+        lrclib::LrclibClient,
+    },
     ui::{
         assets::{
             VleerAssetSource,
@@ -29,10 +32,12 @@ use crate::{
         discord_presence::DiscordPresence,
         global_actions::register_actions,
         layout::{
+            SidePanel,
             library::{Library, Search},
+            lyrics::LyricsPane,
             navbar::{self, Navbar, NavbarProgressBar},
             player::Player,
-            queue::{QueuePane, QueueVisible},
+            queue::QueuePane,
         },
         variables::Variables,
         views::{
@@ -49,6 +54,7 @@ pub(crate) struct MainWindow {
     navbar_progress: Entity<NavbarProgressBar>,
     player: Entity<Player>,
     queue: Entity<QueuePane>,
+    lyrics: Entity<LyricsPane>,
     views: HashMap<AppView, AnyView>,
     view_scroll: ScrollHandle,
     current_view: AppView,
@@ -107,10 +113,7 @@ impl Render for MainWindow {
             .map(|view| view.clone().into_any_element())
             .unwrap_or_else(|| div().into_any_element());
 
-        let queue_visible = cx
-            .try_global::<QueueVisible>()
-            .map(|q| q.0)
-            .unwrap_or(false);
+        let side_panel = cx.try_global::<SidePanel>().copied().unwrap_or_default();
 
         let show_linux_controls = cfg!(target_os = "linux")
             && matches!(window.window_decorations(), Decorations::Client { .. });
@@ -317,19 +320,29 @@ impl Render for MainWindow {
                                                         ),
                                                 ),
                                         );
-                                    if queue_visible {
+                                    let side: Option<(&'static str, &'static str, AnyView)> =
+                                        match side_panel {
+                                            SidePanel::Queue => Some((
+                                                "queue",
+                                                "Queue",
+                                                self.queue.clone().into(),
+                                            )),
+                                            SidePanel::Lyrics => Some((
+                                                "lyrics",
+                                                "Lyrics",
+                                                self.lyrics.clone().into(),
+                                            )),
+                                            SidePanel::Closed => None,
+                                        };
+                                    if let Some((id, title, content)) = side {
                                         row = row.child(
                                             div()
-                                                .id("queue-container")
+                                                .id(SharedString::from(format!("{id}-container")))
                                                 .w(px(300.0))
                                                 .flex_shrink_0()
                                                 .min_h_0()
                                                 .h_full()
-                                                .child(
-                                                    pane("queue")
-                                                        .title("Queue")
-                                                        .child(self.queue.clone()),
-                                                ),
+                                                .child(pane(id).title(title).child(content)),
                                         );
                                     }
                                     row
@@ -406,7 +419,7 @@ pub async fn run() -> Result<()> {
             cx.set_global(PinnedItemsChanged);
             cx.set_global(LibraryDataChanged);
             cx.set_global(HomeDataChanged);
-            cx.set_global(QueueVisible::default());
+            cx.set_global(SidePanel::default());
             cx.set_global(QueueChanged);
 
             let is_first_launch = Telemetry::is_first_launch(&data_dir);
@@ -418,6 +431,7 @@ pub async fn run() -> Result<()> {
             Variables::init(cx);
             Telemetry::init(cx, data_dir.clone());
             LastfmClient::init(cx);
+            LrclibClient::init(cx);
             LastfmScrobbler::init(cx);
             Updater::init(cx, navbar::status());
             MediaController::init(cx);
@@ -500,6 +514,7 @@ pub async fn run() -> Result<()> {
                         let navbar_progress_entity = cx.new(NavbarProgressBar::new);
                         let player_entity = cx.new(Player::new);
                         let queue_entity = cx.new(QueuePane::new);
+                        let lyrics_entity = cx.new(LyricsPane::new);
 
                         let views = ViewRegistry::register_all(window, cx);
 
@@ -509,6 +524,7 @@ pub async fn run() -> Result<()> {
                             navbar_progress: navbar_progress_entity,
                             player: player_entity,
                             queue: queue_entity,
+                            lyrics: lyrics_entity,
                             views,
                             view_scroll: ScrollHandle::new(),
                             current_view: AppView::Home,
