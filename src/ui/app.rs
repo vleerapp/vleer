@@ -18,6 +18,7 @@ use crate::{
             image_cache::{chrome_image_cache, view_image_cache},
         },
         components::{
+            card::ViewportWidth,
             context_menu::{
                 BackgroundUiEvent, BackgroundUiNotifier, HomeDataChanged, LibraryDataChanged,
                 PinnedItemsChanged, QueueChanged,
@@ -255,6 +256,7 @@ impl Render for MainWindow {
                                                                 .size_full()
                                                                 .min_w_0()
                                                                 .min_h_0()
+                                                                .child(cx.global::<ViewportWidth>().probe())
                                                                 .child({
                                                                     let scroll = Rc::new(self.view_scroll.clone());
                                                                     canvas(
@@ -420,6 +422,7 @@ pub async fn run() -> Result<()> {
             cx.set_global(LibraryDataChanged);
             cx.set_global(HomeDataChanged);
             cx.set_global(SidePanel::default());
+            cx.set_global(ViewportWidth::default());
             cx.set_global(QueueChanged);
 
             let is_first_launch = Telemetry::is_first_launch(&data_dir);

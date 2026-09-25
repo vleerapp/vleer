@@ -8,12 +8,14 @@ use crate::{
     ui::{
         app::MainWindow,
         components::{
-            card::{CARD_GRID_GAP, Card, calculate_card_layout},
+            card::{
+                CARD_GRID_GAP, Card, ViewportWidth, card_columns, card_row_height, card_spacer,
+            },
             context_menu::{ContextMenu, LibraryDataChanged, playlist_context_menu_items},
             div::{flex_col, flex_row},
             scrollbar::{Scrollbar, ScrollbarAxis, ScrollbarHandle},
         },
-        layout::{library::Search, queue::QueueVisible},
+        layout::{SidePanel, library::Search},
         variables::Variables,
         views::{ActiveView, AppView, SelectedPlaylist},
     },
@@ -268,15 +270,14 @@ impl PlaylistsView {
             .cloned()
     }
 
-    fn calculate_layout(&self) -> (f32, usize) {
-        calculate_card_layout(self.container_width)
+    fn calculate_layout(&self) -> usize {
+        card_columns(self.container_width)
     }
 }
 
 fn playlist_tile(
     idx: usize,
     playlist: &PlaylistListItem,
-    cover_size: f32,
     context_menu: Entity<ContextMenu>,
 ) -> impl IntoElement {
     let subtitle = format!(
@@ -289,57 +290,57 @@ fn playlist_tile(
     let play_id = playlist_id.clone();
     let nav_id = playlist_id.clone();
 
-    Card::new(
-        format!("playlist-item-{}", idx),
-        playlist.name.clone(),
-        cover_size,
-    )
-    .subtitle(subtitle)
-    .image_uri(
-        playlist
-            .image_id
-            .as_deref()
-            .map(|id| format!("!image://{id}")),
-    )
-    .on_play(move |_window, cx| {
-        play_playlist_now(play_id.clone(), cx);
-    })
-    .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
-        cx.update_global::<SelectedPlaylist, _>(|sel, _| {
-            sel.id = Some(nav_id.clone());
-            sel.focus_title = false;
-        });
-        if let Some(Some(root)) = window.root::<MainWindow>() {
-            root.update(cx, |view, cx| {
-                view.set_current_view(AppView::Playlist, window, cx);
+    Card::new(format!("playlist-item-{}", idx), playlist.name.clone())
+        .subtitle(subtitle)
+        .image_uri(
+            playlist
+                .image_id
+                .as_deref()
+                .map(|id| format!("!image://{id}")),
+        )
+        .on_play(move |_window, cx| {
+            play_playlist_now(play_id.clone(), cx);
+        })
+        .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
+            cx.update_global::<SelectedPlaylist, _>(|sel, _| {
+                sel.id = Some(nav_id.clone());
+                sel.focus_title = false;
             });
-        }
-    })
-    .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
-        let items = playlist_context_menu_items(playlist_id.clone(), cx);
-        context_menu.update(cx, |menu, cx| {
-            menu.show(event.position, items, cx);
-        });
-    })
+            if let Some(Some(root)) = window.root::<MainWindow>() {
+                root.update(cx, |view, cx| {
+                    view.set_current_view(AppView::Playlist, window, cx);
+                });
+            }
+        })
+        .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
+            let items = playlist_context_menu_items(playlist_id.clone(), cx);
+            context_menu.update(cx, |menu, cx| {
+                menu.show(event.position, items, cx);
+            });
+        })
 }
 
 impl Render for PlaylistsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
-        let queue_visible = cx.global::<QueueVisible>();
+        let side_panel = cx.global::<SidePanel>();
 
         let bounds = window.bounds();
         let window_width: f32 = bounds.size.width.into();
         let mut estimated_width = window_width - 300.0 - 98.0;
-        if queue_visible.0 {
+        if side_panel.is_open() {
             estimated_width -= 316.0;
         }
-        if estimated_width > 0.0 {
+        if let Some(width) = cx.global::<ViewportWidth>().get() {
+            self.container_width = Some((width - variables.padding_24 * 2.0).max(1.0));
+        } else if estimated_width > 0.0 {
             self.container_width = Some(estimated_width);
         }
 
-        let (cover_size, items_per_row) = self.calculate_layout();
+        let items_per_row = self.calculate_layout();
         let items_per_row = items_per_row.max(1);
+        let row_height =
+            card_row_height(self.container_width.unwrap_or(1000.0), items_per_row, true);
 
         let row_count = if self.total_count == 0 {
             0
@@ -382,7 +383,8 @@ impl Render for PlaylistsView {
                                         .w_full()
                                         .px(px(variables.padding_24))
                                         .gap(px(CARD_GRID_GAP))
-                                        .pb(px(CARD_GRID_GAP));
+                                        .pb(px(CARD_GRID_GAP))
+                                        .h(px(row_height));
 
                                     for col_idx in 0..items_per_row {
                                         let item_idx = row_idx * items_per_row + col_idx;
@@ -397,7 +399,6 @@ impl Render for PlaylistsView {
                                             row = row.child(playlist_tile(
                                                 item_idx,
                                                 &playlist,
-                                                cover_size,
                                                 context_menu.clone(),
                                             ));
                                         } else {
@@ -410,11 +411,29 @@ impl Render for PlaylistsView {
                                                         )
                                                         .into(),
                                                     ))
-                                                    .w(px(cover_size))
-                                                    .h(px(cover_size + 44.0))
-                                                    .bg(variables.border),
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap(px(8.0))
+                                                    .child(
+                                                        div()
+                                                            .w_full()
+                                                            .aspect_square()
+                                                            .bg(variables.border),
+                                                    )
+                                                    .child(div().h(px(36.0))),
                                             );
                                         }
+                                    }
+
+                                    let filled = view_handle
+                                        .read(cx)
+                                        .total_count
+                                        .saturating_sub(row_idx * items_per_row)
+                                        .min(items_per_row);
+                                    for _ in filled..items_per_row {
+                                        row = row.child(card_spacer());
                                     }
 
                                     row.into_any_element()

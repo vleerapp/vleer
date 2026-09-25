@@ -6,12 +6,15 @@ use crate::{
     data::{db::repo::Database, models::ArtistListItem},
     ui::{
         components::{
-            card::{CARD_GRID_GAP, Card, CardImageShape, calculate_card_layout},
+            card::{
+                CARD_GRID_GAP, Card, CardImageShape, ViewportWidth, card_columns, card_row_height,
+                card_spacer,
+            },
             context_menu::{ContextMenu, LibraryDataChanged, artist_context_menu_items},
             div::{flex_col, flex_row},
             scrollbar::{Scrollbar, ScrollbarAxis, ScrollbarHandle},
         },
-        layout::{library::Search, queue::QueueVisible},
+        layout::{SidePanel, library::Search},
         variables::Variables,
         views::{ActiveView, AppView},
     },
@@ -267,56 +270,55 @@ impl ArtistsView {
             .cloned()
     }
 
-    fn calculate_layout(&self) -> (f32, usize) {
-        calculate_card_layout(self.container_width)
+    fn calculate_layout(&self) -> usize {
+        card_columns(self.container_width)
     }
 }
 
 fn artist_tile(
     idx: usize,
     artist: &ArtistListItem,
-    cover_size: f32,
     context_menu: Entity<ContextMenu>,
 ) -> impl IntoElement {
     let artist_id = artist.id.clone();
 
-    Card::new(
-        format!("artist-item-{}", idx),
-        artist.name.clone(),
-        cover_size,
-    )
-    .image_uri(
-        artist
-            .image_id
-            .as_deref()
-            .map(|id| format!("!image://{id}")),
-    )
-    .image_shape(CardImageShape::Circle)
-    .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
-        let items = artist_context_menu_items(artist_id.clone(), cx);
-        context_menu.update(cx, |menu, cx| {
-            menu.show(event.position, items, cx);
-        });
-    })
+    Card::new(format!("artist-item-{}", idx), artist.name.clone())
+        .image_uri(
+            artist
+                .image_id
+                .as_deref()
+                .map(|id| format!("!image://{id}")),
+        )
+        .image_shape(CardImageShape::Circle)
+        .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
+            let items = artist_context_menu_items(artist_id.clone(), cx);
+            context_menu.update(cx, |menu, cx| {
+                menu.show(event.position, items, cx);
+            });
+        })
 }
 
 impl Render for ArtistsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
-        let queue_visible = cx.global::<QueueVisible>();
+        let side_panel = cx.global::<SidePanel>();
 
         let bounds = window.bounds();
         let window_width: f32 = bounds.size.width.into();
         let mut estimated_width = window_width - 300.0 - 98.0;
-        if queue_visible.0 {
+        if side_panel.is_open() {
             estimated_width -= 316.0;
         }
-        if estimated_width > 0.0 {
+        if let Some(width) = cx.global::<ViewportWidth>().get() {
+            self.container_width = Some((width - variables.padding_24 * 2.0).max(1.0));
+        } else if estimated_width > 0.0 {
             self.container_width = Some(estimated_width);
         }
 
-        let (cover_size, items_per_row) = self.calculate_layout();
+        let items_per_row = self.calculate_layout();
         let items_per_row = items_per_row.max(1);
+        let row_height =
+            card_row_height(self.container_width.unwrap_or(1000.0), items_per_row, false);
 
         let row_count = if self.total_count == 0 {
             0
@@ -359,7 +361,8 @@ impl Render for ArtistsView {
                                         .w_full()
                                         .px(px(variables.padding_24))
                                         .gap(px(CARD_GRID_GAP))
-                                        .pb(px(CARD_GRID_GAP));
+                                        .pb(px(CARD_GRID_GAP))
+                                        .h(px(row_height));
 
                                     for col_idx in 0..items_per_row {
                                         let item_idx = row_idx * items_per_row + col_idx;
@@ -374,7 +377,6 @@ impl Render for ArtistsView {
                                             row = row.child(artist_tile(
                                                 item_idx,
                                                 &artist,
-                                                cover_size,
                                                 context_menu.clone(),
                                             ));
                                         } else {
@@ -384,12 +386,30 @@ impl Render for ArtistsView {
                                                         format!("artist-placeholder-{}", item_idx)
                                                             .into(),
                                                     ))
-                                                    .w(px(cover_size))
-                                                    .h(px(cover_size + 44.0))
-                                                    .rounded_full()
-                                                    .bg(variables.border),
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap(px(8.0))
+                                                    .child(
+                                                        div()
+                                                            .w_full()
+                                                            .aspect_square()
+                                                            .rounded_full()
+                                                            .bg(variables.border),
+                                                    )
+                                                    .child(div().h(px(36.0))),
                                             );
                                         }
+                                    }
+
+                                    let filled = view_handle
+                                        .read(cx)
+                                        .total_count
+                                        .saturating_sub(row_idx * items_per_row)
+                                        .min(items_per_row);
+                                    for _ in filled..items_per_row {
+                                        row = row.child(card_spacer());
                                     }
 
                                     row.into_any_element()

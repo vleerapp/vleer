@@ -5,7 +5,9 @@ use crate::{
     ui::{
         app::MainWindow,
         components::{
-            card::{ArtistHoverHandler, CARD_GRID_GAP, Card, calculate_card_layout},
+            card::{
+                ArtistHoverHandler, CARD_GRID_GAP, Card, ViewportWidth, card_columns, card_spacer,
+            },
             context_menu::{
                 ContextMenu, HomeDataChanged, LibraryDataChanged, album_context_menu_items,
                 song_context_menu_items,
@@ -15,7 +17,7 @@ use crate::{
             scrollbar::ScrollableElement,
             song_table::format_artist_line,
         },
-        layout::queue::QueueVisible,
+        layout::SidePanel,
         variables::Variables,
         views::{AppView, SelectedAlbum},
     },
@@ -107,8 +109,8 @@ impl HomeView {
         .detach();
     }
 
-    fn calculate_layout(&self) -> (f32, usize) {
-        calculate_card_layout(self.container_width)
+    fn calculate_layout(&self) -> usize {
+        card_columns(self.container_width)
     }
 
     fn scroll_offset_left(offset: &mut usize, items_per_page: usize) {
@@ -129,13 +131,13 @@ impl HomeView {
     }
 
     fn scroll_recently_played_left(&mut self, cx: &mut Context<Self>) {
-        let (_, items_per_page) = self.calculate_layout();
+        let items_per_page = self.calculate_layout();
         Self::scroll_offset_left(&mut self.recently_played_offset, items_per_page);
         cx.notify();
     }
 
     fn scroll_recently_played_right(&mut self, cx: &mut Context<Self>) {
-        let (_, items_per_page) = self.calculate_layout();
+        let items_per_page = self.calculate_layout();
         Self::scroll_offset_right(
             &mut self.recently_played_offset,
             self.recently_played.len(),
@@ -145,13 +147,13 @@ impl HomeView {
     }
 
     fn scroll_recently_added_left(&mut self, cx: &mut Context<Self>) {
-        let (_, items_per_page) = self.calculate_layout();
+        let items_per_page = self.calculate_layout();
         Self::scroll_offset_left(&mut self.recently_added_offset, items_per_page);
         cx.notify();
     }
 
     fn scroll_recently_added_right(&mut self, cx: &mut Context<Self>) {
-        let (_, items_per_page) = self.calculate_layout();
+        let items_per_page = self.calculate_layout();
         Self::scroll_offset_right(
             &mut self.recently_added_offset,
             self.recently_added.len(),
@@ -165,7 +167,6 @@ fn recent_item_tile(
     id_prefix: &'static str,
     idx: usize,
     item: RecentItem,
-    cover_size: f32,
     context_menu: Entity<ContextMenu>,
     hovered_artist_idx: Option<usize>,
     on_artist_hover: ArtistHoverHandler,
@@ -217,7 +218,7 @@ fn recent_item_tile(
         ImageRequest::Album(item_id.clone())
     };
 
-    Card::new(format!("{id_prefix}-item-{idx}"), title, cover_size)
+    Card::new(format!("{id_prefix}-item-{idx}"), title)
         .subtitle(subtitle)
         .subtitle_artist_ranges(subtitle_ranges, hovered_artist_idx, on_artist_hover)
         .image_uri(Some(crate::ui::assets::cover_uri(
@@ -259,7 +260,6 @@ fn recent_items_content(
     items: &[RecentItem],
     offset: usize,
     items_per_page: usize,
-    cover_size: f32,
     variables: &Variables,
     context_menu: Entity<ContextMenu>,
     hovered_artist: &Option<(String, usize)>,
@@ -280,6 +280,7 @@ fn recent_items_content(
         .take(items_per_page)
         .enumerate()
         .collect();
+    let spacer_count = items_per_page.saturating_sub(visible_items.len());
 
     flex_row()
         .id(ElementId::Name(format!("{section_id}-grid").into()))
@@ -301,32 +302,34 @@ fn recent_items_content(
                 section_id,
                 offset + idx,
                 item.clone(),
-                cover_size,
                 context_menu.clone(),
                 hovered_artist_idx,
                 on_artist_hover,
             )
         }))
+        .children((0..spacer_count).map(|_| card_spacer()))
         .into_any_element()
 }
 
 impl Render for HomeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
-        let queue_visible = cx.global::<QueueVisible>();
+        let side_panel = cx.global::<SidePanel>();
         let context_menu = self.context_menu.clone();
 
         let bounds = window.bounds();
         let window_width: f32 = bounds.size.width.into();
         let mut estimated_width = window_width - 300.0 - 98.0;
-        if queue_visible.0 {
+        if side_panel.is_open() {
             estimated_width -= 316.0;
         }
-        if estimated_width > 0.0 {
+        if let Some(width) = cx.global::<ViewportWidth>().get() {
+            self.container_width = Some((width - variables.padding_24 * 2.0).max(1.0));
+        } else if estimated_width > 0.0 {
             self.container_width = Some(estimated_width);
         }
 
-        let (cover_size, items_per_page) = self.calculate_layout();
+        let items_per_page = self.calculate_layout();
 
         let can_scroll_recently_played_left = self.recently_played_offset > 0;
         let can_scroll_recently_played_right =
@@ -341,7 +344,6 @@ impl Render for HomeView {
             &self.recently_played,
             self.recently_played_offset,
             items_per_page,
-            cover_size,
             variables,
             context_menu.clone(),
             &self.hovered_artist,
@@ -352,7 +354,6 @@ impl Render for HomeView {
             &self.recently_added,
             self.recently_added_offset,
             items_per_page,
-            cover_size,
             variables,
             context_menu.clone(),
             &self.hovered_artist,
@@ -532,16 +533,26 @@ impl Render for HomeView {
                             .child(
                                 flex_row()
                                     .id("home-welcome")
+                                    .relative()
+                                    .overflow_hidden()
                                     .w_full()
+                                    .h(px(100.0))
                                     .text_color(variables.accent)
-                                    .child(div().h(px(100.0)).child(
-                                        r"
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .top_0()
+                                            .left_0()
+                                            .whitespace_nowrap()
+                                            .child(
+                                                r"
                 __
  _      _____  / /________  ____ ___  ___
 | | /| / / _ \/ / ___/ __ \/ __ `__ \/ _ \
 | |/ |/ /  __/ / /__/ /_/ / / / / / /  __/
 |__/|__/\___/_/\___/\____/_/ /_/ /_/\___/ ",
-                                    )),
+                                            ),
+                                    ),
                             )
                             .child(recently_played)
                             .child(recently_added),

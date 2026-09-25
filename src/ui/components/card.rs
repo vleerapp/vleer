@@ -24,17 +24,58 @@ pub enum CardImageShape {
     Circle,
 }
 
-pub fn calculate_card_layout(container_width: Option<f32>) -> (f32, usize) {
+#[derive(Clone, Default)]
+pub struct ViewportWidth(Rc<std::cell::Cell<Option<f32>>>);
+
+impl Global for ViewportWidth {}
+
+impl ViewportWidth {
+    pub fn get(&self) -> Option<f32> {
+        self.0.get()
+    }
+
+    pub fn probe(&self) -> impl IntoElement {
+        let width = self.0.clone();
+        canvas(
+            move |bounds, window, _| {
+                let measured: f32 = bounds.size.width.into();
+                if width
+                    .get()
+                    .is_none_or(|last| (last - measured).abs() > 0.01)
+                {
+                    width.set(Some(measured));
+                    window.request_animation_frame();
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full()
+    }
+}
+
+pub const CARD_TEXT_HEIGHT: f32 = 14.0;
+const CARD_BODY_GAP: f32 = 8.0;
+const CARD_INFO_GAP: f32 = 4.0;
+
+pub fn card_row_height(container_width: f32, columns: usize, subtitle: bool) -> f32 {
+    let gaps = columns.saturating_sub(1) as f32 * CARD_GRID_GAP;
+    let width = ((container_width - gaps) / columns.max(1) as f32).max(1.0);
+    let info = if subtitle {
+        CARD_TEXT_HEIGHT * 2.0 + CARD_INFO_GAP
+    } else {
+        CARD_TEXT_HEIGHT
+    };
+    width + CARD_BODY_GAP + info + CARD_GRID_GAP
+}
+
+pub fn card_spacer() -> Div {
+    div().flex_1().min_w_0()
+}
+
+pub fn card_columns(container_width: Option<f32>) -> usize {
     let width = container_width.unwrap_or(1000.0);
-
-    let item_count =
-        ((width + CARD_GRID_GAP) / (CARD_MIN_IMAGE_SIZE + CARD_GRID_GAP)).floor() as usize;
-    let item_count = item_count.max(1);
-
-    let image_size = ((width - (item_count - 1) as f32 * CARD_GRID_GAP) / item_count as f32)
-        .clamp(CARD_MIN_IMAGE_SIZE, CARD_MAX_IMAGE_SIZE);
-
-    (image_size, item_count)
+    (((width + CARD_GRID_GAP) / (CARD_MIN_IMAGE_SIZE + CARD_GRID_GAP)).floor() as usize).max(1)
 }
 
 #[derive(IntoElement)]
@@ -47,17 +88,12 @@ pub struct Card {
     hovered_artist_idx: Option<usize>,
     on_artist_hover: Option<ArtistHoverHandler>,
     image_uri: Option<String>,
-    image_size: f32,
     image_shape: CardImageShape,
     on_play: Option<PlayHandler>,
 }
 
 impl Card {
-    pub fn new(
-        id: impl Into<SharedString>,
-        title: impl Into<SharedString>,
-        image_size: f32,
-    ) -> Self {
+    pub fn new(id: impl Into<SharedString>, title: impl Into<SharedString>) -> Self {
         let id = id.into();
 
         Self {
@@ -69,7 +105,6 @@ impl Card {
             hovered_artist_idx: None,
             on_artist_hover: None,
             image_uri: None,
-            image_size,
             image_shape: CardImageShape::Square,
             on_play: None,
         }
@@ -131,7 +166,6 @@ impl RenderOnce for Card {
             hovered_artist_idx: _,
             on_artist_hover,
             image_uri,
-            image_size,
             image_shape,
             on_play,
         } = self;
@@ -143,10 +177,10 @@ impl RenderOnce for Card {
             let element = img(format!(
                 "{}?size={}",
                 uri,
-                crate::ui::assets::bucket_size(image_size)
+                crate::ui::assets::bucket_size(CARD_MAX_IMAGE_SIZE)
             ))
             .id(ElementId::Name(format!("{tile_id}-image").into()))
-            .size(px(image_size))
+            .size_full()
             .object_fit(ObjectFit::Cover);
             match image_shape {
                 CardImageShape::Square => element.into_any_element(),
@@ -156,7 +190,8 @@ impl RenderOnce for Card {
 
         let mut image_container = div()
             .id(ElementId::Name(format!("{tile_id}-image-container").into()))
-            .size(px(image_size))
+            .w_full()
+            .aspect_square()
             .relative()
             .bg(variables.border)
             .group(image_hover_group.clone())
@@ -204,7 +239,8 @@ impl RenderOnce for Card {
         }
 
         base.id(id)
-            .w(px(image_size))
+            .flex_1()
+            .min_w_0()
             .gap(px(8.0))
             .child(image_container)
             .child(
@@ -217,7 +253,10 @@ impl RenderOnce for Card {
                             .text_ellipsis()
                             .whitespace_nowrap()
                             .font_weight(FontWeight(500.0))
-                            .max_w(px(image_size))
+                            .h(px(CARD_TEXT_HEIGHT))
+                            .line_height(px(CARD_TEXT_HEIGHT))
+                            .w_full()
+                            .min_w_0()
                             .child(title),
                     )
                     .when_some(subtitle, |this, subtitle| {
@@ -231,7 +270,10 @@ impl RenderOnce for Card {
                                     .id(ElementId::Name(format!("{tile_id}-subtitle").into()))
                                     .text_ellipsis()
                                     .whitespace_nowrap()
-                                    .max_w(px(image_size))
+                                    .h(px(CARD_TEXT_HEIGHT))
+                                    .line_height(px(CARD_TEXT_HEIGHT))
+                                    .w_full()
+                                    .min_w_0()
                                     .text_color(variables.text_secondary)
                                     .on_hover(move |hovered, window, cx| {
                                         if !hovered && let Some(on_leave) = on_leave.as_ref() {
@@ -262,7 +304,10 @@ impl RenderOnce for Card {
                                     .id(ElementId::Name(format!("{tile_id}-subtitle").into()))
                                     .text_ellipsis()
                                     .whitespace_nowrap()
-                                    .max_w(px(image_size))
+                                    .h(px(CARD_TEXT_HEIGHT))
+                                    .line_height(px(CARD_TEXT_HEIGHT))
+                                    .w_full()
+                                    .min_w_0()
                                     .text_color(variables.text_secondary)
                                     .child(subtitle),
                             )

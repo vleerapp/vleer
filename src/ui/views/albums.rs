@@ -10,13 +10,16 @@ use crate::{
     ui::{
         app::MainWindow,
         components::{
-            card::{ArtistHoverHandler, CARD_GRID_GAP, Card, calculate_card_layout},
+            card::{
+                ArtistHoverHandler, CARD_GRID_GAP, Card, ViewportWidth, card_columns,
+                card_row_height, card_spacer,
+            },
             context_menu::{ContextMenu, LibraryDataChanged, album_context_menu_items},
             div::{flex_col, flex_row},
             scrollbar::{Scrollbar, ScrollbarAxis, ScrollbarHandle},
             song_table::format_artist_line,
         },
-        layout::{library::Search, queue::QueueVisible},
+        layout::{SidePanel, library::Search},
         variables::Variables,
         views::{ActiveView, AppView, SelectedAlbum},
     },
@@ -274,15 +277,14 @@ impl AlbumsView {
             .cloned()
     }
 
-    fn calculate_layout(&self) -> (f32, usize) {
-        calculate_card_layout(self.container_width)
+    fn calculate_layout(&self) -> usize {
+        card_columns(self.container_width)
     }
 }
 
 fn album_tile(
     idx: usize,
     album: &AlbumListItem,
-    cover_size: f32,
     context_menu: Entity<ContextMenu>,
     hovered_artist_idx: Option<usize>,
     on_artist_hover: ArtistHoverHandler,
@@ -305,53 +307,53 @@ fn album_tile(
     let play_album_id = album_id.clone();
     let nav_album_id = album_id.clone();
 
-    Card::new(
-        format!("album-item-{}", idx),
-        album.title.clone(),
-        cover_size,
-    )
-    .subtitle(subtitle)
-    .subtitle_artist_ranges(subtitle_ranges, hovered_artist_idx, on_artist_hover)
-    .image_uri(Some(cover_uri(
-        album.image_id.as_deref(),
-        ImageRequest::Album(album.id.clone()),
-    )))
-    .on_play(move |_window, cx| {
-        play_album_now(play_album_id.clone(), cx);
-    })
-    .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
-        cx.set_global(SelectedAlbum(Some(nav_album_id.clone())));
-        if let Some(Some(root)) = window.root::<MainWindow>() {
-            root.update(cx, |view, cx| {
-                view.set_current_view(AppView::Album, window, cx);
+    Card::new(format!("album-item-{}", idx), album.title.clone())
+        .subtitle(subtitle)
+        .subtitle_artist_ranges(subtitle_ranges, hovered_artist_idx, on_artist_hover)
+        .image_uri(Some(cover_uri(
+            album.image_id.as_deref(),
+            ImageRequest::Album(album.id.clone()),
+        )))
+        .on_play(move |_window, cx| {
+            play_album_now(play_album_id.clone(), cx);
+        })
+        .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
+            cx.set_global(SelectedAlbum(Some(nav_album_id.clone())));
+            if let Some(Some(root)) = window.root::<MainWindow>() {
+                root.update(cx, |view, cx| {
+                    view.set_current_view(AppView::Album, window, cx);
+                });
+            }
+        })
+        .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
+            let items = album_context_menu_items(album_id.clone(), cx);
+            context_menu.update(cx, |menu, cx| {
+                menu.show(event.position, items, cx);
             });
-        }
-    })
-    .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
-        let items = album_context_menu_items(album_id.clone(), cx);
-        context_menu.update(cx, |menu, cx| {
-            menu.show(event.position, items, cx);
-        });
-    })
+        })
 }
 
 impl Render for AlbumsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
-        let queue_visible = cx.global::<QueueVisible>();
+        let side_panel = cx.global::<SidePanel>();
 
         let bounds = window.bounds();
         let window_width: f32 = bounds.size.width.into();
         let mut estimated_width = window_width - 300.0 - 98.0;
-        if queue_visible.0 {
+        if side_panel.is_open() {
             estimated_width -= 316.0;
         }
-        if estimated_width > 0.0 {
+        if let Some(width) = cx.global::<ViewportWidth>().get() {
+            self.container_width = Some((width - variables.padding_24 * 2.0).max(1.0));
+        } else if estimated_width > 0.0 {
             self.container_width = Some(estimated_width);
         }
 
-        let (cover_size, items_per_row) = self.calculate_layout();
+        let items_per_row = self.calculate_layout();
         let items_per_row = items_per_row.max(1);
+        let row_height =
+            card_row_height(self.container_width.unwrap_or(1000.0), items_per_row, true);
 
         let row_count = if self.total_count == 0 {
             0
@@ -394,7 +396,8 @@ impl Render for AlbumsView {
                                         .w_full()
                                         .px(px(variables.padding_24))
                                         .gap(px(CARD_GRID_GAP))
-                                        .pb(px(CARD_GRID_GAP));
+                                        .pb(px(CARD_GRID_GAP))
+                                        .h(px(row_height));
 
                                     for col_idx in 0..items_per_row {
                                         let item_idx = row_idx * items_per_row + col_idx;
@@ -426,7 +429,6 @@ impl Render for AlbumsView {
                                             row = row.child(album_tile(
                                                 item_idx,
                                                 &album,
-                                                cover_size,
                                                 context_menu.clone(),
                                                 hovered_artist_idx,
                                                 on_artist_hover,
@@ -438,11 +440,29 @@ impl Render for AlbumsView {
                                                         format!("album-placeholder-{}", item_idx)
                                                             .into(),
                                                     ))
-                                                    .w(px(cover_size))
-                                                    .h(px(cover_size + 44.0))
-                                                    .bg(variables.border),
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap(px(8.0))
+                                                    .child(
+                                                        div()
+                                                            .w_full()
+                                                            .aspect_square()
+                                                            .bg(variables.border),
+                                                    )
+                                                    .child(div().h(px(36.0))),
                                             );
                                         }
+                                    }
+
+                                    let filled = view_handle
+                                        .read(cx)
+                                        .total_count
+                                        .saturating_sub(row_idx * items_per_row)
+                                        .min(items_per_row);
+                                    for _ in filled..items_per_row {
+                                        row = row.child(card_spacer());
                                     }
 
                                     row.into_any_element()

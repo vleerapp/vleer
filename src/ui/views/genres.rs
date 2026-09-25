@@ -8,12 +8,14 @@ use crate::{
     data::{db::repo::Database, models::GenreListItem},
     ui::{
         components::{
-            card::{CARD_GRID_GAP, Card, calculate_card_layout},
+            card::{
+                CARD_GRID_GAP, Card, ViewportWidth, card_columns, card_row_height, card_spacer,
+            },
             context_menu::LibraryDataChanged,
             div::{flex_col, flex_row},
             scrollbar::{Scrollbar, ScrollbarAxis, ScrollbarHandle},
         },
-        layout::{library::Search, queue::QueueVisible},
+        layout::{SidePanel, library::Search},
         variables::Variables,
         views::{ActiveView, AppView},
     },
@@ -100,55 +102,55 @@ impl GenresView {
     }
 }
 
-fn genre_tile(idx: usize, genre: &GenreListItem, cover_size: f32) -> impl IntoElement {
+fn genre_tile(idx: usize, genre: &GenreListItem) -> impl IntoElement {
     let subtitle = match genre.song_count {
         1 => "1 song".to_string(),
         n => format!("{n} songs"),
     };
     let genre_id = genre.id.clone();
 
-    Card::new(
-        format!("genre-item-{}", idx),
-        genre.name.clone(),
-        cover_size,
-    )
-    .subtitle(subtitle)
-    .image_uri(Some(genre_cover_uri(&genre.id)))
-    .on_play(move |_window, cx| {
-        let db = cx.global::<Database>().clone();
-        let bg = cx.background_executor().clone();
-        let genre_id = genre_id.clone();
-        cx.spawn(async move |cx| {
-            let song_ids = bg
-                .spawn(async move {
-                    let mut ids = db.get_genre_song_ids(&genre_id).unwrap_or_default();
-                    ids.shuffle(&mut rand::rng());
-                    ids
-                })
-                .await;
-            cx.update(|cx| play_song_ids_now(song_ids, cx));
+    Card::new(format!("genre-item-{}", idx), genre.name.clone())
+        .subtitle(subtitle)
+        .image_uri(Some(genre_cover_uri(&genre.id)))
+        .on_play(move |_window, cx| {
+            let db = cx.global::<Database>().clone();
+            let bg = cx.background_executor().clone();
+            let genre_id = genre_id.clone();
+            cx.spawn(async move |cx| {
+                let song_ids = bg
+                    .spawn(async move {
+                        let mut ids = db.get_genre_song_ids(&genre_id).unwrap_or_default();
+                        ids.shuffle(&mut rand::rng());
+                        ids
+                    })
+                    .await;
+                cx.update(|cx| play_song_ids_now(song_ids, cx));
+            })
+            .detach();
         })
-        .detach();
-    })
 }
 
 impl Render for GenresView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
-        let queue_visible = cx.global::<QueueVisible>();
+        let side_panel = cx.global::<SidePanel>();
 
         let bounds = window.bounds();
         let window_width: f32 = bounds.size.width.into();
         let mut estimated_width = window_width - 300.0 - 98.0;
-        if queue_visible.0 {
+        if side_panel.is_open() {
             estimated_width -= 316.0;
         }
-        if estimated_width > 0.0 {
+        if let Some(width) = cx.global::<ViewportWidth>().get() {
+            self.container_width = Some((width - variables.padding_24 * 2.0).max(1.0));
+        } else if estimated_width > 0.0 {
             self.container_width = Some(estimated_width);
         }
 
-        let (cover_size, items_per_row) = calculate_card_layout(self.container_width);
+        let items_per_row = card_columns(self.container_width);
         let items_per_row = items_per_row.max(1);
+        let row_height =
+            card_row_height(self.container_width.unwrap_or(1000.0), items_per_row, true);
 
         let total_count = self.genres.len();
         let row_count = total_count.div_ceil(items_per_row);
@@ -182,7 +184,8 @@ impl Render for GenresView {
                                         .w_full()
                                         .px(px(variables.padding_24))
                                         .gap(px(CARD_GRID_GAP))
-                                        .pb(px(CARD_GRID_GAP));
+                                        .pb(px(CARD_GRID_GAP))
+                                        .h(px(row_height));
 
                                     for col_idx in 0..items_per_row {
                                         let item_idx = row_idx * items_per_row + col_idx;
@@ -191,7 +194,14 @@ impl Render for GenresView {
                                         else {
                                             break;
                                         };
-                                        row = row.child(genre_tile(item_idx, &genre, cover_size));
+                                        row = row.child(genre_tile(item_idx, &genre));
+                                    }
+
+                                    let filled = total_count
+                                        .saturating_sub(row_idx * items_per_row)
+                                        .min(items_per_row);
+                                    for _ in filled..items_per_row {
+                                        row = row.child(card_spacer());
                                     }
 
                                     row.into_any_element()

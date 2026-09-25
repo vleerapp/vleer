@@ -21,11 +21,6 @@ const ROW_HEIGHT: f32 = 36.0;
 const QUEUE_WIDTH: f32 = 300.0;
 const ROW_PITCH: f32 = ROW_HEIGHT + 8.0;
 
-#[derive(Clone, Default)]
-pub struct QueueVisible(pub bool);
-
-impl Global for QueueVisible {}
-
 #[derive(Clone)]
 struct QueueDragPayload {
     from_index: usize,
@@ -536,6 +531,8 @@ impl Render for QueuePane {
                 this.child(
                     flex_col()
                         .size_full()
+                        .items_center()
+                        .justify_center()
                         .p(px(variables.padding_16))
                         .text_color(variables.text_secondary)
                         .child("Queue is empty"),
