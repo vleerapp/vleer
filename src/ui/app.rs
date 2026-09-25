@@ -1,5 +1,6 @@
 use anyhow::Ok;
 use futures::StreamExt;
+use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_platform_gpui_unofficial::application;
 use std::{collections::HashMap, rc::Rc};
@@ -115,6 +116,14 @@ impl Render for MainWindow {
             .unwrap_or_else(|| div().into_any_element());
 
         let side_panel = cx.try_global::<SidePanel>().copied().unwrap_or_default();
+        let fit_width = matches!(
+            self.current_view,
+            AppView::Home
+                | AppView::Albums
+                | AppView::Artists
+                | AppView::Genres
+                | AppView::Playlists
+        );
 
         let show_linux_controls = cfg!(target_os = "linux")
             && matches!(window.window_decorations(), Decorations::Client { .. });
@@ -292,9 +301,13 @@ impl Render for MainWindow {
                                                                                 .relative()
                                                                                 .flex()
                                                                                 .flex_col()
-                                                                                .flex_shrink_0()
-                                                                                .min_w_full()
                                                                                 .h_full()
+                                                                                .when(fit_width, |this| {
+                                                                                    this.w_full().min_w_0().overflow_hidden()
+                                                                                })
+                                                                                .when(!fit_width, |this| {
+                                                                                    this.flex_shrink_0().min_w_full()
+                                                                                })
                                                                                 .child(content),
                                                                         ),
                                                                 )

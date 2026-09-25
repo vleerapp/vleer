@@ -70,7 +70,11 @@ pub fn card_row_height(container_width: f32, columns: usize, subtitle: bool) -> 
 }
 
 pub fn card_spacer() -> Div {
-    div().flex_1().min_w_0()
+    div()
+        .flex_grow(1.0)
+        .flex_shrink(1.0)
+        .flex_basis(px(0.0))
+        .min_w_0()
 }
 
 pub fn card_columns(container_width: Option<f32>) -> usize {
@@ -239,7 +243,9 @@ impl RenderOnce for Card {
         }
 
         base.id(id)
-            .flex_1()
+            .flex_grow(1.0)
+            .flex_shrink(1.0)
+            .flex_basis(px(0.0))
             .min_w_0()
             .gap(px(8.0))
             .child(image_container)
