@@ -17,10 +17,18 @@ const SUNG_PER_CHAR: f32 = 0.12;
 const INFERRED_GAP: f32 = 5.0;
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct Word {
+    pub at: f32,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Line {
     pub at: f32,
     pub text: String,
     pub secondary: Option<String>,
+    pub words: Vec<Word>,
+    pub end: Option<f32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -85,24 +93,71 @@ fn stamp(tag: &str) -> Option<f32> {
     Some(minutes * 60.0 + seconds + fraction)
 }
 
-fn strip_word_stamps(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(start) = rest.find('<') {
-        let Some(len) = rest[start..].find('>') else {
+struct Timed {
+    text: String,
+    words: Vec<Word>,
+    end: Option<f32>,
+}
+
+fn parse_words(rest: &str, line_at: f32) -> Timed {
+    let mut pieces: Vec<(Option<f32>, String)> = vec![(None, String::new())];
+    let mut cursor = rest;
+    while let Some(start) = cursor.find('<') {
+        let (before, after) = cursor.split_at(start);
+        let stamped = after
+            .find('>')
+            .and_then(|close| stamp(&after[1..close]).map(|at| (at, close)));
+        let Some(current) = pieces.last_mut() else {
             break;
         };
-        let inner = &rest[start + 1..start + len];
-        if stamp(inner).is_some() {
-            out.push_str(&rest[..start]);
-            rest = &rest[start + len + 1..];
-        } else {
-            out.push_str(&rest[..start + 1]);
-            rest = &rest[start + 1..];
+        current.1.push_str(before);
+        match stamped {
+            Some((at, close)) => {
+                pieces.push((Some(at), String::new()));
+                cursor = &after[close + 1..];
+            }
+            None => {
+                current.1.push('<');
+                cursor = &after[1..];
+            }
         }
     }
-    out.push_str(rest);
-    out.trim().to_owned()
+    if let Some(current) = pieces.last_mut() {
+        current.1.push_str(cursor);
+    }
+
+    if pieces.len() == 1 {
+        return Timed {
+            text: pieces.remove(0).1.trim().to_owned(),
+            words: Vec::new(),
+            end: None,
+        };
+    }
+
+    let last = pieces.len() - 1;
+    let mut words: Vec<Word> = Vec::new();
+    let mut end = None;
+    for (index, (at, text)) in pieces.into_iter().enumerate() {
+        let at = at.unwrap_or(line_at);
+        if text.trim().is_empty() {
+            if let Some(previous) = words.last_mut() {
+                previous.text.push_str(&text);
+            }
+            if index == last {
+                end = Some(at);
+            }
+            continue;
+        }
+        words.push(Word { at, text });
+    }
+    if let Some(first) = words.first_mut() {
+        first.text = first.text.trim_start().to_owned();
+    }
+    if let Some(final_word) = words.last_mut() {
+        final_word.text = final_word.text.trim_end().to_owned();
+    }
+    let text = words.iter().map(|w| w.text.as_str()).collect::<String>();
+    Timed { text, words, end }
 }
 
 pub fn parse_lrc(text: &str) -> Vec<Line> {
@@ -128,16 +183,28 @@ pub fn parse_lrc(text: &str) -> Vec<Line> {
         if stamps.is_empty() {
             continue;
         }
-        let text = strip_word_stamps(rest);
+        let single = stamps.len() == 1;
+        let timed = parse_words(rest, stamps[0]);
         lines.extend(stamps.into_iter().map(|at| Line {
             at,
-            text: text.clone(),
+            text: timed.text.clone(),
             secondary: None,
+            words: if single {
+                timed.words.clone()
+            } else {
+                Vec::new()
+            },
+            end: if single { timed.end } else { None },
         }));
     }
 
+    let shift = |at: f32| (at - offset).max(0.0);
     for line in &mut lines {
-        line.at = (line.at - offset).max(0.0);
+        line.at = shift(line.at);
+        line.end = line.end.map(shift);
+        for word in &mut line.words {
+            word.at = shift(word.at);
+        }
     }
     lines.sort_by(|a, b| a.at.total_cmp(&b.at));
 
@@ -178,6 +245,8 @@ pub fn parse_lrc(text: &str) -> Vec<Line> {
                 at: 0.0,
                 text: String::new(),
                 secondary: None,
+                words: Vec::new(),
+                end: None,
             },
         );
     }
@@ -194,12 +263,16 @@ fn insert_inferred_gaps(lines: Vec<Line>) -> Vec<Line> {
         if line.text.is_empty() || next.text.is_empty() {
             continue;
         }
-        let ends = line.at + SUNG_BASE + line.text.chars().count() as f32 * SUNG_PER_CHAR;
+        let ends = line
+            .end
+            .unwrap_or(line.at + SUNG_BASE + line.text.chars().count() as f32 * SUNG_PER_CHAR);
         if next.at - ends >= INFERRED_GAP {
             out.push(Line {
                 at: ends,
                 text: String::new(),
                 secondary: None,
+                words: Vec::new(),
+                end: None,
             });
         }
     }
@@ -355,6 +428,24 @@ mod tests {
         let lines = parse_lrc("[offset:+500]\n[00:02.00]<00:02.00>hel<00:02.40>lo");
         assert_eq!(lines[0].at, 1.5);
         assert_eq!(lines[0].text, "hello");
+        assert_eq!(lines[0].words.len(), 2);
+        assert!((lines[0].words[1].at - 1.9).abs() < 0.001);
+    }
+
+    #[test]
+    fn enhanced_lrc_keeps_word_timing_and_end() {
+        let lines = parse_lrc(
+            "[00:01.00]<00:01.00>Hel<00:01.40>lo <00:01.80>world<00:02.50>\n[00:05.00]next",
+        );
+        assert_eq!(lines[0].text, "Hello world");
+        let words: Vec<(&str, f32)> = lines[0]
+            .words
+            .iter()
+            .map(|w| (w.text.as_str(), w.at))
+            .collect();
+        assert_eq!(words, [("Hel", 1.0), ("lo ", 1.4), ("world", 1.8)]);
+        assert_eq!(lines[0].end, Some(2.5));
+        assert!(lines[1].words.is_empty());
     }
 
     #[test]

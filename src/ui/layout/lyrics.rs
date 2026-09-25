@@ -29,6 +29,8 @@ const REST: Pixels = px(0.5);
 
 const LINE_SIZE: f32 = 20.0;
 const LINE_HEIGHT: f32 = 30.0;
+const WORD_DIM: f32 = 0.4;
+const WORD_STEPS: f32 = 6.0;
 const SECONDARY_SIZE: f32 = 14.0;
 const SECONDARY_HEIGHT: f32 = 20.0;
 const PLAIN_SIZE: f32 = 16.0;
@@ -325,6 +327,35 @@ fn line_opacity(index: usize, active: Option<usize>) -> f32 {
     }
 }
 
+fn word_highlights(
+    line: &Line,
+    next_at: Option<f32>,
+    position: f32,
+) -> Vec<(std::ops::Range<usize>, HighlightStyle)> {
+    let line_end = line
+        .end
+        .or(next_at)
+        .unwrap_or_else(|| line.words.last().map_or(line.at, |w| w.at + 1.0));
+    let mut start = 0;
+    line.words
+        .iter()
+        .enumerate()
+        .map(|(i, word)| {
+            let end = line.words.get(i + 1).map_or(line_end, |next| next.at);
+            let progress = ((position - word.at) / (end - word.at).max(0.001)).clamp(0.0, 1.0);
+            let progress = (progress * WORD_STEPS).round() / WORD_STEPS;
+            let strength = WORD_DIM + (1.0 - WORD_DIM) * progress;
+            let range = start..start + word.text.len();
+            start = range.end;
+            let style = HighlightStyle {
+                fade_out: Some(1.0 - strength),
+                ..Default::default()
+            };
+            (range, style)
+        })
+        .collect()
+}
+
 fn gap_row(progress: Option<f32>, variables: &Variables) -> Div {
     let row = flex_row().h(px(GAP_HEIGHT)).gap(px(8.0)).items_center();
     let Some(progress) = progress else {
@@ -368,6 +399,15 @@ fn synced_rows(
 
             let at = line.at;
             let opacity = shown.get(i).copied().unwrap_or(0.5);
+            let main_text = if active == Some(i) && !line.words.is_empty() {
+                let highlights =
+                    word_highlights(line, lines.get(i + 1).map(|next| next.at), position);
+                StyledText::new(line.text.clone())
+                    .with_highlights(highlights)
+                    .into_any_element()
+            } else {
+                line.text.clone().into_any_element()
+            };
             div()
                 .id(("lyric-line", i))
                 .py(px(6.0))
@@ -385,7 +425,7 @@ fn synced_rows(
                     });
                     window.refresh();
                 }))
-                .child(flex_col().gap(px(2.0)).child(line.text.clone()).when_some(
+                .child(flex_col().gap(px(2.0)).child(main_text).when_some(
                     line.secondary.clone(),
                     |this, secondary| {
                         this.child(
@@ -468,7 +508,8 @@ impl Render for LyricsPane {
                 })
                 .collect(),
             Load::Ready(Lyrics::Synced(lines)) => {
-                if playing && active.is_some_and(|i| is_gap(lines, i)) {
+                if playing && active.is_some_and(|i| is_gap(lines, i) || !lines[i].words.is_empty())
+                {
                     window.request_animation_frame();
                 }
                 synced_rows(lines, &self.shown, active, position, &variables, cx)
