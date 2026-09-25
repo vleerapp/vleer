@@ -33,9 +33,18 @@ pub struct HomeView {
     container_width: Option<f32>,
     context_menu: Entity<ContextMenu>,
     hovered_artist: Option<(String, usize)>,
+    wheel_accum: f32,
 }
 
 const HOME_RECENT_ITEMS_LIMIT: i64 = 100;
+const WHEEL_PAGE_PIXELS: f32 = 60.0;
+
+#[derive(Clone, Copy)]
+enum Section {
+    Played,
+    Added,
+}
+
 impl HomeView {
     pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut view = Self {
@@ -46,6 +55,7 @@ impl HomeView {
             container_width: None,
             context_menu: cx.new(|_| ContextMenu::new()),
             hovered_artist: None,
+            wheel_accum: 0.0,
         };
 
         cx.observe_global::<HomeDataChanged>(|this, cx| {
@@ -111,6 +121,47 @@ impl HomeView {
 
     fn calculate_layout(&self) -> usize {
         card_columns(self.container_width)
+    }
+
+    fn handle_wheel(
+        &mut self,
+        section: Section,
+        event: &ScrollWheelEvent,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !event.modifiers.secondary() {
+            return;
+        }
+        cx.stop_propagation();
+
+        let dy: f32 = event.delta.pixel_delta(window.line_height()).y.into();
+        let direction = if event.delta.precise() {
+            self.wheel_accum += dy;
+            if self.wheel_accum <= -WHEEL_PAGE_PIXELS {
+                self.wheel_accum = 0.0;
+                1
+            } else if self.wheel_accum >= WHEEL_PAGE_PIXELS {
+                self.wheel_accum = 0.0;
+                -1
+            } else {
+                0
+            }
+        } else if dy < 0.0 {
+            1
+        } else if dy > 0.0 {
+            -1
+        } else {
+            0
+        };
+
+        match (section, direction) {
+            (Section::Played, 1) => self.scroll_recently_played_right(cx),
+            (Section::Played, -1) => self.scroll_recently_played_left(cx),
+            (Section::Added, 1) => self.scroll_recently_added_right(cx),
+            (Section::Added, -1) => self.scroll_recently_added_left(cx),
+            _ => {}
+        }
     }
 
     fn scroll_offset_left(offset: &mut usize, items_per_page: usize) {
@@ -363,6 +414,9 @@ impl Render for HomeView {
         let recently_played = flex_col()
             .id("recently-played-section")
             .w_full()
+            .on_scroll_wheel(cx.listener(|this, event, window, cx| {
+                this.handle_wheel(Section::Played, event, window, cx);
+            }))
             .child(
                 flex_row()
                     .w_full()
@@ -449,6 +503,9 @@ impl Render for HomeView {
         let recently_added = flex_col()
             .id("recently-added-section")
             .w_full()
+            .on_scroll_wheel(cx.listener(|this, event, window, cx| {
+                this.handle_wheel(Section::Added, event, window, cx);
+            }))
             .child(
                 flex_row()
                     .id("recently-added-header")
