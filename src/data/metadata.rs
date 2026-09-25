@@ -130,25 +130,115 @@ pub struct AudioMetadata {
     pub lufs: Option<f32>,
 }
 
+fn clean_name(value: &str) -> Option<String> {
+    let name = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let name = name.trim_matches(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | '/' | '&'));
+    let unmatched_close = |close: char, open: char| {
+        name.ends_with(close) && name.matches(open).count() < name.matches(close).count()
+    };
+    let name = if unmatched_close(')', '(') || unmatched_close(']', '[') {
+        &name[..name.len() - 1]
+    } else {
+        name
+    };
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+fn unique_names<'a>(names: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    names
+        .into_iter()
+        .filter_map(clean_name)
+        .filter(|name| seen.insert(name.to_lowercase()))
+        .collect()
+}
+
+fn split_on(part: &str, delimiter: &str, rejoin_the: Option<&str>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for piece in part
+        .split(delimiter)
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+    {
+        match (rejoin_the, out.last_mut()) {
+            (Some(joiner), Some(last)) if piece.to_lowercase().starts_with("the ") => {
+                last.push_str(joiner);
+                last.push_str(piece);
+            }
+            _ => out.push(piece.to_string()),
+        }
+    }
+    out
+}
+
+fn split_credit(credit: &str) -> Vec<String> {
+    let credit = credit.replace('\0', ";");
+    let words: Vec<&str> = credit.split_whitespace().collect();
+    let mut parts: Vec<String> = Vec::new();
+    let mut current: Vec<&str> = Vec::new();
+    for (i, word) in words.iter().enumerate() {
+        let marker = word.trim_start_matches(['(', '[']).to_lowercase();
+        let featuring = matches!(
+            marker.as_str(),
+            "feat." | "feat" | "ft." | "ft" | "featuring"
+        );
+        let crossover = matches!(*word, "x" | "×") && i > 0 && i + 1 < words.len();
+        if featuring || crossover {
+            parts.push(current.join(" "));
+            current.clear();
+        } else {
+            current.push(word);
+        }
+    }
+    parts.push(current.join(" "));
+
+    for (delimiter, rejoin_the) in [
+        (";", None),
+        (" / ", None),
+        (",", Some(", ")),
+        (" & ", Some(" & ")),
+    ] {
+        parts = parts
+            .iter()
+            .flat_map(|part| split_on(part, delimiter, rejoin_the))
+            .collect();
+    }
+    parts
+}
+
+fn extract_artists(tag: &Tag) -> Vec<String> {
+    let split_list = |values: &[&str]| {
+        unique_names(
+            values
+                .iter()
+                .flat_map(|value| value.split(['\0', ';']).collect::<Vec<_>>()),
+        )
+    };
+
+    let listed: Vec<&str> = tag.get_strings(ItemKey::TrackArtists).collect();
+    let credited: Vec<&str> = tag.get_strings(ItemKey::TrackArtist).collect();
+
+    let names = split_list(&listed);
+    if !names.is_empty() {
+        return names;
+    }
+    match credited.as_slice() {
+        [] => Vec::new(),
+        [credit] => {
+            let names = split_credit(credit);
+            unique_names(names.iter().map(String::as_str))
+        }
+        many => split_list(many),
+    }
+}
+
 fn extract_metadata_from_tag(tag: Option<&Tag>, duration: Duration) -> AudioMetadata {
     let (title, artists, album, album_artist, genres, year, track_number, lufs) =
         if let Some(tag) = tag {
             let title = tag.title().map(|s| s.to_string());
-            let artists = tag
-                .artist()
-                .map(|s| {
-                    s.split([',', ';', '/', '&'])
-                        .map(|a| a.trim().to_string())
-                        .filter(|a| !a.is_empty())
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
+            let artists = extract_artists(tag);
             let album = tag.album().map(|s| s.to_string());
-            let album_artist = tag
-                .get_string(ItemKey::AlbumArtist)
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string);
+            let album_artist = tag.get_string(ItemKey::AlbumArtist).and_then(clean_name);
             let genres = tag
                 .genre()
                 .map(|s| {
