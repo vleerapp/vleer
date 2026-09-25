@@ -113,6 +113,15 @@ pub struct Album {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredLyrics {
+    pub source: String,
+    pub synced: bool,
+    pub instrumental: bool,
+    pub content: String,
+    pub stale: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenreListItem {
     pub id: Cuid,
     pub name: String,

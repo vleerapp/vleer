@@ -109,6 +109,15 @@ CREATE TABLE IF NOT EXISTS songs_artists (
     FOREIGN KEY (song_id) REFERENCES songs(id) ON DELETE CASCADE ON UPDATE CASCADE,
     FOREIGN KEY (artist_id) REFERENCES artists(id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS lyrics (
+    song_id TEXT PRIMARY KEY,
+    source TEXT NOT NULL CHECK(source IN ('embedded', 'lrclib', 'none')),
+    synced BOOLEAN NOT NULL DEFAULT FALSE,
+    instrumental BOOLEAN NOT NULL DEFAULT FALSE,
+    content TEXT NOT NULL DEFAULT '',
+    fetched_at TEXT NOT NULL DEFAULT (DATETIME('now')),
+    FOREIGN KEY (song_id) REFERENCES songs(id) ON DELETE CASCADE ON UPDATE CASCADE
+);
 CREATE INDEX IF NOT EXISTS idx_songs_genres_song ON songs_genres(song_id);
 CREATE INDEX IF NOT EXISTS idx_songs_genres_genre ON songs_genres(genre_id);
 CREATE INDEX IF NOT EXISTS idx_songs_artists_song ON songs_artists(song_id);

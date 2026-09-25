@@ -4,7 +4,7 @@ use crate::data::{
     models::{
         Album, AlbumListItem, Artist, ArtistListItem, Cuid, Event, EventContext, EventType,
         GenreListItem, Image, PinnedItem, Playlist, PlaylistListItem, PlaylistTrack, RecentItem,
-        Song, SongListItem, SongSort,
+        Song, SongListItem, SongSort, StoredLyrics,
     },
     search::{
         AlbumSearchEntry, ArtistSearchEntry, PlaylistSearchEntry, SearchIndex, SongSearchEntry,
@@ -549,6 +549,50 @@ impl Database {
         )?;
         let row = stmt.query_row(params![id], SongRow::from_row).optional()?;
         Ok(row.map(Into::into))
+    }
+
+    pub fn get_lyrics(&self, song_id: &Cuid, retry_days: u32) -> Result<Option<StoredLyrics>> {
+        let conn = self.conn.lock();
+        let row = conn
+            .prepare_cached(
+                "SELECT source, synced, instrumental, content,
+                        fetched_at < DATETIME('now', '-' || ?2 || ' days') AS stale
+                 FROM lyrics WHERE song_id = ?1",
+            )?
+            .query_row(params![song_id, retry_days], |row| {
+                Ok(StoredLyrics {
+                    source: row.get("source")?,
+                    synced: row.get("synced")?,
+                    instrumental: row.get("instrumental")?,
+                    content: row.get("content")?,
+                    stale: row.get("stale")?,
+                })
+            })
+            .optional()?;
+        Ok(row)
+    }
+
+    pub fn upsert_lyrics(
+        &self,
+        song_id: &Cuid,
+        source: &str,
+        synced: bool,
+        instrumental: bool,
+        content: &str,
+    ) -> Result<()> {
+        let conn = self.conn.lock();
+        conn.prepare_cached(
+            "INSERT INTO lyrics (song_id, source, synced, instrumental, content, fetched_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, DATETIME('now'))
+             ON CONFLICT(song_id) DO UPDATE SET
+                source = excluded.source,
+                synced = excluded.synced,
+                instrumental = excluded.instrumental,
+                content = excluded.content,
+                fetched_at = excluded.fetched_at",
+        )?
+        .execute(params![song_id, source, synced, instrumental, content])?;
+        Ok(())
     }
 
     pub fn get_songs_by_ids(&self, ids: &[Cuid]) -> Result<Vec<Song>> {
