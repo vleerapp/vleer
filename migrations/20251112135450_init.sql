@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS songs (
     track_number INTEGER,
     favorite BOOLEAN DEFAULT FALSE,
     lufs REAL,
+    audio_hash TEXT,
     pinned BOOLEAN DEFAULT FALSE,
     date_added TEXT DEFAULT (DATETIME('now')),
     date_updated TEXT DEFAULT (DATETIME('now')),
@@ -155,6 +156,7 @@ CREATE INDEX IF NOT EXISTS idx_songs_album_image ON songs(album_id, image_checke
 CREATE INDEX IF NOT EXISTS idx_albums_title_nocase ON albums(title COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_artists_name_nocase ON artists(name COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_songs_title_nocase ON songs(title COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_songs_audio_hash ON songs(audio_hash);
 CREATE INDEX IF NOT EXISTS idx_playlists_name_nocase ON playlists(name COLLATE NOCASE);
 CREATE TRIGGER IF NOT EXISTS delete_album_trigger
 AFTER DELETE ON songs BEGIN

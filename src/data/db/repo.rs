@@ -969,16 +969,41 @@ impl Database {
                                 .execute(params![track.file_path, song_id])?;
                         }
                         None => {
-                            inserted += 1;
+                            let orphans = tx
+                                .prepare_cached(
+                                    "SELECT id, file_path FROM songs
+                                     WHERE audio_hash = ?1 ORDER BY date_added",
+                                )?
+                                .query_map(params![track.audio_hash], |row| {
+                                    Ok((row.get::<_, Cuid>(0)?, row.get::<_, String>(1)?))
+                                })?
+                                .collect::<rusqlite::Result<Vec<_>>>()?;
+                            let orphan = orphans
+                                .into_iter()
+                                .find(|(_, path)| !Path::new(path).exists());
+                            match orphan {
+                                Some((orphan_id, _)) => {
+                                    tx.prepare_cached(
+                                        "UPDATE songs SET id = ?1, file_path = ?2 WHERE id = ?3",
+                                    )?
+                                    .execute(params![
+                                        song_id,
+                                        track.file_path,
+                                        orphan_id
+                                    ])?;
+                                }
+                                None => inserted += 1,
+                            }
                         }
                     }
                 }
             }
 
             tx.prepare_cached(
-                    "INSERT INTO songs (id, title, album_id, file_path, file_size, file_modified, date, duration, track_number, lufs, image_checked)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0)
+                    "INSERT INTO songs (id, title, album_id, file_path, file_size, file_modified, date, duration, track_number, lufs, image_checked, audio_hash)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?12)
                      ON CONFLICT(id) DO UPDATE SET
+                        audio_hash = excluded.audio_hash,
                         title = excluded.title,
                         album_id = excluded.album_id,
                         file_size = excluded.file_size,
@@ -1001,7 +1026,8 @@ impl Database {
                         track.duration,
                         track.track_number,
                         track.lufs,
-                        track.recheck_image
+                        track.recheck_image,
+                        track.audio_hash
                     ],
                 )?;
 
@@ -1079,6 +1105,74 @@ impl Database {
             write_profile::WAL_BYTES.store(meta.len(), std::sync::atomic::Ordering::Relaxed);
         }
         Ok(inserted)
+    }
+
+    pub fn relink_unhashed_songs(&self) -> Result<usize> {
+        const ARTIST_SET: &str = "(SELECT group_concat(artist_id) FROM (
+            SELECT artist_id FROM songs_artists WHERE song_id = {} ORDER BY artist_id))";
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+
+        let stale: Vec<(Cuid, String, i32, String)> = tx
+            .prepare_cached(
+                "SELECT id, title, duration, file_path FROM songs WHERE audio_hash IS NULL",
+            )?
+            .query_map([], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+
+        let find = format!(
+            "SELECT s.id, s.file_path FROM songs s
+             WHERE s.audio_hash IS NOT NULL AND s.title = ?2 COLLATE NOCASE AND s.duration = ?3
+               AND {} IS {}",
+            ARTIST_SET.replace("{}", "s.id"),
+            ARTIST_SET.replace("{}", "?1"),
+        );
+
+        let mut merged = 0;
+        for (stale_id, title, duration, path) in stale {
+            if Path::new(&path).exists() {
+                continue;
+            }
+            let live: Vec<(Cuid, String)> = tx
+                .prepare_cached(&find)?
+                .query_map(params![stale_id, title, duration], |row| {
+                    Ok((row.get(0)?, row.get(1)?))
+                })?
+                .collect::<rusqlite::Result<_>>()?;
+            let mut live = live
+                .into_iter()
+                .filter(|(_, path)| Path::new(path).exists());
+            let (Some((live_id, _)), None) = (live.next(), live.next()) else {
+                continue;
+            };
+
+            tx.prepare_cached(
+                "UPDATE songs SET
+                    favorite = MAX(favorite, (SELECT favorite FROM songs WHERE id = ?2)),
+                    pinned = MAX(pinned, (SELECT pinned FROM songs WHERE id = ?2)),
+                    date_added = MIN(date_added, (SELECT date_added FROM songs WHERE id = ?2))
+                 WHERE id = ?1",
+            )?
+            .execute(params![live_id, stale_id])?;
+            for table in ["playlist_songs", "event_contexts", "lyrics"] {
+                tx.prepare_cached(&format!(
+                    "UPDATE OR IGNORE {table} SET song_id = ?1 WHERE song_id = ?2"
+                ))?
+                .execute(params![live_id, stale_id])?;
+            }
+            tx.prepare_cached("DELETE FROM songs WHERE id = ?1")?
+                .execute(params![stale_id])?;
+            merged += 1;
+        }
+
+        tx.commit()?;
+        drop(conn);
+        if merged > 0 {
+            self.rebuild_search_index();
+        }
+        Ok(merged)
     }
 
     pub fn delete_song(&self, id: &Cuid) -> Result<()> {
@@ -2217,6 +2311,105 @@ mod tests {
     }
 
     #[test]
+    fn a_moved_and_retagged_file_keeps_its_history() {
+        let (db, path) = named_db("song_move_retag");
+        let dir = std::env::temp_dir().join(format!("vleer_move_retag_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let new_path = dir.join("1.flac");
+        std::fs::write(&new_path, b"x").unwrap();
+        let new_path = new_path.to_string_lossy().into_owned();
+
+        db.upsert_tracks_batch(
+            &[BatchTrack {
+                audio_hash: "audio-mr",
+                album: Some("Loose"),
+                artists: &["Artist"],
+                ..track("/gone/1.flac", false)
+            }],
+            &mut ScanCache::default(),
+        )
+        .unwrap();
+        let old_id = song_id_for(&db, "/gone/1.flac");
+        db.set_favorite::<Song>(&old_id, true).unwrap();
+
+        let added = db
+            .upsert_tracks_batch(
+                &[BatchTrack {
+                    audio_hash: "audio-mr",
+                    album: Some("Proper"),
+                    artists: &["Artist"],
+                    ..track(&new_path, false)
+                }],
+                &mut ScanCache::default(),
+            )
+            .unwrap();
+
+        assert_eq!(added, 0);
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM songs"), 1);
+        let song = db.get_song_by_path(&new_path).unwrap().unwrap();
+        assert!(song.favorite);
+        assert_eq!(
+            song.id,
+            Cuid::for_song("audio-mr", Some(&Cuid::for_album("Proper", "Artist")))
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+        cleanup(&path);
+    }
+
+    #[test]
+    fn an_unhashed_stale_row_merges_into_its_live_twin() {
+        let (db, path) = named_db("song_relink_unhashed");
+        let dir = std::env::temp_dir().join(format!("vleer_relink_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let live_path = dir.join("1.flac");
+        std::fs::write(&live_path, b"x").unwrap();
+        let live_path = live_path.to_string_lossy().into_owned();
+
+        db.upsert_tracks_batch(
+            &[
+                BatchTrack {
+                    audio_hash: "old",
+                    album: Some("Loose"),
+                    artists: &["Artist"],
+                    ..track("/gone/1.flac", false)
+                },
+                BatchTrack {
+                    audio_hash: "new",
+                    album: Some("Proper"),
+                    artists: &["Artist"],
+                    ..track(&live_path, false)
+                },
+            ],
+            &mut ScanCache::default(),
+        )
+        .unwrap();
+        db.conn
+            .lock()
+            .execute(
+                "UPDATE songs SET audio_hash = NULL WHERE file_path = '/gone/1.flac'",
+                [],
+            )
+            .unwrap();
+        let stale = song_id_for(&db, "/gone/1.flac");
+        let playlist = Cuid::new();
+        db.upsert_playlist(&playlist, "Mix", None, None, false)
+            .unwrap();
+        db.upsert_playlist_song(&playlist, &stale).unwrap();
+        db.set_favorite::<Song>(&stale, true).unwrap();
+
+        assert_eq!(db.relink_unhashed_songs().unwrap(), 1);
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM songs"), 1);
+        let song = db.get_song_by_path(&live_path).unwrap().unwrap();
+        assert!(song.favorite);
+        assert_eq!(
+            db.get_playlist_songs(&playlist).unwrap()[0].song.id,
+            song.id
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+        cleanup(&path);
+    }
+
+    #[test]
     fn retagging_keeps_the_id() {
         let (db, path) = named_db("song_identity");
         db.upsert_tracks_batch(
@@ -2245,19 +2438,26 @@ mod tests {
     #[test]
     fn the_same_recording_on_two_albums_keeps_a_row_per_album() {
         let (db, path) = named_db("song_shared_across_albums");
+        let dir = std::env::temp_dir().join(format!("vleer_shared_{}", std::process::id()));
+        for sub in ["best-of", "comp2"] {
+            std::fs::create_dir_all(dir.join(sub)).unwrap();
+            std::fs::write(dir.join(sub).join("1.flac"), b"x").unwrap();
+        }
+        let best_of_path = dir.join("best-of/1.flac").to_string_lossy().into_owned();
+        let comp2_path = dir.join("comp2/1.flac").to_string_lossy().into_owned();
         db.upsert_tracks_batch(
             &[
                 BatchTrack {
                     audio_hash: "shared",
                     album: Some("Greatest Hits"),
                     artists: &["Artist"],
-                    ..track("/music/best-of/1.flac", false)
+                    ..track(&best_of_path, false)
                 },
                 BatchTrack {
                     audio_hash: "shared",
                     album: Some("Welcome to the Jungle, Vol. 2"),
                     artists: &["Artist"],
-                    ..track("/music/comp2/1.flac", false)
+                    ..track(&comp2_path, false)
                 },
             ],
             &mut ScanCache::default(),
@@ -2270,13 +2470,13 @@ mod tests {
             "same recording, two different albums -- two rows"
         );
         let best_of = db
-            .get_song_by_path("/music/best-of/1.flac")
+            .get_song_by_path(&best_of_path)
             .unwrap()
             .unwrap()
             .album_id
             .unwrap();
         let comp2 = db
-            .get_song_by_path("/music/comp2/1.flac")
+            .get_song_by_path(&comp2_path)
             .unwrap()
             .unwrap()
             .album_id
@@ -2284,6 +2484,7 @@ mod tests {
         assert_ne!(best_of, comp2);
         assert_eq!(db.get_album_songs(&best_of).unwrap().len(), 1);
         assert_eq!(db.get_album_songs(&comp2).unwrap().len(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
         cleanup(&path);
     }
 
