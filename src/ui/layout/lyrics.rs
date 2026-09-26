@@ -25,6 +25,7 @@ const TICK: Duration = Duration::from_millis(40);
 const LEAD_MIN: f32 = 0.25;
 const LEAD_MAX: f32 = 0.6;
 const EASE: f32 = 0.08;
+const CLEAR_SECS: f32 = 0.3;
 const HERTZ: f32 = 180.0;
 const MAX_FRAME_TIME: Duration = Duration::from_millis(64);
 const REST: Pixels = px(0.5);
@@ -48,8 +49,7 @@ const BLUR: f32 = 0.2;
 const HAZE: f32 = 0.7;
 const PIN: f32 = 0.3;
 const NEIGHBOR: Pixels = px(LINE_HEIGHT * 2.0);
-const HAZE_LEAST: Pixels = px(0.25);
-const BLUR_MIN: Pixels = px(0.75);
+const HAZE_LEAST: Pixels = px(0.1);
 
 enum Load {
     Idle,
@@ -291,13 +291,14 @@ impl LyricsPane {
                 moving = true;
             }
         }
+        let step = elapsed.min(MAX_FRAME_TIME).as_secs_f32() / CLEAR_SECS;
         for (i, clear) in self.clear.iter_mut().enumerate() {
             let target = clarity(i, lit[i], focus);
             let distance = target - *clear;
-            if distance.abs() < 0.005 {
+            if distance.abs() <= step {
                 *clear = target;
             } else {
-                *clear += distance * ease;
+                *clear += step * distance.signum();
                 moving = true;
             }
         }
@@ -542,6 +543,14 @@ fn viewport_haze(scroll: &ScrollHandle, index: usize, pin: Pixels, margin: Pixel
         .powf(HAZE)
 }
 
+fn soften(body: Div, radius: Pixels) -> AnyElement {
+    if radius > HAZE_LEAST {
+        body.blur(radius).into_any_element()
+    } else {
+        body.into_any_element()
+    }
+}
+
 fn synced_rows(
     lines: &[Line],
     shown: &[f32],
@@ -569,18 +578,11 @@ fn synced_rows(
             let opacity = shown.get(i).copied().unwrap_or(0.5);
             let sung = active == Some(i) || led == Some(i) || is_singing(lines, i, position);
             let clear = clear.get(i).copied().unwrap_or(0.0);
-            let softness = if clear >= 1.0 {
-                0.0
+            let radius = if clear >= 1.0 {
+                px(0.0)
             } else {
-                viewport_haze(scroll, i, pin, blur) * (1.0 - clear)
-            };
-            let row_blur = blur * softness;
-            let blurred = |this: Stateful<Div>| {
-                if row_blur > HAZE_LEAST {
-                    this.blur(row_blur.max(BLUR_MIN))
-                } else {
-                    this
-                }
+                let eased = clear * clear * (3.0 - 2.0 * clear);
+                blur * viewport_haze(scroll, i, pin, blur) * (1.0 - eased)
             };
             if line.text.is_empty() {
                 if !is_gap(lines, i) {
@@ -594,7 +596,7 @@ fn synced_rows(
                 } else {
                     0.0
                 };
-                let row = div()
+                return div()
                     .id(("lyric-line", i))
                     .cursor_pointer()
                     .on_hover(cx.listener(move |this, over: &bool, _window, cx| {
@@ -611,22 +613,38 @@ fn synced_rows(
                         });
                         window.refresh();
                     }))
-                    .child(gap_row(progress, opacity, &variables));
-                return blurred(row).into_any_element();
+                    .child(soften(gap_row(progress, opacity, &variables), radius))
+                    .into_any_element();
             }
 
-            let main_text = if line.words.is_empty() {
-                line.text.clone().into_any_element()
-            } else {
-                let next_at = lines.get(i + 1).map(|next| next.at);
-                word_row(line, next_at, position, sung.then_some(opacity), &variables)
+            let next_at = lines.get(i + 1).map(|next| next.at);
+            let body = {
+                let main_text = if line.words.is_empty() || !sung {
+                    line.text.clone().into_any_element()
+                } else {
+                    word_row(line, next_at, position, sung.then_some(opacity), &variables)
+                };
+                div()
+                    .py(px(6.0))
+                    .text_size(px(LINE_SIZE))
+                    .line_height(px(LINE_HEIGHT))
+                    .font_weight(FontWeight(600.0))
+                    .child(flex_col().gap(px(2.0)).child(main_text).when_some(
+                        line.secondary.clone(),
+                        |this, secondary| {
+                            this.child(
+                                div()
+                                    .text_size(px(SECONDARY_SIZE))
+                                    .line_height(px(SECONDARY_HEIGHT))
+                                    .font_weight(FontWeight(500.0))
+                                    .opacity(0.7)
+                                    .child(secondary),
+                            )
+                        },
+                    ))
             };
             div()
                 .id(("lyric-line", i))
-                .py(px(6.0))
-                .text_size(px(LINE_SIZE))
-                .line_height(px(LINE_HEIGHT))
-                .font_weight(FontWeight(600.0))
                 .cursor_pointer()
                 .text_color(rgb_to_hsla(variables.text).opacity(opacity))
                 .when(hovered.is_some(), |this| {
@@ -646,20 +664,7 @@ fn synced_rows(
                     });
                     window.refresh();
                 }))
-                .child(flex_col().gap(px(2.0)).child(main_text).when_some(
-                    line.secondary.clone(),
-                    |this, secondary| {
-                        this.child(
-                            div()
-                                .text_size(px(SECONDARY_SIZE))
-                                .line_height(px(SECONDARY_HEIGHT))
-                                .font_weight(FontWeight(500.0))
-                                .opacity(0.7)
-                                .child(secondary),
-                        )
-                    },
-                ))
-                .map(blurred)
+                .child(soften(body, radius))
                 .into_any_element()
         })
         .collect()
