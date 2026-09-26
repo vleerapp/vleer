@@ -40,7 +40,7 @@ pub struct Library {
     search_input: Entity<TextInput>,
     pinned_items: Vec<PinnedItem>,
     search_results: Vec<PinnedItem>,
-    search_counts: (usize, usize, usize, usize),
+    search_counts: (usize, usize, usize, usize, usize),
     search_pending: bool,
     last_query: String,
     _search_task: Option<Task<()>>,
@@ -103,50 +103,14 @@ impl Library {
 
             if query.is_empty() {
                 this.search_results.clear();
-                this.search_counts = (0, 0, 0, 0);
+                this.search_counts = (0, 0, 0, 0, 0);
                 this.search_pending = false;
                 this._search_task = None;
                 cx.notify();
                 return;
             }
 
-            this.search_pending = true;
-            let db = cx.global::<Database>().clone();
-            let bg = cx.background_executor().clone();
-            this._search_task = Some(cx.spawn(async move |this, cx: &mut AsyncApp| {
-                let (results, counts) = bg
-                    .spawn(async move {
-                        let r = db.search_library(&query, SEARCH_RESULT_LIMIT);
-                        let counts = db.get_search_match_counts(&query);
-                        (r, counts)
-                    })
-                    .await;
-
-                let mapped_results = match results {
-                    Ok(r) => r.into_iter().map(PinnedItem::from).collect::<Vec<_>>(),
-                    Err(e) => {
-                        error!("library search failed: {}", e);
-                        return;
-                    }
-                };
-                let counts = match counts {
-                    Ok(c) => c,
-                    Err(e) => {
-                        error!("library search counts failed: {}", e);
-                        return;
-                    }
-                };
-
-                cx.update(|cx| {
-                    this.update(cx, |lib, cx| {
-                        lib.search_results = mapped_results;
-                        lib.search_counts = counts;
-                        lib.search_pending = false;
-                        cx.notify();
-                    })
-                })
-                .ok();
-            }));
+            this.start_search(query, true, cx);
         })
         .detach();
 
@@ -155,8 +119,12 @@ impl Library {
         })
         .detach();
 
-        cx.observe_global::<LibraryDataChanged>(|_, cx| {
+        cx.observe_global::<LibraryDataChanged>(|this, cx| {
             reload_pinned_items(cx);
+            if !this.last_query.is_empty() {
+                let query = this.last_query.clone();
+                this.start_search(query, false, cx);
+            }
         })
         .detach();
 
@@ -164,12 +132,54 @@ impl Library {
             search_input,
             pinned_items: Vec::new(),
             search_results: Vec::new(),
-            search_counts: (0, 0, 0, 0),
+            search_counts: (0, 0, 0, 0, 0),
             search_pending: false,
             last_query: String::new(),
             _search_task: None,
             context_menu: cx.new(|_| ContextMenu::new()),
         }
+    }
+
+    fn start_search(&mut self, query: String, show_pending: bool, cx: &mut Context<Self>) {
+        if show_pending {
+            self.search_pending = true;
+        }
+        let db = cx.global::<Database>().clone();
+        let bg = cx.background_executor().clone();
+        self._search_task = Some(cx.spawn(async move |this, cx: &mut AsyncApp| {
+            let (results, counts) = bg
+                .spawn(async move {
+                    let r = db.search_library(&query, SEARCH_RESULT_LIMIT);
+                    let counts = db.get_search_match_counts(&query);
+                    (r, counts)
+                })
+                .await;
+
+            let mapped_results = match results {
+                Ok(r) => r.into_iter().map(PinnedItem::from).collect::<Vec<_>>(),
+                Err(e) => {
+                    error!("library search failed: {}", e);
+                    return;
+                }
+            };
+            let counts = match counts {
+                Ok(c) => c,
+                Err(e) => {
+                    error!("library search counts failed: {}", e);
+                    return;
+                }
+            };
+
+            cx.update(|cx| {
+                this.update(cx, |lib, cx| {
+                    lib.search_results = mapped_results;
+                    lib.search_counts = counts;
+                    lib.search_pending = false;
+                    cx.notify();
+                })
+            })
+            .ok();
+        }));
     }
 }
 
@@ -351,10 +361,10 @@ impl Render for Library {
         let query = search.query.trim().to_string();
         let is_searching = !query.is_empty();
 
-        let (s_count, al_count, ar_count, p_count) = if is_searching {
+        let (s_count, al_count, ar_count, g_count, p_count) = if is_searching {
             self.search_counts
         } else {
-            (0, 0, 0, 0)
+            (0, 0, 0, 0, 0)
         };
 
         let displayed_items: Vec<PinnedItem> = if is_searching {
@@ -427,7 +437,7 @@ impl Render for Library {
                             .child(NavButton::new(
                                 icons::GENRES,
                                 Some("Genres"),
-                                None,
+                                Some(g_count),
                                 AppView::Genres,
                             ))
                             .child({

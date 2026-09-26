@@ -1771,16 +1771,21 @@ impl Database {
         Ok(index.fuzzy_search_all(query, limit as usize))
     }
 
-    pub fn get_search_match_counts(&self, query: &str) -> Result<(usize, usize, usize, usize)> {
+    pub fn get_search_match_counts(
+        &self,
+        query: &str,
+    ) -> Result<(usize, usize, usize, usize, usize)> {
         let query = query.trim();
         if query.is_empty() {
-            return Ok((0, 0, 0, 0));
+            return Ok((0, 0, 0, 0, 0));
         }
+        let genres = self.get_genres(query)?.len();
         let index = self.search_index.lock();
         Ok((
             index.fuzzy_song_ids(query).len(),
             index.fuzzy_album_ids(query).len(),
             index.fuzzy_artist_ids(query).len(),
+            genres,
             index.fuzzy_playlist_ids(query).len(),
         ))
     }
