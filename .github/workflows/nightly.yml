@@ -256,7 +256,7 @@ jobs:
           Type=Application
           Name=Vleer
           Comment=Music, but without the subscription.
-          Exec=vleer %U
+          Exec=sh -c "PATH=\\"\\$HOME/.local/bin:\\$PATH\\"; exec vleer \\"\\$@\\"" sh %U
           Icon=vleer
           Terminal=false
           Categories=AudioVideo;Audio;Player;
