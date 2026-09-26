@@ -10,13 +10,8 @@ license = "AGPL-3.0"
 categories = ["multimedia::audio"]
 
 [dependencies]
-gpui = { package = "gpui-unofficial", version = "1.20.2" }
-gpui-platform-gpui-unofficial = { version = "1.20.2", features = [
-  "font-kit",
-  "x11",
-  "wayland",
-  "runtime_shaders",
-] }
+gpui = { package = "gpui-ce", version = "0.2.2", features = ["font-kit", "x11", "wayland"] }
+gpui_platform = { package = "gpui_ce_platform", version = "0.1.0", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
 anyhow = "1.0.104"
 dirs = "7.0.0"
 tracing = "0.1.44"
@@ -108,10 +103,6 @@ windows = { version = "0.62.2", features = [
   "Win32_System_WinRT",
 ] }
 windows-future = "0.3.2"
-
-[patch.crates-io]
-gpui-unofficial = { git = "https://github.com/iamnbutler/gpui-unofficial", tag = "v1.20.2" }
-gpui-apple-gpui-unofficial = { git = "https://github.com/iamnbutler/gpui-unofficial", tag = "v1.20.2" }
 
 [profile.dist]
 inherits = "release"

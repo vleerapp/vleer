@@ -30,15 +30,9 @@ impl RenderOnce for WindowControls {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let variables = cx.global::<Variables>();
         let supported = window.window_controls();
-        let close_hover: Hsla = Rgba {
-            r: 232.0 / 255.0,
-            g: 17.0 / 255.0,
-            b: 32.0 / 255.0,
-            a: 1.0,
-        }
-        .into();
+        let close_hover: Hsla = rgb_to_hsla(rgba(0xE81120FF));
         let close_active = close_hover.opacity(0.85);
-        let hover_bg = Hsla::from(variables.element_hover);
+        let hover_bg = rgb_to_hsla(variables.element_hover);
         let use_window_control_area = cfg!(target_os = "windows");
 
         let mut controls = flex_row().id("window-controls").h(self.titlebar_height);

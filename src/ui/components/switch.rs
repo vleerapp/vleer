@@ -37,9 +37,9 @@ impl RenderOnce for Switch {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let variables = cx.global::<Variables>();
         let thumb_color: Hsla = if self.checked {
-            variables.accent.into()
+            rgb_to_hsla(variables.accent)
         } else {
-            variables.element_hover.into()
+            rgb_to_hsla(variables.element_hover)
         };
         let thumb_x = if self.checked {
             TRACK_WIDTH - THUMB_WIDTH - THUMB_PADDING

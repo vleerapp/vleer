@@ -168,7 +168,7 @@ impl PlaylistView {
 
         let title_input = cx.new(|cx| {
             TextInput::new(cx, "Playlist name")
-                .with_background(transparent_black())
+                .with_background(rgba(0x00000000))
                 .no_padding()
                 .with_height(px(22.0))
         });

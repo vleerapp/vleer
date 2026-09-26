@@ -285,9 +285,9 @@ impl Scrollbar {
         let is_hovered_thumb = state.hovered_on_thumb == Some(axis);
         let is_hovered_bar = state.hovered_axis == Some(axis);
         if is_dragged || is_hovered_thumb {
-            (hover_thumb.into(), default_track, THUMB_WIDTH)
+            (rgb_to_hsla(hover_thumb), default_track, THUMB_WIDTH)
         } else if resizing || is_hovered_bar || state.is_scrollbar_visible() {
-            (default_thumb.into(), default_track, THUMB_WIDTH)
+            (rgb_to_hsla(default_thumb), default_track, THUMB_WIDTH)
         } else {
             (default_track, default_track, THUMB_WIDTH)
         }

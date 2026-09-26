@@ -2,7 +2,7 @@ use anyhow::Ok;
 use futures::StreamExt;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_platform_gpui_unofficial::application;
+use gpui_platform::application;
 use std::{collections::HashMap, rc::Rc};
 use tracing::{debug, error};
 
@@ -381,7 +381,7 @@ impl Render for MainWindow {
 
         let text_styles = element.text_style();
         *text_styles = TextStyleRefinement {
-            color: Some(Hsla::from(variables.text)),
+            color: Some(rgb_to_hsla(variables.text)),
             font_family: Some(SharedString::new("Feature Mono")),
             font_size: Some(AbsoluteLength::Pixels(px(14.0))),
             line_height: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(14.0)))),

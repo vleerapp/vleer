@@ -42,7 +42,7 @@ impl RenderOnce for Pane {
         let variables = cx.global::<Variables>();
         let accent_or = |normal: Hsla| {
             if hovered {
-                Hsla::from(variables.accent)
+                rgb_to_hsla(variables.accent)
             } else {
                 normal
             }
@@ -83,7 +83,7 @@ impl RenderOnce for Pane {
                     .size_full()
                     .min_h_0()
                     .border(px(1.0))
-                    .border_color(accent_or(Hsla::from(variables.border)))
+                    .border_color(accent_or(rgb_to_hsla(variables.border)))
                     .child(self.content),
             )
             .when_some(self.title, |this, title| {
@@ -102,7 +102,7 @@ impl RenderOnce for Pane {
                                 .relative()
                                 .flex_shrink_0()
                                 .line_height(px(TITLE_BOX_HEIGHT))
-                                .text_color(accent_or(Hsla::from(variables.border)))
+                                .text_color(accent_or(rgb_to_hsla(variables.border)))
                                 .child(
                                     div()
                                         .absolute()

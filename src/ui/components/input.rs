@@ -4,7 +4,7 @@ use gpui::{
     GlobalElementId, IntoElement, KeyBinding, LayoutId, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, NavigationDirection, PaintQuad, Pixels, Point, Render, Rgba,
     ShapedLine, SharedString, Style, Subscription, TextRun, UTF16Selection, Window, actions, fill,
-    point, prelude::*, px, relative, rgba, size,
+    point, prelude::*, px, relative, rgb_to_hsla, rgba, size,
 };
 use std::cell::RefCell;
 use std::ops::Range;
@@ -694,7 +694,7 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(Self::copy))
             .on_action(cx.listener(Self::enter))
-            .on_action(|_: &Escape, window, cx| window.blur(cx))
+            .on_action(|_: &Escape, window, _| window.blur())
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),
@@ -704,9 +704,9 @@ impl Render for TextInput {
                 MouseButton::Navigate(NavigationDirection::Forward),
                 |_, window, _| window.prevent_default(),
             )
-            .on_mouse_down_out(|event, window, cx| {
+            .on_mouse_down_out(|event, window, _| {
                 if event.button == MouseButton::Left {
-                    window.blur(cx);
+                    window.blur();
                 }
             })
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -815,8 +815,9 @@ impl Element for TextElement {
         let run = TextRun {
             len: display_text.len(),
             font: style.font(),
-            color: text_color.into(),
+            color: rgb_to_hsla(text_color),
             background_color: None,
+            letter_spacing: None,
             underline: None,
             strikethrough: None,
         };

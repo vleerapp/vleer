@@ -217,8 +217,9 @@ impl Element for ProgressSlider {
                     weight: FontWeight(500.0),
                     style: Default::default(),
                 },
-                color: variables.background.into(),
+                color: rgb_to_hsla(variables.background),
                 background_color: None,
+                letter_spacing: None,
                 underline: None,
                 strikethrough: None,
             }];
@@ -242,8 +243,9 @@ impl Element for ProgressSlider {
                     weight: Default::default(),
                     style: Default::default(),
                 },
-                color: variables.accent.into(),
+                color: rgb_to_hsla(variables.accent),
                 background_color: None,
+                letter_spacing: None,
                 underline: None,
                 strikethrough: None,
             }];
