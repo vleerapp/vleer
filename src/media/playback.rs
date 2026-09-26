@@ -15,8 +15,9 @@ use rodio::source::Source;
 use rodio::{DeviceSinkBuilder, MixerDeviceSink, Player as Sink};
 use std::fs::File;
 use std::io::BufReader;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use symphonia_adapter_libopus::OpusDecoder;
 
 use tokio::sync::mpsc;
@@ -42,6 +43,7 @@ struct PreparedPlayback {
     sink: Sink,
     current_file: String,
     lufs: Option<f32>,
+    device_lost: Option<Arc<AtomicBool>>,
 }
 
 pub struct Playback {
@@ -58,6 +60,10 @@ pub struct Playback {
     command_rx: Option<mpsc::UnboundedReceiver<PlaybackCommand>>,
     load_token: u64,
     loading: bool,
+    device_lost: Arc<AtomicBool>,
+    recover_attempt: Option<Instant>,
+    recovering: bool,
+    resume: Option<(f32, bool)>,
 }
 
 impl Global for Playback {}
@@ -101,20 +107,28 @@ impl Playback {
 
         debug!("Audio file: {:?}Hz, {:?} channels", sample_rate, channels);
 
-        let (new_device, mixer) = if let Some(m) = existing_mixer {
-            (None, m)
+        let (new_device, mixer, lost) = if let Some(m) = existing_mixer {
+            (None, m, None)
         } else {
+            let lost = Arc::new(AtomicBool::new(false));
+            let callback = stream_error_callback(lost.clone());
             let mut device = DeviceSinkBuilder::from_default_device()
                 .and_then(|b| {
                     b.with_sample_rate(sample_rate)
                         .with_channels(channels)
+                        .with_error_callback(callback.clone())
                         .open_stream()
                 })
-                .or_else(|_| DeviceSinkBuilder::open_default_sink())
+                .or_else(|_| {
+                    DeviceSinkBuilder::from_default_device().and_then(|b| {
+                        b.with_error_callback(callback.clone())
+                            .open_sink_or_fallback()
+                    })
+                })
                 .context("Failed to open audio device")?;
             device.log_on_drop(false);
             let m = device.mixer().clone();
-            (Some(device), m)
+            (Some(device), m, Some(lost))
         };
 
         let sink = Sink::connect_new(&mixer);
@@ -137,6 +151,7 @@ impl Playback {
             sink,
             current_file: path,
             lufs,
+            device_lost: lost,
         })
     }
 
@@ -154,7 +169,11 @@ impl Playback {
         self.loading = true;
         self.position = 0.0;
         self.sink = None;
-        let existing_mixer = self.mixer.clone();
+        let existing_mixer = if self.device_lost() {
+            None
+        } else {
+            self.mixer.clone()
+        };
 
         cx.spawn(async move |cx| {
             let song = executor.spawn(async move { db.get_song(&song_id) }).await;
@@ -217,6 +236,9 @@ impl Playback {
                     if let Some(device) = prepared._device {
                         playback._device = Some(device);
                         playback.mixer = Some(prepared.mixer);
+                        if let Some(lost) = prepared.device_lost {
+                            playback.device_lost = lost;
+                        }
                     }
                     playback.sink = Some(prepared.sink);
                     playback.position = 0.0;
@@ -274,6 +296,10 @@ impl Playback {
             command_rx: None,
             load_token: 0,
             loading: false,
+            device_lost: Arc::new(AtomicBool::new(false)),
+            recover_attempt: None,
+            recovering: false,
+            resume: None,
         })
     }
 
@@ -347,6 +373,91 @@ impl Playback {
                     }
                 });
             }
+        })
+        .detach();
+    }
+
+    pub fn device_lost(&self) -> bool {
+        self.device_lost.load(Ordering::SeqCst)
+    }
+
+    pub fn recover_device(&mut self, cx: &mut App) {
+        if self.recovering
+            || self
+                .recover_attempt
+                .is_some_and(|last| last.elapsed() < Duration::from_secs(1))
+        {
+            return;
+        }
+        self.recover_attempt = Some(Instant::now());
+
+        if self.resume.is_none() {
+            self.resume = Some((self.get_position(), !self.paused));
+        }
+        let old = (self._device.take(), self.mixer.take(), self.sink.take());
+        let executor = cx.background_executor().clone();
+
+        let Some(path) = self.current_file.clone() else {
+            self.device_lost.store(false, Ordering::SeqCst);
+            self.resume = None;
+            executor.spawn(async move { drop(old) }).detach();
+            return;
+        };
+
+        self.recovering = true;
+        let token = self.load_token;
+        let lufs = self.current_lufs;
+        let volume = self.volume;
+        let eq_settings = cx.global::<Config>().get().equalizer.clone();
+        let equalizer = self.equalizer.clone();
+        let visualizer_state = self.visualizer_state.clone();
+
+        cx.spawn(async move |cx| {
+            let prepared = executor
+                .spawn(async move {
+                    drop(old);
+                    Playback::prepare_playback(
+                        path,
+                        lufs,
+                        volume,
+                        eq_settings,
+                        equalizer,
+                        visualizer_state,
+                        None,
+                    )
+                })
+                .await;
+
+            cx.update(|cx| {
+                cx.update_global::<Playback, _>(|playback, cx| {
+                    playback.recovering = false;
+                    if playback.load_token != token {
+                        playback.resume = None;
+                        return;
+                    }
+                    match prepared {
+                        Ok(prepared) => {
+                            playback._device = prepared._device;
+                            playback.mixer = Some(prepared.mixer);
+                            playback.sink = Some(prepared.sink);
+                            if let Some(lost) = prepared.device_lost {
+                                playback.device_lost = lost;
+                            }
+                            playback.recover_attempt = None;
+                            playback.position = 0.0;
+                            playback.paused = true;
+                            let (position, was_playing) =
+                                playback.resume.take().unwrap_or((0.0, false));
+                            playback.seek(position).ok();
+                            if was_playing {
+                                playback.play(cx);
+                            }
+                            debug!("Recovered audio device at {:.1}s", position);
+                        }
+                        Err(e) => error!("Failed to recover audio device: {:#}", e),
+                    }
+                });
+            });
         })
         .detach();
     }
@@ -500,8 +611,12 @@ impl Playback {
         if let Some(sink) = &self.sink {
             self.position + sink.get_pos().as_secs_f32()
         } else {
-            0.0
+            self.resume.map_or(0.0, |(position, _)| position)
         }
+    }
+
+    pub fn output_ready(&self) -> bool {
+        self.sink.is_some() && !self.recovering && !self.device_lost()
     }
 
     pub fn empty(&self) -> bool {
@@ -621,10 +736,27 @@ impl Playback {
                 loop {
                     executor.timer(Duration::from_millis(100)).await;
 
+                    cx.update(|_window, cx| {
+                        let lost = cx
+                            .try_global::<Playback>()
+                            .is_some_and(|p| p.device_lost() && !p.get_loading());
+                        if lost {
+                            cx.update_global::<Playback, _>(|playback, cx| {
+                                playback.recover_device(cx);
+                            });
+                        }
+                    })
+                    .ok();
+
                     let should_advance = cx
                         .update(|_window, cx| {
                             cx.try_global::<Playback>()
-                                .map(|p| p.empty() && p.get_playing() && !p.get_loading())
+                                .map(|p| {
+                                    p.output_ready()
+                                        && p.empty()
+                                        && p.get_playing()
+                                        && !p.get_loading()
+                                })
                                 .unwrap_or(false)
                         })
                         .unwrap_or(false);
@@ -679,6 +811,15 @@ impl Playback {
             }
         }
         amplitude
+    }
+}
+
+fn stream_error_callback<E: std::fmt::Display + 'static>(
+    lost: Arc<AtomicBool>,
+) -> impl FnMut(E) + Clone + Send + 'static {
+    move |err| {
+        error!("audio stream error: {err}");
+        lost.store(true, Ordering::SeqCst);
     }
 }
 
