@@ -63,7 +63,11 @@ pub fn is_gap(lines: &[Line], index: usize) -> bool {
 }
 
 pub fn active_line(lines: &[Line], at: f32) -> Option<usize> {
-    let index = lines.iter().rposition(|line| line.at <= at)?;
+    active_line_by(lines, at, |i| lines[i].at)
+}
+
+pub fn active_line_by(lines: &[Line], at: f32, start: impl Fn(usize) -> f32) -> Option<usize> {
+    let index = (0..lines.len()).rev().find(|&i| start(i) <= at)?;
     if lines[index].text.is_empty() && !is_gap(lines, index) {
         index.checked_sub(1)
     } else {

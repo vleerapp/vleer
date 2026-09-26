@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use crate::{
     data::{
         db::repo::Database,
-        lyrics::{Line, Lyrics, active_line, is_gap, resolve},
+        lyrics::{Line, Lyrics, active_line, active_line_by, is_gap, resolve},
         models::Cuid,
     },
     media::{playback::Playback, queue::Queue},
@@ -21,7 +21,9 @@ use crate::{
     },
 };
 
-const TICK: Duration = Duration::from_millis(100);
+const TICK: Duration = Duration::from_millis(40);
+const LEAD_MIN: f32 = 0.25;
+const LEAD_MAX: f32 = 0.6;
 const EASE: f32 = 0.08;
 const HERTZ: f32 = 180.0;
 const MAX_FRAME_TIME: Duration = Duration::from_millis(64);
@@ -30,7 +32,8 @@ const REST: Pixels = px(0.5);
 const LINE_SIZE: f32 = 20.0;
 const LINE_HEIGHT: f32 = 30.0;
 const WORD_DIM: f32 = 0.4;
-const WORD_STEPS: f32 = 6.0;
+const SWEEP_FEATHER: f32 = 0.35;
+const SWEEP_LAYERS: usize = 4;
 const SECONDARY_SIZE: f32 = 14.0;
 const SECONDARY_HEIGHT: f32 = 20.0;
 const PLAIN_SIZE: f32 = 16.0;
@@ -40,6 +43,12 @@ const DOT_SIZE: f32 = 9.0;
 const IDLE_RESYNC: Duration = Duration::from_secs(3);
 const FADE_TOP: f32 = 16.0;
 const FADE_BOTTOM: f32 = 72.0;
+const BLUR: f32 = 0.2;
+const HAZE: f32 = 0.7;
+const PIN: f32 = 0.3;
+const NEIGHBOR: Pixels = px(LINE_HEIGHT * 2.0);
+const HAZE_LEAST: Pixels = px(0.25);
+const BLUR_MIN: Pixels = px(0.75);
 
 enum Load {
     Idle,
@@ -52,13 +61,17 @@ pub struct LyricsPane {
     song_id: Option<Cuid>,
     load: Load,
     active: Option<usize>,
+    led: Option<usize>,
     follow: Option<usize>,
     snap: bool,
     target: Option<Pixels>,
     last_frame: Option<Instant>,
     shown: Vec<f32>,
+    clear: Vec<f32>,
     fade_frame: Option<Instant>,
     detached: bool,
+    hovered: Option<usize>,
+    hover_released: bool,
     last_activity: Instant,
     last_offset: Pixels,
     scroll: ScrollHandle,
@@ -87,17 +100,29 @@ impl LyricsPane {
             song_id: None,
             load: Load::Idle,
             active: None,
+            led: None,
             follow: None,
             snap: true,
             target: None,
             last_frame: None,
             shown: Vec::new(),
+            clear: Vec::new(),
             fade_frame: None,
             detached: false,
+            hovered: None,
+            hover_released: false,
             last_activity: Instant::now(),
             last_offset: Pixels::ZERO,
             scroll: ScrollHandle::new(),
             task: None,
+        }
+    }
+
+    fn hover(&self) -> Option<usize> {
+        if self.hover_released {
+            None
+        } else {
+            self.hovered
         }
     }
 
@@ -107,13 +132,17 @@ impl LyricsPane {
 
     fn reset_motion(&mut self) {
         self.active = None;
+        self.led = None;
         self.follow = None;
         self.target = None;
         self.snap = true;
         self.last_frame = None;
         self.shown.clear();
+        self.clear.clear();
         self.fade_frame = None;
         self.detached = false;
+        self.hovered = None;
+        self.hover_released = false;
         self.set_y(px(0.0));
     }
 
@@ -195,13 +224,23 @@ impl LyricsPane {
         if !Self::is_visible(cx) {
             return;
         }
-        if self.detached && self.last_activity.elapsed() >= IDLE_RESYNC {
+        if self.last_activity.elapsed() >= IDLE_RESYNC {
             self.resync(cx);
+            if self.hovered.is_some() && !self.hover_released {
+                self.hover_released = true;
+                cx.notify();
+            }
         }
         let Load::Ready(Lyrics::Synced(lines)) = &self.load else {
             return;
         };
-        let active = active_line(lines, cx.global::<Playback>().get_position());
+        let position = cx.global::<Playback>().get_position();
+        let led = active_line_by(lines, position, |i| lines[i].at - lead(lines, i));
+        let active = active_line(lines, position);
+        if led != self.led {
+            self.led = led;
+            cx.notify();
+        }
         if active == self.active {
             return;
         }
@@ -224,9 +263,12 @@ impl LyricsPane {
         Some((inset - content_y).clamp(-max, Pixels::ZERO))
     }
 
-    fn step_fade(&mut self, count: usize, active: Option<usize>, window: &mut Window) {
+    fn step_fade(&mut self, lit: &[bool], active: Option<usize>, window: &mut Window) {
+        let count = lit.len();
+        let focus = self.hover().or(active);
         if self.shown.len() != count {
-            self.shown = (0..count).map(|i| line_opacity(i, active)).collect();
+            self.shown = (0..count).map(|i| line_opacity(i, lit[i], focus)).collect();
+            self.clear = (0..count).map(|i| clarity(i, lit[i], focus)).collect();
             self.fade_frame = None;
             return;
         }
@@ -239,12 +281,22 @@ impl LyricsPane {
         let ease = 1.0 - (1.0 - EASE).powf(elapsed.min(MAX_FRAME_TIME).as_secs_f32() * HERTZ);
         let mut moving = false;
         for (i, shown) in self.shown.iter_mut().enumerate() {
-            let target = line_opacity(i, active);
+            let target = line_opacity(i, lit[i], focus);
             let distance = target - *shown;
             if distance.abs() < 0.005 {
                 *shown = target;
             } else {
                 *shown += distance * ease;
+                moving = true;
+            }
+        }
+        for (i, clear) in self.clear.iter_mut().enumerate() {
+            let target = clarity(i, lit[i], focus);
+            let distance = target - *clear;
+            if distance.abs() < 0.005 {
+                *clear = target;
+            } else {
+                *clear += distance * ease;
                 moving = true;
             }
         }
@@ -317,96 +369,255 @@ fn message(text: &'static str, variables: &Variables) -> Div {
         .child(text)
 }
 
-fn line_opacity(index: usize, active: Option<usize>) -> f32 {
-    match active {
+fn lead(lines: &[Line], index: usize) -> f32 {
+    let line = &lines[index];
+    let previous_end = index
+        .checked_sub(1)
+        .map_or(line.at, |previous| lines[previous].end.unwrap_or(line.at));
+    (line.at - previous_end).clamp(LEAD_MIN, LEAD_MAX)
+}
+
+fn is_singing(lines: &[Line], index: usize, position: f32) -> bool {
+    let line = &lines[index];
+    let end = line
+        .end
+        .or(lines.get(index + 1).map(|next| next.at))
+        .unwrap_or(f32::MAX);
+    position >= line.at && position < end
+}
+
+fn clarity(index: usize, lit: bool, focus: Option<usize>) -> f32 {
+    if lit || focus == Some(index) {
+        1.0
+    } else {
+        0.0
+    }
+}
+
+fn line_opacity(index: usize, lit: bool, focus: Option<usize>) -> f32 {
+    if lit {
+        return 1.0;
+    }
+    match focus {
         None => 0.5,
-        Some(active) => match index.abs_diff(active) {
+        Some(focus) => match index.abs_diff(focus) {
             0 => 1.0,
             distance => (0.55 - 0.1 * (distance - 1) as f32).max(0.12),
         },
     }
 }
 
-fn word_highlights(
+fn syllable(text: String, sweep: Option<(f32, f32)>, variables: &Variables) -> AnyElement {
+    let base = div().whitespace_nowrap();
+    let Some((progress, opacity)) = sweep else {
+        return base.child(text).into_any_element();
+    };
+    let color = rgb_to_hsla(variables.text);
+    let dim = color.opacity(WORD_DIM * opacity);
+    let lit = color.opacity(opacity);
+    if progress <= 0.0 {
+        return base.text_color(dim).child(text).into_any_element();
+    }
+    if progress >= 1.0 {
+        return base.text_color(lit).child(text).into_any_element();
+    }
+    let edge = progress * (1.0 + SWEEP_FEATHER);
+    let mut cell = base.relative().text_color(dim).child(text.clone());
+    for k in (1..=SWEEP_LAYERS).rev() {
+        let reach = (edge - SWEEP_FEATHER * (SWEEP_LAYERS - k) as f32 / SWEEP_LAYERS as f32)
+            .clamp(0.0, 1.0);
+        if reach <= 0.0 {
+            continue;
+        }
+        cell = cell.child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .h_full()
+                .w(relative(reach))
+                .overflow_hidden()
+                .child(
+                    div()
+                        .whitespace_nowrap()
+                        .text_color(color.opacity(opacity / k as f32))
+                        .child(text.clone()),
+                ),
+        );
+    }
+    cell.into_any_element()
+}
+
+fn word_row(
     line: &Line,
     next_at: Option<f32>,
     position: f32,
-) -> Vec<(std::ops::Range<usize>, HighlightStyle)> {
+    sweep_opacity: Option<f32>,
+    variables: &Variables,
+) -> AnyElement {
     let line_end = line
         .end
         .or(next_at)
         .unwrap_or_else(|| line.words.last().map_or(line.at, |w| w.at + 1.0));
-    let mut start = 0;
-    line.words
-        .iter()
-        .enumerate()
-        .map(|(i, word)| {
-            let end = line.words.get(i + 1).map_or(line_end, |next| next.at);
-            let progress = ((position - word.at) / (end - word.at).max(0.001)).clamp(0.0, 1.0);
-            let progress = (progress * WORD_STEPS).round() / WORD_STEPS;
-            let strength = WORD_DIM + (1.0 - WORD_DIM) * progress;
-            let range = start..start + word.text.len();
-            start = range.end;
-            let style = HighlightStyle {
-                fade_out: Some(1.0 - strength),
-                ..Default::default()
-            };
-            (range, style)
-        })
-        .collect()
+    let mut groups: Vec<Vec<AnyElement>> = vec![Vec::new()];
+    for (i, word) in line.words.iter().enumerate() {
+        let end = line.words.get(i + 1).map_or(line_end, |next| next.at);
+        let sweep = sweep_opacity.map(|opacity| {
+            let progress = (position - word.at) / (end - word.at).max(0.001);
+            (progress.clamp(0.0, 1.0), opacity)
+        });
+        if word.text.starts_with(char::is_whitespace)
+            && groups.last().is_some_and(|group| !group.is_empty())
+        {
+            groups.push(Vec::new());
+        }
+        let group = groups.last_mut().expect("groups is never empty");
+        group.push(syllable(word.text.clone(), sweep, variables));
+        if word.text.ends_with(char::is_whitespace) {
+            groups.push(Vec::new());
+        }
+    }
+    div()
+        .flex()
+        .flex_row()
+        .flex_wrap()
+        .children(
+            groups
+                .into_iter()
+                .filter(|group| !group.is_empty())
+                .map(|group| div().flex().flex_row().flex_shrink_0().children(group)),
+        )
+        .into_any_element()
 }
 
-fn gap_row(progress: Option<f32>, variables: &Variables) -> Div {
-    let row = flex_row().h(px(GAP_HEIGHT)).gap(px(8.0)).items_center();
-    let Some(progress) = progress else {
-        return row;
+fn gap_row(progress: f32, opacity: f32, variables: &Variables) -> Div {
+    flex_row()
+        .h(px(GAP_HEIGHT))
+        .gap(px(8.0))
+        .items_center()
+        .children((0..3).map(|i| {
+            let lit = (progress * 3.0 - i as f32).clamp(0.0, 1.0);
+            div()
+                .size(px(DOT_SIZE))
+                .rounded_full()
+                .bg(rgb_to_hsla(variables.text).opacity(opacity * (0.25 + 0.75 * lit)))
+        }))
+}
+
+fn row_top(scroll: &ScrollHandle, index: usize) -> Option<Pixels> {
+    let item = scroll.bounds_for_item(index)?;
+    Some(item.origin.y - scroll.bounds().origin.y + scroll.offset().y)
+}
+
+fn viewport_haze(scroll: &ScrollHandle, index: usize, pin: Pixels, margin: Pixels) -> f32 {
+    let height = scroll.bounds().size.height;
+    if height <= Pixels::ZERO {
+        return 0.0;
+    }
+    let Some(top) = row_top(scroll, index) else {
+        return 0.0;
     };
-    row.children((0..3).map(|i| {
-        let lit = (progress * 3.0 - i as f32).clamp(0.0, 1.0);
-        div()
-            .size(px(DOT_SIZE))
-            .rounded_full()
-            .bg(Hsla::from(variables.text).opacity(0.25 + 0.75 * lit))
-    }))
+    let row_height = scroll
+        .bounds_for_item(index)
+        .map_or(Pixels::ZERO, |item| item.size.height);
+    if top + row_height + margin < Pixels::ZERO || top - margin > height {
+        return 0.0;
+    }
+    let travel = top - pin;
+    let travel = if travel >= Pixels::ZERO {
+        travel.max(NEIGHBOR)
+    } else {
+        travel.min(-NEIGHBOR)
+    };
+    let reach = if travel >= Pixels::ZERO {
+        height - pin
+    } else {
+        pin.max(height * PIN)
+    };
+    (travel / reach.max(px(1.0)))
+        .clamp(-1.0, 1.0)
+        .abs()
+        .powf(HAZE)
 }
 
 fn synced_rows(
     lines: &[Line],
     shown: &[f32],
+    clear: &[f32],
+    scroll: &ScrollHandle,
+    hovered: Option<usize>,
     active: Option<usize>,
+    led: Option<usize>,
     position: f32,
     variables: &Variables,
     cx: &mut Context<LyricsPane>,
 ) -> Vec<AnyElement> {
     let variables = *variables;
+    let blur = px(LINE_SIZE * BLUR);
+    let focus = hovered.or(active);
+    let pin = focus
+        .and_then(|active| row_top(scroll, active))
+        .unwrap_or(px(0.0))
+        .clamp(px(0.0), scroll.bounds().size.height);
     lines
         .iter()
         .enumerate()
         .map(|(i, line)| {
+            let at = line.at;
+            let opacity = shown.get(i).copied().unwrap_or(0.5);
+            let sung = active == Some(i) || led == Some(i) || is_singing(lines, i, position);
+            let clear = clear.get(i).copied().unwrap_or(0.0);
+            let softness = if clear >= 1.0 {
+                0.0
+            } else {
+                viewport_haze(scroll, i, pin, blur) * (1.0 - clear)
+            };
+            let row_blur = blur * softness;
+            let blurred = |this: Stateful<Div>| {
+                if row_blur > HAZE_LEAST {
+                    this.blur(row_blur.max(BLUR_MIN))
+                } else {
+                    this
+                }
+            };
             if line.text.is_empty() {
                 if !is_gap(lines, i) {
                     return div().id(("lyric-line", i)).h(px(10.0)).into_any_element();
                 }
-                let progress = (active == Some(i)).then(|| {
+                let progress = if active == Some(i) {
                     let span = (lines[i + 1].at - line.at).max(f32::EPSILON);
                     ((position - line.at) / span).clamp(0.0, 1.0)
-                });
-                return div()
+                } else if active.is_some_and(|active| active > i) {
+                    1.0
+                } else {
+                    0.0
+                };
+                let row = div()
                     .id(("lyric-line", i))
-                    .child(gap_row(progress, &variables))
-                    .into_any_element();
+                    .cursor_pointer()
+                    .on_hover(cx.listener(move |this, over: &bool, _window, cx| {
+                        if *over && this.hovered != Some(i) {
+                            this.hovered = Some(i);
+                            cx.notify();
+                        }
+                    }))
+                    .on_click(cx.listener(move |_this, _event, window, cx| {
+                        cx.update_global::<Playback, _>(|playback, _cx| {
+                            if let Err(e) = playback.seek(at) {
+                                tracing::error!("Failed to seek: {}", e);
+                            }
+                        });
+                        window.refresh();
+                    }))
+                    .child(gap_row(progress, opacity, &variables));
+                return blurred(row).into_any_element();
             }
 
-            let at = line.at;
-            let opacity = shown.get(i).copied().unwrap_or(0.5);
-            let main_text = if active == Some(i) && !line.words.is_empty() {
-                let highlights =
-                    word_highlights(line, lines.get(i + 1).map(|next| next.at), position);
-                StyledText::new(line.text.clone())
-                    .with_highlights(highlights)
-                    .into_any_element()
-            } else {
+            let main_text = if line.words.is_empty() {
                 line.text.clone().into_any_element()
+            } else {
+                let next_at = lines.get(i + 1).map(|next| next.at);
+                word_row(line, next_at, position, sung.then_some(opacity), &variables)
             };
             div()
                 .id(("lyric-line", i))
@@ -415,8 +626,16 @@ fn synced_rows(
                 .line_height(px(LINE_HEIGHT))
                 .font_weight(FontWeight(600.0))
                 .cursor_pointer()
-                .text_color(Hsla::from(variables.text).opacity(opacity))
-                .hover(|s| s.text_color(variables.text))
+                .text_color(rgb_to_hsla(variables.text).opacity(opacity))
+                .when(hovered.is_some(), |this| {
+                    this.hover(|s| s.text_color(variables.text))
+                })
+                .on_hover(cx.listener(move |this, over: &bool, _window, cx| {
+                    if *over && this.hovered != Some(i) {
+                        this.hovered = Some(i);
+                        cx.notify();
+                    }
+                }))
                 .on_click(cx.listener(move |_this, _event, window, cx| {
                     cx.update_global::<Playback, _>(|playback, _cx| {
                         if let Err(e) = playback.seek(at) {
@@ -438,13 +657,14 @@ fn synced_rows(
                         )
                     },
                 ))
+                .map(blurred)
                 .into_any_element()
         })
         .collect()
 }
 
 fn edge_fade(top: bool, strength: f32, variables: &Variables) -> Div {
-    let solid = Hsla::from(variables.background);
+    let solid = rgb_to_hsla(variables.background);
     let clear = solid.opacity(0.0);
     let fade = div()
         .absolute()
@@ -474,13 +694,17 @@ impl Render for LyricsPane {
             Load::Ready(_) => {}
         }
 
+        let position = cx.global::<Playback>().get_position();
         self.drive_motion(window, px(variables.padding_16));
         if let Load::Ready(Lyrics::Synced(lines)) = &self.load {
-            let count = lines.len();
-            self.step_fade(count, self.active, window);
+            let lit: Vec<bool> = (0..lines.len())
+                .map(|i| {
+                    self.active == Some(i) || self.led == Some(i) || is_singing(lines, i, position)
+                })
+                .collect();
+            self.step_fade(&lit, self.active, window);
         }
 
-        let position = cx.global::<Playback>().get_position();
         let playing = cx.global::<Playback>().get_playing();
         let active = self.active;
         let offset = self.scroll.offset().y;
@@ -508,11 +732,27 @@ impl Render for LyricsPane {
                 })
                 .collect(),
             Load::Ready(Lyrics::Synced(lines)) => {
-                if playing && active.is_some_and(|i| is_gap(lines, i) || !lines[i].words.is_empty())
+                if playing
+                    && active.is_some_and(|i| {
+                        is_gap(lines, i)
+                            || !lines[i].words.is_empty()
+                            || i > 0 && !lines[i - 1].words.is_empty()
+                    })
                 {
                     window.request_animation_frame();
                 }
-                synced_rows(lines, &self.shown, active, position, &variables, cx)
+                synced_rows(
+                    lines,
+                    &self.shown,
+                    &self.clear,
+                    &self.scroll,
+                    self.hover(),
+                    active,
+                    self.led,
+                    position,
+                    &variables,
+                    cx,
+                )
             }
             _ => Vec::new(),
         };
@@ -522,14 +762,19 @@ impl Render for LyricsPane {
             .relative()
             .size_full()
             .min_h_0()
-            .on_mouse_move(cx.listener(|this, _event, _window, _cx| {
-                if this.detached {
-                    this.last_activity = Instant::now();
+            .on_mouse_move(cx.listener(|this, _event, _window, cx| {
+                this.last_activity = Instant::now();
+                if this.hover_released {
+                    this.hover_released = false;
+                    cx.notify();
                 }
             }))
             .on_hover(cx.listener(|this, hovered: &bool, _window, cx| {
                 if !*hovered {
                     this.resync(cx);
+                    if this.hovered.take().is_some() {
+                        cx.notify();
+                    }
                 }
             }))
             .child(
