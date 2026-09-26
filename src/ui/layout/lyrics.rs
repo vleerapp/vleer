@@ -31,7 +31,8 @@ const REST: Pixels = px(0.5);
 
 const LINE_SIZE: f32 = 20.0;
 const LINE_HEIGHT: f32 = 30.0;
-const WORD_DIM: f32 = 0.4;
+const WORD_DIM: f32 = 0.5;
+const NEXT_OPACITY: f32 = 0.55;
 const SWEEP_FEATHER: f32 = 0.35;
 const SWEEP_LAYERS: usize = 4;
 const SECONDARY_SIZE: f32 = 14.0;
@@ -413,7 +414,8 @@ fn syllable(text: String, sweep: Option<(f32, f32)>, variables: &Variables) -> A
         return base.child(text).into_any_element();
     };
     let color = rgb_to_hsla(variables.text);
-    let dim = color.opacity(WORD_DIM * opacity);
+    let engaged = ((opacity - NEXT_OPACITY) / (1.0 - NEXT_OPACITY)).clamp(0.0, 1.0);
+    let dim = color.opacity(opacity * (1.0 - (1.0 - WORD_DIM) * engaged));
     let lit = color.opacity(opacity);
     if progress <= 0.0 {
         return base.text_color(dim).child(text).into_any_element();
