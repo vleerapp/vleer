@@ -314,17 +314,6 @@ impl Scanner {
                                         stats.scanned, stats.added, stats.updated, stats.missing
                                     );
 
-                                    if stats.missing > 0 {
-                                        navbar::status().set(
-                                            "scanner.missing",
-                                            format!("{} song{} missing from disk", stats.missing, if stats.missing == 1 { "" } else { "s" }),
-                                            None,
-                                            crate::status::StatusColor::Warning,
-                                        );
-                                    } else {
-                                        navbar::status().clear("scanner.missing");
-                                    }
-
                                     if stats.scanned > 0 || stats.removed > 0 {
                                         telemetry_clone.submit(&db_clone, &config_clone);
                                     }
@@ -347,17 +336,6 @@ impl Scanner {
                         exec.spawn(async move {
                                 match scanner.scan(&db_clone).await {
                                 Ok(stats) => {
-
-                                    if stats.missing > 0 {
-                                        navbar::status().set(
-                                            "scanner.missing",
-                                            format!("{} song{} missing from disk", stats.missing, if stats.missing == 1 { "" } else { "s" }),
-                                            None,
-                                            crate::status::StatusColor::Warning,
-                                        );
-                                    } else {
-                                        navbar::status().clear("scanner.missing");
-                                    }
 
                                     if stats.scanned > 0 || stats.removed > 0 {
                                         telemetry_clone.submit(&db_clone, &config_clone);
@@ -458,22 +436,31 @@ impl Scanner {
         &self,
         db: &Database,
         scanned_files: &HashSet<String>,
-    ) -> Result<usize> {
+    ) -> Result<(usize, usize)> {
+        let merged = match db.relink_unhashed_songs() {
+            Ok(n) => n,
+            Err(e) => {
+                warn!("Failed to merge stale songs: {e}");
+                0
+            }
+        };
+        if merged > 0 {
+            info!("Merged {merged} stale song(s) into their moved copies");
+        }
+
         let stale_paths = self.find_missing_songs(db, scanned_files)?;
 
-        if stale_paths.is_empty() {
-            return Ok(0);
+        if !stale_paths.is_empty() {
+            warn!(
+                "{} songs are missing from disk but were kept in the library. Remove them manually in Settings if no longer needed.",
+                stale_paths.len()
+            );
+            for p in &stale_paths {
+                warn!("Missing: {}", p);
+            }
         }
 
-        warn!(
-            "{} songs are missing from disk but were kept in the library. Remove them manually in Settings if no longer needed.",
-            stale_paths.len()
-        );
-        for p in &stale_paths {
-            warn!("Missing: {}", p);
-        }
-
-        Ok(stale_paths.len())
+        Ok((merged, stale_paths.len()))
     }
 
     async fn scan_with_options(&self, db: &Database, options: ScanOptions) -> Result<ScanStats> {
@@ -659,7 +646,7 @@ impl Scanner {
         }
 
         let missing_started = Instant::now();
-        let missing = self.remove_missing_songs(db, &scanned_files)?;
+        let (merged, missing) = self.remove_missing_songs(db, &scanned_files)?;
         let missing_time = missing_started.elapsed();
 
         info!(
@@ -686,11 +673,30 @@ impl Scanner {
         });
         self.clear_scan_progress();
 
+        if missing > 0 {
+            navbar::status().set(
+                "scanner.missing",
+                format!(
+                    "{missing} song{} missing from disk",
+                    if missing == 1 { "" } else { "s" }
+                ),
+                None,
+                crate::status::StatusColor::Warning,
+            );
+        } else {
+            navbar::status().clear("scanner.missing");
+        }
+        if (added > 0 || updated > 0 || merged > 0)
+            && let Some(ui) = &self.background_ui
+        {
+            ui.notify(BackgroundUiEvent::LibraryDataChanged);
+        }
+
         Ok(ScanStats {
             scanned,
             added,
             updated,
-            removed: 0,
+            removed: merged,
             missing,
         })
     }

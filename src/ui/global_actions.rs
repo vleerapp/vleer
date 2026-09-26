@@ -151,22 +151,7 @@ fn reload_config(_: &ReloadConfig, cx: &mut App) {
     let scanner = cx.global::<Scanner>().clone();
 
     cx.spawn(async move |_cx| match scanner.scan(&db).await {
-        Ok(stats) => {
-            if stats.missing > 0 {
-                crate::ui::layout::navbar::status().set(
-                    "scanner.missing",
-                    format!(
-                        "{} song{} missing from disk",
-                        stats.missing,
-                        if stats.missing == 1 { "" } else { "s" }
-                    ),
-                    None,
-                    StatusColor::Warning,
-                );
-            } else {
-                crate::ui::layout::navbar::status().clear("scanner.missing");
-            }
-        }
+        Ok(_) => {}
         Err(e) => {
             error!("Scan after config reload failed: {}", e);
         }
@@ -179,23 +164,7 @@ fn scan(_: &Scan, cx: &mut App) {
     let scanner = cx.global::<Scanner>().clone();
 
     cx.spawn(async move |_cx| match scanner.scan(&db).await {
-        Ok(stats) => {
-            use crate::status::StatusColor;
-            if stats.missing > 0 {
-                crate::ui::layout::navbar::status().set(
-                    "scanner.missing",
-                    format!(
-                        "{} song{} missing from disk",
-                        stats.missing,
-                        if stats.missing == 1 { "" } else { "s" }
-                    ),
-                    None,
-                    StatusColor::Warning,
-                );
-            } else {
-                crate::ui::layout::navbar::status().clear("scanner.missing");
-            }
-        }
+        Ok(_) => {}
         Err(e) => {
             error!("Manual scan failed: {}", e);
         }
@@ -214,23 +183,7 @@ fn force_scan(_: &ForceScan, cx: &mut App) {
     let scanner = cx.global::<Scanner>().clone();
 
     cx.spawn(async move |_cx| match scanner.force_scan(&db).await {
-        Ok(stats) => {
-            use crate::status::StatusColor;
-            if stats.missing > 0 {
-                crate::ui::layout::navbar::status().set(
-                    "scanner.missing",
-                    format!(
-                        "{} song{} missing from disk",
-                        stats.missing,
-                        if stats.missing == 1 { "" } else { "s" }
-                    ),
-                    None,
-                    StatusColor::Warning,
-                );
-            } else {
-                crate::ui::layout::navbar::status().clear("scanner.missing");
-            }
-        }
+        Ok(_) => {}
         Err(e) => {
             error!("Manual Full scan failed: {}", e);
         }
