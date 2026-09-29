@@ -27,10 +27,47 @@ impl ToF32 for u16 {
     }
 }
 
+pub const TAP_SIZE: usize = 16384;
+
+pub struct SampleTap {
+    buf: Vec<f32>,
+    head: usize,
+    written: u64,
+    rate: u32,
+}
+
+impl SampleTap {
+    fn new() -> Self {
+        Self {
+            buf: vec![0.0; TAP_SIZE],
+            head: 0,
+            written: 0,
+            rate: 44100,
+        }
+    }
+
+    fn push(&mut self, samples: &[f32], channels: u16, rate: u32) {
+        self.rate = rate;
+        let channels = channels.max(1) as usize;
+        for frame in samples.chunks(channels) {
+            self.buf[self.head] = frame.iter().sum::<f32>() / frame.len() as f32;
+            self.head = (self.head + 1) % TAP_SIZE;
+        }
+        self.written = self.written.wrapping_add(1);
+    }
+
+    fn clear(&mut self) {
+        self.buf.fill(0.0);
+        self.written = self.written.wrapping_add(1);
+    }
+}
+
 #[derive(Clone)]
 pub struct VisualizerState {
     pub bands: Arc<Mutex<[f32; 4]>>,
     pub enabled: Arc<AtomicBool>,
+    pub tap_enabled: Arc<AtomicBool>,
+    tap: Arc<Mutex<SampleTap>>,
 }
 
 impl Default for VisualizerState {
@@ -38,6 +75,8 @@ impl Default for VisualizerState {
         Self {
             bands: Arc::new(Mutex::new([0.0; 4])),
             enabled: Arc::new(AtomicBool::new(true)),
+            tap_enabled: Arc::new(AtomicBool::new(true)),
+            tap: Arc::new(Mutex::new(SampleTap::new())),
         }
     }
 }
@@ -48,6 +87,25 @@ impl VisualizerState {
         if !enabled {
             *self.bands.lock() = [0.0; 4];
         }
+    }
+
+    pub fn set_tap_enabled(&self, enabled: bool) {
+        self.tap_enabled.store(enabled, Ordering::Relaxed);
+        if !enabled {
+            self.tap.lock().clear();
+        }
+    }
+
+    pub fn written(&self) -> u64 {
+        self.tap.lock().written
+    }
+
+    pub fn snapshot(&self, out: &mut Vec<f32>) -> u32 {
+        let tap = self.tap.lock();
+        out.clear();
+        out.extend_from_slice(&tap.buf[tap.head..]);
+        out.extend_from_slice(&tap.buf[..tap.head]);
+        tap.rate
     }
 }
 
@@ -170,7 +228,9 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         let sample = self.input.next()?;
 
-        if !self.state.enabled.load(Ordering::Relaxed) {
+        let bands_on = self.state.enabled.load(Ordering::Relaxed);
+        let tap_on = self.state.tap_enabled.load(Ordering::Relaxed);
+        if !bands_on && !tap_on {
             if !self.buffer.is_empty() {
                 self.buffer.clear();
             }
@@ -180,7 +240,15 @@ where
         self.buffer.push(sample);
 
         if self.buffer.len() >= 1024 {
-            self.process_spectrum();
+            if bands_on {
+                self.process_spectrum();
+            }
+            if tap_on {
+                self.state
+                    .tap
+                    .lock()
+                    .push(&self.buffer, self._channels, self.sample_rate);
+            }
             self.buffer.clear();
         }
 

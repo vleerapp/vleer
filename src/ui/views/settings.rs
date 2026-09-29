@@ -724,6 +724,7 @@ impl Render for SettingsView {
         let telemetry = cx.global::<Config>().get().telemetry;
         let discord_rpc = cx.global::<Config>().get().discord_rpc;
         let visualizer_enabled = cx.global::<Config>().get().audio.visualizer;
+        let spectrum_enabled = cx.global::<Config>().get().audio.spectrum;
         let eq_enabled = cx.global::<Config>().get().equalizer.enabled;
 
         div()
@@ -843,6 +844,26 @@ impl Render for SettingsView {
                                         div()
                                             .text_color(variables.text_secondary)
                                             .child("Visualizer"),
+                                    ),
+                            )
+                            .child(
+                                flex_row()
+                                    .gap(px(variables.padding_8))
+                                    .child(
+                                        Switch::new("spectrum-enabled-switch", spectrum_enabled)
+                                            .on_change(move |value, _window, cx| {
+                                                cx.update_global::<Config, _>(|config, _cx| {
+                                                    config.set(|s| s.audio.spectrum = value);
+                                                });
+                                                cx.update_global::<Playback, _>(|playback, _cx| {
+                                                    playback.set_spectrum_enabled(value);
+                                                });
+                                            }),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_color(variables.text_secondary)
+                                            .child("Spectrum"),
                                     ),
                             )
                             .child(

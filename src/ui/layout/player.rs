@@ -2,14 +2,20 @@ use crate::ui::app::MainWindow;
 use crate::ui::assets::{ImageRequest, cover_uri};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
+use spectrum_analyzer::scaling::divide_by_N;
+use spectrum_analyzer::windows::hann_window;
+use spectrum_analyzer::{FrequencyLimit, samples_fft_to_spectrum};
+use std::cell::RefCell;
 use std::ops::Range;
-use std::time::Duration;
+use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use crate::{
     data::{config::Config, models::Cuid},
     media::{
         playback::Playback,
         queue::{Queue, RepeatMode},
+        visualizer::{TAP_SIZE, VisualizerState},
     },
     ui::{
         components::{
@@ -26,6 +32,200 @@ use crate::{
     },
 };
 
+const FFT_SIZE: usize = TAP_SIZE;
+const MIN_BARS: usize = 16;
+const MAX_BARS: usize = 512;
+const BAR_WIDTH: f32 = 4.0;
+const BAR_GAP: f32 = 2.0;
+const FREQ_LO: f32 = 30.0;
+const FREQ_HI: f32 = 16_000.0;
+const FLOOR_DB: f32 = -70.0;
+const MAX_DB: f32 = -6.0;
+const ATTACK: f32 = 40.0;
+const RELEASE: f32 = 10.0;
+const HOLD_GRAVITY: f32 = 0.05;
+const EPSILON: f32 = 0.002;
+const SILENT_AFTER: f32 = 0.15;
+const WINDOW_GAIN: f32 = 4.0;
+const CAP_ALPHA: f32 = 0.6;
+const CAP_HEIGHT: f32 = 2.0;
+
+fn with_alpha(mut color: gpui::Rgba, alpha: f32) -> gpui::Rgba {
+    color.alpha = alpha;
+    color
+}
+
+struct Bars {
+    last_written: u64,
+    last_tick: Option<Instant>,
+    last_fresh: Option<Instant>,
+    band_key: (usize, u32),
+    bands: Vec<(usize, usize)>,
+    samples: Vec<f32>,
+    targets: Vec<f32>,
+    levels: Vec<f32>,
+    holds: Vec<f32>,
+    hold_vel: Vec<f32>,
+    alive: bool,
+}
+
+impl Bars {
+    fn new() -> Self {
+        Self {
+            last_written: 0,
+            last_tick: None,
+            last_fresh: None,
+            band_key: (0, 0),
+            bands: Vec::new(),
+            samples: Vec::with_capacity(FFT_SIZE),
+            targets: Vec::new(),
+            levels: Vec::new(),
+            holds: Vec::new(),
+            hold_vel: Vec::new(),
+            alive: false,
+        }
+    }
+
+    fn analyze(&mut self, state: &VisualizerState, count: usize) {
+        let rate = state.snapshot(&mut self.samples);
+        if self.samples.len() != FFT_SIZE || rate == 0 {
+            return;
+        }
+        let windowed = hann_window(&self.samples);
+        let Ok(spectrum) =
+            samples_fft_to_spectrum(&windowed, rate, FrequencyLimit::All, Some(&divide_by_N))
+        else {
+            return;
+        };
+        let data = spectrum.data();
+
+        if self.band_key != (count, rate) {
+            let bin_hz = rate as f32 / FFT_SIZE as f32;
+            let ratio = FREQ_HI / FREQ_LO;
+            self.bands = (0..count)
+                .map(|i| {
+                    let lo = FREQ_LO * ratio.powf(i as f32 / count as f32);
+                    let hi = FREQ_LO * ratio.powf((i + 1) as f32 / count as f32);
+                    let lo_bin = ((lo / bin_hz) as usize).min(data.len().saturating_sub(1));
+                    let hi_bin = ((hi / bin_hz).ceil() as usize)
+                        .max(lo_bin + 1)
+                        .min(data.len());
+                    (lo_bin, hi_bin.max(lo_bin + 1).min(data.len()))
+                })
+                .collect();
+            self.band_key = (count, rate);
+        }
+
+        for (i, &(lo, hi)) in self.bands.iter().enumerate() {
+            let peak = data[lo..hi]
+                .iter()
+                .map(|(_, v)| v.val() * WINDOW_GAIN)
+                .fold(0.0f32, f32::max);
+            let db = 20.0 * (peak + 1e-9).log10();
+            self.targets[i] = ((db - FLOOR_DB) / (MAX_DB - FLOOR_DB)).clamp(0.0, 1.0);
+        }
+    }
+
+    fn step(&mut self, state: &VisualizerState, width: f32) {
+        let now = Instant::now();
+        let dt = self
+            .last_tick
+            .map(|t| (now - t).as_secs_f32().min(0.1))
+            .unwrap_or(1.0 / 60.0);
+        self.last_tick = Some(now);
+
+        let count = ((width / (BAR_WIDTH + BAR_GAP)) as usize).clamp(MIN_BARS, MAX_BARS);
+        if self.levels.len() != count {
+            self.targets = vec![0.0; count];
+            self.levels = vec![0.0; count];
+            self.holds = vec![0.0; count];
+            self.hold_vel = vec![0.0; count];
+            self.band_key = (0, 0);
+        }
+
+        let written = state.written();
+        let fresh = written != self.last_written;
+        self.last_written = written;
+        if fresh {
+            self.last_fresh = Some(now);
+        }
+        let stopped = self
+            .last_fresh
+            .is_none_or(|t| (now - t).as_secs_f32() > SILENT_AFTER);
+
+        if fresh {
+            self.analyze(state, count);
+        } else if stopped {
+            self.targets.fill(0.0);
+        }
+
+        let mut alive = false;
+        for i in 0..count {
+            let target = self.targets[i];
+            let rate = if target > self.levels[i] {
+                ATTACK
+            } else {
+                RELEASE
+            };
+            self.levels[i] += (target - self.levels[i]) * (rate * dt).min(1.0);
+
+            if self.levels[i] >= self.holds[i] {
+                self.holds[i] = self.levels[i];
+                self.hold_vel[i] = 0.0;
+            } else {
+                self.hold_vel[i] += HOLD_GRAVITY * dt;
+                self.holds[i] = (self.holds[i] - self.hold_vel[i] * dt).max(self.levels[i]);
+            }
+            if self.levels[i] > EPSILON || self.holds[i] > EPSILON {
+                alive = true;
+            }
+        }
+        self.alive = alive;
+    }
+
+    fn paint(
+        &self,
+        bounds: Bounds<Pixels>,
+        window: &mut Window,
+        color: gpui::Rgba,
+        cap: gpui::Rgba,
+    ) {
+        let count = self.levels.len();
+        let w = f32::from(bounds.size.width);
+        let h = f32::from(bounds.size.height);
+        if count == 0 || w <= 0.0 || h <= 0.0 {
+            return;
+        }
+        let step = w / count as f32;
+        let bar_w = (step - BAR_GAP).max(1.0);
+        let origin = bounds.origin;
+        let rect = |x: f32, bottom: f32, rw: f32, rh: f32| {
+            Bounds::new(
+                point(origin.x + px(x), origin.y + px(h - bottom - rh)),
+                size(px(rw), px(rh)),
+            )
+        };
+
+        for i in 0..count {
+            let x = i as f32 * step;
+            if self.levels[i] > EPSILON {
+                window.paint_quad(fill(rect(x, 0.0, bar_w, self.levels[i] * h), color));
+            }
+            if self.holds[i] > EPSILON {
+                window.paint_quad(fill(
+                    rect(
+                        x,
+                        (self.holds[i] * h).min(h - CAP_HEIGHT),
+                        bar_w,
+                        CAP_HEIGHT,
+                    ),
+                    cap,
+                ));
+            }
+        }
+    }
+}
+
 #[allow(dead_code)]
 struct CachedSong {
     id: Cuid,
@@ -39,6 +239,7 @@ pub struct Player {
     cached_song_data: Option<CachedSong>,
     context_menu: Entity<ContextMenu>,
     hovered_artist: Option<usize>,
+    bars: Rc<RefCell<Bars>>,
 }
 
 impl Player {
@@ -82,12 +283,13 @@ impl Player {
             cached_song_data: None,
             context_menu: cx.new(|_| ContextMenu::new()),
             hovered_artist: None,
+            bars: Rc::new(RefCell::new(Bars::new())),
         }
     }
 }
 
 impl Render for Player {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
 
         let current_song = if let Some(song) = cx.global::<Queue>().get_current_song(cx) {
@@ -151,6 +353,28 @@ impl Render for Player {
         let side_panel = cx.try_global::<SidePanel>().copied().unwrap_or_default();
         let queue_visible = side_panel == SidePanel::Queue;
         let lyrics_visible = side_panel == SidePanel::Lyrics;
+
+        let visualizer_enabled = cx.global::<Config>().get().audio.spectrum;
+        if visualizer_enabled && (is_playing || self.bars.borrow().alive) {
+            window.request_animation_frame();
+        }
+        let spectrum_layer = visualizer_enabled.then(|| {
+            let bars = self.bars.clone();
+            let state = cx.global::<Playback>().visualizer_state();
+            let color = variables.text_muted;
+            let cap = with_alpha(variables.text_muted, CAP_ALPHA);
+            div().absolute().inset_0().child(
+                canvas(
+                    move |_, _, _| {},
+                    move |bounds, _, window, _| {
+                        let mut bars = bars.borrow_mut();
+                        bars.step(&state, f32::from(bounds.size.width));
+                        bars.paint(bounds, window, color, cap);
+                    },
+                )
+                .size_full(),
+            )
+        });
 
         let play_button = Button::new("play_pause")
             .icon(if is_playing {
@@ -428,6 +652,8 @@ impl Render for Player {
 
         flex_col()
             .h_full()
+            .relative()
+            .children(spectrum_layer)
             .p(px(variables.padding_16))
             .gap(px(variables.padding_16))
             .child(

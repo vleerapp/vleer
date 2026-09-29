@@ -137,9 +137,8 @@ impl Playback {
         *equalizer.lock() = Equalizer::from_settings(sample_rate_u32, &eq_settings);
 
         let eq_source = EqualizerSource::new(source, equalizer.clone());
-        let vis_source = VisualizerSource::new(eq_source, visualizer_state);
         let gain = Self::compute_normalization_gain_for(lufs);
-        let normalized = vis_source.amplify(gain);
+        let normalized = VisualizerSource::new(eq_source.amplify(gain), visualizer_state);
 
         sink.append(normalized);
         sink.set_volume(Self::compute_log_volume(volume));
@@ -558,9 +557,9 @@ impl Playback {
             }
 
             let eq_source = EqualizerSource::new(source, self.equalizer.clone());
-            let vis_source = VisualizerSource::new(eq_source, self.visualizer_state.clone());
             let gain = Self::compute_normalization_gain_for(self.current_lufs);
-            let normalized = vis_source.amplify(gain);
+            let normalized =
+                VisualizerSource::new(eq_source.amplify(gain), self.visualizer_state.clone());
 
             if let Some(sink) = &self.sink {
                 sink.stop();
@@ -623,6 +622,10 @@ impl Playback {
         self.sink.as_ref().is_none_or(|s| s.empty())
     }
 
+    pub fn visualizer_state(&self) -> VisualizerState {
+        self.visualizer_state.clone()
+    }
+
     pub fn get_spectrum(&self) -> [f32; 4] {
         *self.visualizer_state.bands.lock()
     }
@@ -654,12 +657,18 @@ impl Playback {
         eq.apply_settings(&settings.equalizer);
 
         self.visualizer_state.set_enabled(settings.audio.visualizer);
+        self.visualizer_state
+            .set_tap_enabled(settings.audio.spectrum);
 
         debug!("Applied config to playback");
     }
 
     pub fn set_visualizer_enabled(&mut self, enabled: bool) {
         self.visualizer_state.set_enabled(enabled);
+    }
+
+    pub fn set_spectrum_enabled(&mut self, enabled: bool) {
+        self.visualizer_state.set_tap_enabled(enabled);
     }
 
     pub fn play_queue(&mut self, cx: &mut App) {

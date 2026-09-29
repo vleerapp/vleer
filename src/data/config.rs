@@ -76,6 +76,8 @@ impl Default for ScanSettings {
 pub struct AudioSettings {
     #[serde(default = "defaults::visualizer")]
     pub visualizer: bool,
+    #[serde(default = "defaults::spectrum")]
+    pub spectrum: bool,
     #[serde(default = "defaults::volume")]
     pub volume: f32,
 }
@@ -84,6 +86,7 @@ impl Default for AudioSettings {
     fn default() -> Self {
         Self {
             visualizer: true,
+            spectrum: true,
             volume: 0.5,
         }
     }
@@ -153,6 +156,9 @@ mod defaults {
         1
     }
     pub fn visualizer() -> bool {
+        true
+    }
+    pub fn spectrum() -> bool {
         true
     }
     pub fn volume() -> f32 {
