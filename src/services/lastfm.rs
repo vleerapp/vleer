@@ -269,7 +269,7 @@ impl LastfmScrobbler {
                                     title: song.title,
                                     artist,
                                     album,
-                                    duration: song.duration,
+                                    duration: song.duration / 1000,
                                     started_at: unix_now_i64(),
                                     now_playing_sent: false,
                                     scrobbled: false,

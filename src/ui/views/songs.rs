@@ -54,8 +54,9 @@ fn map_sort(sort: Option<TableSort>) -> (SongSort, bool) {
 fn song_entry_from_list_item(item: SongListItem) -> Arc<SongEntry> {
     let (artist, artist_ranges) = format_artist_line(&item.artist_name);
     let album = item.album_title.unwrap_or_else(|| "Unknown".to_string());
-    let minutes = item.duration / 60;
-    let seconds = item.duration % 60;
+    let total_secs = item.duration / 1000;
+    let minutes = total_secs / 60;
+    let seconds = total_secs % 60;
 
     let cover = cover_uri(
         item.image_id.as_deref(),

@@ -56,8 +56,9 @@ fn song_entry_from_track(track: &PlaylistTrack) -> Arc<SongEntry> {
         song.artists.clone()
     };
     let (artist, artist_ranges) = join_artists(&artists);
-    let minutes = song.duration / 60;
-    let seconds = song.duration % 60;
+    let total_secs = song.duration / 1000;
+    let minutes = total_secs / 60;
+    let seconds = total_secs % 60;
     Arc::new(SongEntry {
         id: song.id.clone(),
         title: song.title.clone(),
@@ -308,7 +309,7 @@ impl PlaylistView {
                         .map(|p| p.name.clone())
                         .unwrap_or_default();
                     title_input.update(cx, |inp, cx| inp.set_text(name, cx));
-                    this.total_duration_secs = songs.iter().map(|t| t.song.duration).sum();
+                    this.total_duration_secs = songs.iter().map(|t| t.song.duration).sum::<i32>() / 1000;
                     {
                         let mut cache = this.songs_cache.borrow_mut();
                         cache.clear();

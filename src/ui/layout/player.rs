@@ -449,14 +449,14 @@ impl Render for Player {
                     .duration(
                         cx.global::<Queue>()
                             .get_current_song(cx)
-                            .map(|s| s.duration as f32)
+                            .map(|s| s.duration as f32 / 1000.0)
                             .unwrap_or(0.0),
                     )
                     .on_seek(|value, window, cx| {
                         let duration = cx
                             .global::<Queue>()
                             .get_current_song(cx)
-                            .map(|s| s.duration as f32)
+                            .map(|s| s.duration as f32 / 1000.0)
                             .unwrap_or(0.0);
 
                         if duration > 0.0 {

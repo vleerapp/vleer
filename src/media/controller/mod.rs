@@ -106,7 +106,7 @@ impl MediaController {
             title: Some(song.title),
             artist,
             album,
-            duration_ms: Some(song.duration.max(0) as u64 * 1000),
+            duration_ms: Some(song.duration.max(0) as u64),
             position_ms: Some(0),
             #[cfg(any(target_os = "linux", target_os = "windows"))]
             artwork_id,

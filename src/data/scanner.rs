@@ -79,6 +79,7 @@ pub struct Scanner {
     scan_lock: Arc<AsyncMutex<()>>,
     cancel_flag: Arc<AtomicBool>,
     scan_generation: Arc<AtomicU64>,
+    force_pending: Arc<AtomicBool>,
     pending_changed_paths: Arc<AsyncMutex<HashSet<PathBuf>>>,
     incremental_worker_running: Arc<AtomicBool>,
 
@@ -101,6 +102,7 @@ impl Scanner {
             scan_lock: Arc::new(AsyncMutex::new(())),
             cancel_flag: Arc::new(AtomicBool::new(false)),
             scan_generation: Arc::new(AtomicU64::new(0)),
+            force_pending: Arc::new(AtomicBool::new(false)),
             pending_changed_paths: Arc::new(AsyncMutex::new(HashSet::new())),
             incremental_worker_running: Arc::new(AtomicBool::new(false)),
             warm_cancel: Arc::new(AtomicBool::new(false)),
@@ -702,6 +704,9 @@ impl Scanner {
     }
 
     async fn run_scan(&self, db: &Database, options: ScanOptions) -> Result<ScanStats> {
+        if options.force {
+            self.force_pending.store(true, Ordering::Release);
+        }
         let my_gen = self
             .scan_generation
             .fetch_add(1, Ordering::AcqRel)
@@ -724,7 +729,13 @@ impl Scanner {
         self.warm_cancel.store(true, Ordering::Release);
 
         self.cancel_flag.store(false, Ordering::Release);
+        let options = ScanOptions {
+            force: self.force_pending.load(Ordering::Acquire),
+        };
         let result = self.scan_with_options(db, options).await;
+        if result.is_ok() && !self.is_cancelled() {
+            self.force_pending.store(false, Ordering::Release);
+        }
         if result.is_err() {
             self.clear_scan_progress();
         }
@@ -981,7 +992,7 @@ impl Scanner {
                     album_artist: meta.album_artist.as_deref(),
                     file_path: &paths[i],
                     audio_hash: &track.audio_hash,
-                    duration: meta.duration.as_secs() as i32,
+                    duration: meta.duration.as_millis() as i32,
                     track_number: meta.track_number.map(|n| n as i32),
                     year: meta.year,
                     recheck_image: track.recheck_image,
@@ -1387,7 +1398,7 @@ mod tests {
                 album_artist: t.metadata.album_artist.as_deref(),
                 file_path: &paths[i],
                 audio_hash: &t.audio_hash,
-                duration: t.metadata.duration.as_secs() as i32,
+                duration: t.metadata.duration.as_millis() as i32,
                 track_number: t.metadata.track_number.map(|n| n as i32),
                 year: t.metadata.year,
                 recheck_image: t.recheck_image,

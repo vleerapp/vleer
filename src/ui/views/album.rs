@@ -61,8 +61,9 @@ fn song_entry_from_song(song: &crate::data::models::Song) -> Arc<SongEntry> {
         song.artists.clone()
     };
     let (artist, artist_ranges) = join_artists(&artists);
-    let minutes = song.duration / 60;
-    let seconds = song.duration % 60;
+    let total_secs = song.duration / 1000;
+    let minutes = total_secs / 60;
+    let seconds = total_secs % 60;
     Arc::new(SongEntry {
         id: song.id.clone(),
         title: song.title.clone(),
@@ -290,7 +291,7 @@ impl AlbumView {
                     this.artist_image_id = artist_image_id;
                     this.artists_data = artists_data;
                     this.year = year;
-                    this.total_duration_secs = songs.iter().map(|s| s.duration).sum();
+                    this.total_duration_secs = songs.iter().map(|s| s.duration).sum::<i32>() / 1000;
                     {
                         let mut seen = std::collections::BTreeSet::new();
                         for s in &songs {

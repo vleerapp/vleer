@@ -387,7 +387,7 @@ pub fn resolve(db: &Database, client: &LrclibClient, song: &Song) -> Option<Lyri
         title: &song.title,
         artists: &song.artists,
         album: album.as_deref(),
-        duration: song.duration.max(0) as u32,
+        duration: (song.duration.max(0) / 1000) as u32,
     };
 
     let online = match client.find(&query) {

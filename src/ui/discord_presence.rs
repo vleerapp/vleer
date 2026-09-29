@@ -88,7 +88,7 @@ impl DiscordPresence {
 
                         cached_song_info = Some(CachedSongInfo {
                             title: song.title,
-                            duration: song.duration,
+                            duration: song.duration / 1000,
                             artist_name,
                         });
                     } else {
