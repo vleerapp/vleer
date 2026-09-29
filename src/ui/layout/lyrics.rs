@@ -266,10 +266,15 @@ impl LyricsPane {
 
     fn step_fade(&mut self, lit: &[bool], active: Option<usize>, window: &mut Window) {
         let count = lit.len();
-        let focus = self.hover().or(active);
+        let detached = self.detached;
+        let hover = if detached { None } else { self.hover() };
         if self.shown.len() != count {
-            self.shown = (0..count).map(|i| line_opacity(i, lit[i], focus)).collect();
-            self.clear = (0..count).map(|i| clarity(i, lit[i], focus)).collect();
+            self.shown = (0..count)
+                .map(|i| line_opacity(i, lit[i], active, hover))
+                .collect();
+            self.clear = (0..count)
+                .map(|i| clarity(i, lit[i], active, hover, detached))
+                .collect();
             self.fade_frame = None;
             return;
         }
@@ -282,7 +287,7 @@ impl LyricsPane {
         let ease = 1.0 - (1.0 - EASE).powf(elapsed.min(MAX_FRAME_TIME).as_secs_f32() * HERTZ);
         let mut moving = false;
         for (i, shown) in self.shown.iter_mut().enumerate() {
-            let target = line_opacity(i, lit[i], focus);
+            let target = line_opacity(i, lit[i], active, hover);
             let distance = target - *shown;
             if distance.abs() < 0.005 {
                 *shown = target;
@@ -293,7 +298,7 @@ impl LyricsPane {
         }
         let step = elapsed.min(MAX_FRAME_TIME).as_secs_f32() / CLEAR_SECS;
         for (i, clear) in self.clear.iter_mut().enumerate() {
-            let target = clarity(i, lit[i], focus);
+            let target = clarity(i, lit[i], active, hover, detached);
             let distance = target - *clear;
             if distance.abs() <= step {
                 *clear = target;
@@ -388,24 +393,38 @@ fn is_singing(lines: &[Line], index: usize, position: f32) -> bool {
     position >= line.at && position < end
 }
 
-fn clarity(index: usize, lit: bool, focus: Option<usize>) -> f32 {
-    if lit || focus == Some(index) {
+fn clarity(
+    index: usize,
+    lit: bool,
+    active: Option<usize>,
+    hover: Option<usize>,
+    detached: bool,
+) -> f32 {
+    if detached || lit || active == Some(index) || hover == Some(index) {
         1.0
     } else {
         0.0
     }
 }
 
-fn line_opacity(index: usize, lit: bool, focus: Option<usize>) -> f32 {
-    if lit {
-        return 1.0;
-    }
+fn focus_opacity(index: usize, focus: Option<usize>) -> f32 {
     match focus {
         None => 0.5,
         Some(focus) => match index.abs_diff(focus) {
             0 => 1.0,
             distance => (0.55 - 0.1 * (distance - 1) as f32).max(0.12),
         },
+    }
+}
+
+fn line_opacity(index: usize, lit: bool, active: Option<usize>, hover: Option<usize>) -> f32 {
+    if lit {
+        return 1.0;
+    }
+    let base = focus_opacity(index, active);
+    match hover {
+        Some(_) => base.max(focus_opacity(index, hover)),
+        None => base,
     }
 }
 
@@ -451,6 +470,28 @@ fn syllable(text: String, sweep: Option<(f32, f32)>, variables: &Variables) -> A
     cell.into_any_element()
 }
 
+fn is_wide(c: char) -> bool {
+    matches!(c as u32, 0x1100..=0x11FF | 0x2E80..=0xD7FF | 0xF900..=0xFAFF | 0xFF00..=0xFFEF)
+}
+
+fn script_runs(text: &str) -> Vec<String> {
+    let mut runs: Vec<String> = Vec::new();
+    let mut wide = false;
+    for c in text.chars() {
+        let boundary = !c.is_whitespace() && !c.is_ascii_punctuation() && is_wide(c) != wide;
+        if runs.is_empty() || boundary {
+            if !c.is_whitespace() || runs.is_empty() {
+                wide = is_wide(c);
+            }
+            if boundary || runs.is_empty() {
+                runs.push(String::new());
+            }
+        }
+        runs.last_mut().expect("runs is never empty").push(c);
+    }
+    runs
+}
+
 fn word_row(
     line: &Line,
     next_at: Option<f32>,
@@ -465,17 +506,23 @@ fn word_row(
     let mut groups: Vec<Vec<AnyElement>> = vec![Vec::new()];
     for (i, word) in line.words.iter().enumerate() {
         let end = line.words.get(i + 1).map_or(line_end, |next| next.at);
-        let sweep = sweep_opacity.map(|opacity| {
-            let progress = (position - word.at) / (end - word.at).max(0.001);
-            (progress.clamp(0.0, 1.0), opacity)
-        });
+        let progress = ((position - word.at) / (end - word.at).max(0.001)).clamp(0.0, 1.0);
         if word.text.starts_with(char::is_whitespace)
             && groups.last().is_some_and(|group| !group.is_empty())
         {
             groups.push(Vec::new());
         }
         let group = groups.last_mut().expect("groups is never empty");
-        group.push(syllable(word.text.clone(), sweep, variables));
+        let total = word.text.chars().count().max(1) as f32;
+        let mut seen = 0usize;
+        for run in script_runs(&word.text) {
+            let from = seen as f32 / total;
+            seen += run.chars().count();
+            let to = seen as f32 / total;
+            let sweep = sweep_opacity
+                .map(|opacity| (((progress - from) / (to - from)).clamp(0.0, 1.0), opacity));
+            group.push(syllable(run, sweep, variables));
+        }
         if word.text.ends_with(char::is_whitespace) {
             groups.push(Vec::new());
         }
@@ -484,11 +531,19 @@ fn word_row(
         .flex()
         .flex_row()
         .flex_wrap()
+        .items_baseline()
         .children(
             groups
                 .into_iter()
                 .filter(|group| !group.is_empty())
-                .map(|group| div().flex().flex_row().flex_shrink_0().children(group)),
+                .map(|group| {
+                    div()
+                        .flex()
+                        .flex_row()
+                        .flex_shrink_0()
+                        .items_baseline()
+                        .children(group)
+                }),
         )
         .into_any_element()
 }
@@ -565,11 +620,16 @@ fn synced_rows(
 ) -> Vec<AnyElement> {
     let variables = *variables;
     let blur = px(LINE_SIZE * BLUR);
-    let focus = hovered.or(active);
-    let pin = focus
-        .and_then(|active| row_top(scroll, active))
-        .unwrap_or(px(0.0))
-        .clamp(px(0.0), scroll.bounds().size.height);
+    let pin_of = |focus: Option<usize>| {
+        focus
+            .and_then(|row| row_top(scroll, row))
+            .unwrap_or(px(0.0))
+            .clamp(px(0.0), scroll.bounds().size.height)
+    };
+    let active_pin = pin_of(active);
+    let hover_pin = hovered
+        .filter(|&h| active != Some(h))
+        .map(|h| pin_of(Some(h)));
     lines
         .iter()
         .enumerate()
@@ -582,7 +642,10 @@ fn synced_rows(
                 px(0.0)
             } else {
                 let eased = clear * clear * (3.0 - 2.0 * clear);
-                blur * viewport_haze(scroll, i, pin, blur) * (1.0 - eased)
+                let haze = viewport_haze(scroll, i, active_pin, blur);
+                let haze =
+                    hover_pin.map_or(haze, |pin| haze.min(viewport_haze(scroll, i, pin, blur)));
+                blur * haze * (1.0 - eased)
             };
             if line.text.is_empty() {
                 if !is_gap(lines, i) {
@@ -619,7 +682,7 @@ fn synced_rows(
 
             let next_at = lines.get(i + 1).map(|next| next.at);
             let body = {
-                let main_text = if line.words.is_empty() || !sung {
+                let main_text = if line.words.is_empty() {
                     line.text.clone().into_any_element()
                 } else {
                     word_row(line, next_at, position, sung.then_some(opacity), &variables)
