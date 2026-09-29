@@ -395,6 +395,22 @@ pub enum AlbumImageTarget {
     Candidates(Vec<Cuid>),
 }
 
+pub struct SongBackfill<'a> {
+    pub omm_id: &'a str,
+    pub track_number: Option<i32>,
+    pub year: Option<&'a str>,
+    pub genres: &'a [String],
+    pub image: Option<(&'a str, Option<&'a [u8]>)>,
+}
+
+pub struct SongLookup {
+    pub id: Cuid,
+    pub title: String,
+    pub artist: String,
+    pub album: Option<String>,
+    pub duration: i32,
+}
+
 pub struct ArtistMetadata<'a> {
     pub omm_id: &'a str,
     pub name: &'a str,
@@ -808,6 +824,101 @@ impl Database {
         Ok(rows)
     }
 
+    pub fn songs_needing_metadata(&self, limit: i64) -> Result<Vec<SongLookup>> {
+        let conn = self.image_write_conn.lock();
+        let rows = conn
+            .prepare_cached(
+                "SELECT s.id, s.title, s.duration,
+                        (SELECT title FROM albums WHERE id = s.album_id),
+                        COALESCE((
+                            SELECT a.name FROM songs_artists sa
+                            JOIN artists a ON a.id = sa.artist_id
+                            WHERE sa.song_id = s.id ORDER BY sa.position LIMIT 1
+                        ), '')
+                 FROM songs s WHERE s.omm_id IS NULL LIMIT ?1",
+            )?
+            .query_map(params![limit], |row| {
+                Ok(SongLookup {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    duration: row.get(2)?,
+                    album: row.get(3)?,
+                    artist: row.get(4)?,
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    pub fn mark_song_metadata_missing(&self, song_id: &Cuid) -> Result<()> {
+        let conn = self.image_write_conn.lock();
+        conn.prepare_cached("UPDATE songs SET omm_id = '' WHERE id = ?1 AND omm_id IS NULL")?
+            .execute(params![song_id])?;
+        Ok(())
+    }
+
+    pub fn store_song_metadata(&self, song_id: &Cuid, metadata: &SongBackfill<'_>) -> Result<bool> {
+        let mut conn = self.image_write_conn.lock();
+        let tx = conn.transaction()?;
+
+        if let Some((image_id, Some(data))) = metadata.image {
+            tx.prepare_cached(
+                "INSERT INTO images (id, data) VALUES (?1, ?2)
+                 ON CONFLICT(id) DO NOTHING",
+            )?
+            .execute(params![image_id, data])?;
+        }
+
+        let updated = tx
+            .prepare_cached(
+                "UPDATE songs SET
+                    omm_id = ?2,
+                    track_number = COALESCE(track_number, ?3),
+                    date = CASE WHEN date IS NULL OR date = '' THEN COALESCE(?4, date) ELSE date END
+                 WHERE id = ?1",
+            )?
+            .execute(params![
+                song_id,
+                metadata.omm_id,
+                metadata.track_number,
+                metadata.year
+            ])?;
+
+        if let Some((image_id, _)) = metadata.image {
+            tx.prepare_cached(
+                "UPDATE songs SET image_id = ?2, image_checked = 1
+                 WHERE id = ?1 AND image_id IS NULL",
+            )?
+            .execute(params![song_id, image_id])?;
+        }
+
+        let has_genres: bool = tx
+            .prepare_cached("SELECT EXISTS(SELECT 1 FROM songs_genres WHERE song_id = ?1)")?
+            .query_row(params![song_id], |row| row.get(0))?;
+        if updated > 0 && !has_genres {
+            for name in metadata
+                .genres
+                .iter()
+                .map(|g| g.trim())
+                .filter(|g| !g.is_empty())
+            {
+                let genre_id = Cuid::for_genre(name);
+                tx.prepare_cached(
+                    "INSERT INTO genres (id, name) VALUES (?1, ?2) ON CONFLICT(id) DO NOTHING",
+                )?
+                .execute(params![genre_id, name])?;
+                tx.prepare_cached(
+                    "INSERT INTO songs_genres (song_id, genre_id) VALUES (?1, ?2)
+                     ON CONFLICT(song_id, genre_id) DO NOTHING",
+                )?
+                .execute(params![song_id, genre_id])?;
+            }
+        }
+
+        tx.commit()?;
+        Ok(updated > 0)
+    }
+
     pub fn mark_artist_metadata_missing(&self, artist_id: &Cuid) -> Result<()> {
         let conn = self.image_write_conn.lock();
         conn.prepare_cached("UPDATE artists SET omm_id = '' WHERE id = ?1 AND omm_id IS NULL")?
@@ -1004,6 +1115,7 @@ impl Database {
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?12)
                      ON CONFLICT(id) DO UPDATE SET
                         audio_hash = excluded.audio_hash,
+                        omm_id = NULL,
                         title = excluded.title,
                         album_id = excluded.album_id,
                         file_size = excluded.file_size,

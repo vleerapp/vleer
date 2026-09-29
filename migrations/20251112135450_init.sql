@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS songs (
     duration INTEGER NOT NULL,
     image_id TEXT,
     image_checked INTEGER NOT NULL DEFAULT 0,
+    omm_id TEXT,
     track_number INTEGER,
     favorite BOOLEAN DEFAULT FALSE,
     lufs REAL,
@@ -142,6 +143,7 @@ CREATE INDEX IF NOT EXISTS idx_songs_image_id ON songs(image_id);
 CREATE INDEX IF NOT EXISTS idx_albums_image_id ON albums(image_id);
 CREATE INDEX IF NOT EXISTS idx_artists_image_id ON artists(image_id);
 CREATE INDEX IF NOT EXISTS idx_artists_omm_id ON artists(omm_id);
+CREATE INDEX IF NOT EXISTS idx_songs_omm_id ON songs(omm_id);
 CREATE INDEX IF NOT EXISTS idx_artist_aliases_artist ON artist_aliases(artist_id);
 CREATE INDEX IF NOT EXISTS idx_playlists_image_id ON playlists(image_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_songs_file_path_unique ON songs(file_path);

@@ -781,12 +781,15 @@ impl Scanner {
         self.executor
             .spawn(async move {
                 let started = Instant::now();
-                let resolved = crate::data::omm::warm_artist_metadata(db.clone(), cancel).await;
+                let artists =
+                    crate::data::omm::warm_artist_metadata(db.clone(), cancel.clone()).await;
+                let songs = crate::data::omm::warm_song_metadata(db.clone(), cancel).await;
 
-                if resolved > 0 {
+                if artists > 0 || songs > 0 {
                     info!(
-                        "Resolved metadata for {} artist(s) in {:?}",
-                        resolved,
+                        "Resolved metadata for {} artist(s) and {} song(s) in {:?}",
+                        artists,
+                        songs,
                         started.elapsed()
                     );
                     db.rebuild_search_index();

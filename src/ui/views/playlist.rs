@@ -309,7 +309,8 @@ impl PlaylistView {
                         .map(|p| p.name.clone())
                         .unwrap_or_default();
                     title_input.update(cx, |inp, cx| inp.set_text(name, cx));
-                    this.total_duration_secs = songs.iter().map(|t| t.song.duration).sum::<i32>() / 1000;
+                    this.total_duration_secs =
+                        songs.iter().map(|t| t.song.duration).sum::<i32>() / 1000;
                     {
                         let mut cache = this.songs_cache.borrow_mut();
                         cache.clear();
