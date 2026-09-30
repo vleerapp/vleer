@@ -10,7 +10,7 @@ A free, open-source music app powered by the OpenMusic API Spec the open standar
 </div>
 <br>
 
-![hero](https://github.com/user-attachments/assets/418403ed-e5ff-412b-89ac-6fb501de79ab)
+![hero](https://github.com/user-attachments/assets/e0278231-226e-488a-b8d5-3c0c707a33f7)
 
 ## Roadmap
 
