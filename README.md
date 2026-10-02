@@ -38,7 +38,7 @@ curl -fsSL https://raw.githubusercontent.com/vleerapp/vleer/main/scripts/install
 
 This installs to `~/.local` without root and keeps itself up to date from inside the app. Pass `--system` to install to `/usr/local` instead.
 
-An AppImage is also available for [ARM64](https://api.vleer.app/downloads/v1?os=linux&arch=aarch64&format=appimage&nightly=true) or [x64](https://api.vleer.app/downloads/v1?os=linux&arch=x86_64&format=appimage&nightly=true). AppImages do not self-update.
+An AppImage is also available for [ARM64](https://api.vleer.app/download/v1?os=linux&arch=aarch64&format=appimage&nightly=true) or [x64](https://api.vleer.app/download/v1?os=linux&arch=x86_64&format=appimage&nightly=true). AppImages do not self-update.
 
 Install from the AUR:
 
@@ -65,7 +65,7 @@ brew install vleerapp/vleer/vleer-nightly # nightly builds
   <span>macOS</span>
 </h3>
 
-Download the DMG for [Apple silicon](https://api.vleer.app/downloads/v1?os=macos&arch=aarch64&nightly=true) or [Intel](https://api.vleer.app/downloads/v1?os=macos&arch=x86_64&nightly=true).
+Download the DMG for [Apple silicon](https://api.vleer.app/download/v1?os=macos&arch=aarch64&nightly=true) or [Intel](https://api.vleer.app/download/v1?os=macos&arch=x86_64&nightly=true).
 
 After copying Vleer to Applications, open Terminal and run:
 
@@ -94,7 +94,7 @@ brew install --cask vleerapp/vleer/vleer-nightly # nightly builds
   <span>Windows</span>
 </h3>
 
-Download the installer for [ARM64](https://api.vleer.app/downloads/v1?os=windows&arch=aarch64&nightly=true) or [x64](https://api.vleer.app/downloads/v1?os=windows&arch=x86_64&nightly=true).
+Download the installer for [ARM64](https://api.vleer.app/download/v1?os=windows&arch=aarch64&nightly=true) or [x64](https://api.vleer.app/download/v1?os=windows&arch=x86_64&nightly=true).
 
 If Microsoft Defender SmartScreen appears, select **More info**, then **Run anyway**.
 
