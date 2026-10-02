@@ -459,7 +459,7 @@ impl Render for PlaylistView {
                                 .bg_color(variables.accent)
                                 .color(variables.background)
                                 .hover_color(variables.background)
-                                .hover(|s| s.bg(variables.accent_background))
+                                .hover(|s| s.bg(variables.accent_hover))
                                 .on_click(move |_event, _window, cx| {
                                     play_playlist_now(playlist_id_play.clone(), cx);
                                 }),

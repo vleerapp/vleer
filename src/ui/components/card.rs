@@ -227,7 +227,7 @@ impl RenderOnce for Card {
                             .items_center()
                             .justify_center()
                             .bg(variables.accent)
-                            .hover(|s| s.bg(variables.accent_background))
+                            .hover(|s| s.bg(variables.accent_hover))
                             .cursor_pointer()
                             .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
                                 cx.stop_propagation();
