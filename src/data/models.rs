@@ -163,7 +163,6 @@ pub struct PlaylistListItem {
 pub struct Playlist {
     pub id: Cuid,
     pub name: String,
-    pub description: Option<String>,
     pub image_id: Option<String>,
     pub pinned: bool,
     pub date_updated: String,
@@ -355,7 +354,6 @@ impl Playlist {
         Ok(Self {
             id: row.get("id")?,
             name: row.get("name")?,
-            description: row.get("description")?,
             image_id: row.get("image_id")?,
             pinned: row.get("pinned")?,
             date_updated: row.get("date_updated")?,

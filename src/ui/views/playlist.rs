@@ -215,16 +215,9 @@ impl PlaylistView {
                 return;
             };
             let image_id = playlist.image_id.clone();
-            let description = playlist.description.clone();
             let pinned = playlist.pinned;
             let db = cx.global::<Database>().clone();
-            if let Err(e) = db.upsert_playlist(
-                &playlist_id,
-                &name,
-                description.as_deref(),
-                image_id.as_deref(),
-                pinned,
-            ) {
+            if let Err(e) = db.upsert_playlist(&playlist_id, &name, image_id.as_deref(), pinned) {
                 tracing::error!("Failed to rename playlist: {}", e);
                 return;
             }
@@ -358,7 +351,6 @@ impl Render for PlaylistView {
 
             let playlist_id_for_cover = playlist.id.clone();
             let playlist_name_for_cover = playlist.name.clone();
-            let playlist_desc_for_cover = playlist.description.clone();
             let playlist_pinned_for_cover = playlist.pinned;
 
             let cover: AnyElement = match playlist.image_id.clone() {
@@ -393,9 +385,8 @@ impl Render for PlaylistView {
                     .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                         let id = playlist_id_for_cover.clone();
                         let name = playlist_name_for_cover.clone();
-                        let desc = playlist_desc_for_cover.clone();
                         let pinned = playlist_pinned_for_cover;
-                        open_image_picker(id, name, desc, pinned, window, cx);
+                        open_image_picker(id, name, pinned, window, cx);
                     })
                     .into_any_element(),
                 None => div()
@@ -416,9 +407,8 @@ impl Render for PlaylistView {
                     .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                         let id = playlist.id.clone();
                         let name = playlist.name.clone();
-                        let desc = playlist.description.clone();
                         let pinned = playlist.pinned;
-                        open_image_picker(id, name, desc, pinned, window, cx);
+                        open_image_picker(id, name, pinned, window, cx);
                     })
                     .into_any_element(),
             };
@@ -550,7 +540,6 @@ impl Render for PlaylistView {
 fn open_image_picker(
     playlist_id: Cuid,
     name: String,
-    description: Option<String>,
     pinned: bool,
     window: &mut Window,
     cx: &mut App,
@@ -596,13 +585,7 @@ fn open_image_picker(
                 tracing::error!("Failed to upsert playlist cover image: {}", e);
                 return;
             }
-            if let Err(e) = db.upsert_playlist(
-                &playlist_id,
-                &name,
-                description.as_deref(),
-                Some(&image_id),
-                pinned,
-            ) {
+            if let Err(e) = db.upsert_playlist(&playlist_id, &name, Some(&image_id), pinned) {
                 tracing::error!("Failed to update playlist with new cover: {}", e);
                 return;
             }

@@ -498,7 +498,7 @@ impl Render for Library {
                                                             let db =
                                                                 cx.global::<Database>().clone();
                                                             if let Err(e) = db.upsert_playlist(
-                                                                &new_id, "", None, None, false,
+                                                                &new_id, "", None, false,
                                                             ) {
                                                                 error!(
                                                                     "Failed to create playlist: {}",

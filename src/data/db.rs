@@ -955,9 +955,7 @@ impl Database {
         }
 
         let updated = tx
-            .prepare_cached(
-                "UPDATE albums SET omm_id = ?2, upc = COALESCE(upc, ?3) WHERE id = ?1",
-            )?
+            .prepare_cached("UPDATE albums SET omm_id = ?2, upc = COALESCE(upc, ?3) WHERE id = ?1")?
             .execute(params![album_id, metadata.omm_id, metadata.upc])?;
 
         if let Some((image_id, _)) = metadata.image {
@@ -1824,22 +1822,20 @@ impl Database {
         &self,
         id: &Cuid,
         name: &str,
-        description: Option<&str>,
         image_id: Option<&str>,
         pinned: bool,
     ) -> Result<()> {
         {
             let conn = self.conn.lock();
             conn.execute(
-                "INSERT INTO playlists (id, name, description, image_id, pinned)
-                 VALUES (?1, ?2, ?3, ?4, ?5)
+                "INSERT INTO playlists (id, name, image_id, pinned)
+                 VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT(id) DO UPDATE SET
                     name = excluded.name,
-                    description = excluded.description,
                     image_id = excluded.image_id,
                     pinned = excluded.pinned,
                     date_updated = DATETIME('now')",
-                params![id, name, description, image_id, pinned],
+                params![id, name, image_id, pinned],
             )?;
         }
         let mut index = self.search_index.lock();
@@ -2581,8 +2577,7 @@ mod tests {
     fn a_moved_file_keeps_its_history() {
         let (db, path) = named_db("song_move");
         let playlist = Cuid::new();
-        db.upsert_playlist(&playlist, "Mix", None, None, false)
-            .unwrap();
+        db.upsert_playlist(&playlist, "Mix", None, false).unwrap();
 
         db.upsert_tracks_batch(
             &[BatchTrack {
@@ -2704,8 +2699,7 @@ mod tests {
             .unwrap();
         let stale = song_id_for(&db, "/gone/1.flac");
         let playlist = Cuid::new();
-        db.upsert_playlist(&playlist, "Mix", None, None, false)
-            .unwrap();
+        db.upsert_playlist(&playlist, "Mix", None, false).unwrap();
         db.upsert_playlist_song(&playlist, &stale).unwrap();
         db.set_favorite::<Song>(&stale, true).unwrap();
 
@@ -2948,8 +2942,7 @@ mod tests {
     fn replaced_audio_at_the_same_path_gets_a_new_id_and_keeps_playlists() {
         let (db, path) = named_db("song_replace");
         let playlist = Cuid::new();
-        db.upsert_playlist(&playlist, "Mix", None, None, false)
-            .unwrap();
+        db.upsert_playlist(&playlist, "Mix", None, false).unwrap();
         db.upsert_tracks_batch(
             &[BatchTrack {
                 audio_hash: "before",

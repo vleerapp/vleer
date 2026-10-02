@@ -786,8 +786,7 @@ impl Scanner {
                 let started = Instant::now();
                 let artists =
                     crate::data::omm::warm_artist_metadata(db.clone(), cancel.clone()).await;
-                let songs =
-                    crate::data::omm::warm_song_metadata(db.clone(), cancel.clone()).await;
+                let songs = crate::data::omm::warm_song_metadata(db.clone(), cancel.clone()).await;
                 let albums = crate::data::omm::warm_album_metadata(db.clone(), cancel).await;
 
                 if artists > 0 || songs > 0 || albums > 0 {

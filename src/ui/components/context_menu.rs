@@ -385,7 +385,7 @@ impl Render for ContextMenu {
                             .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                                 let new_id = Cuid::new();
                                 let db = cx.global::<Database>().clone();
-                                if let Err(e) = db.upsert_playlist(&new_id, "", None, None, false) {
+                                if let Err(e) = db.upsert_playlist(&new_id, "", None, false) {
                                     error!("Failed to create playlist: {}", e);
                                     return;
                                 }
