@@ -1,4 +1,4 @@
-use crate::data::db::repo::Database;
+use crate::data::db::Database;
 use crate::data::models::{Cuid, PinnedItem};
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
@@ -498,7 +498,7 @@ impl Render for Library {
                                                             let db =
                                                                 cx.global::<Database>().clone();
                                                             if let Err(e) = db.upsert_playlist(
-                                                                &new_id, "", None, None, false,
+                                                                &new_id, "", None, false,
                                                             ) {
                                                                 error!(
                                                                     "Failed to create playlist: {}",

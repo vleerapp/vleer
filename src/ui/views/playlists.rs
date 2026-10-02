@@ -4,7 +4,7 @@ use gpui::{Context, IntoElement, Render, prelude::FluentBuilder, *};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
-    data::{db::repo::Database, models::PlaylistListItem},
+    data::{db::Database, models::PlaylistListItem},
     ui::{
         app::MainWindow,
         components::{

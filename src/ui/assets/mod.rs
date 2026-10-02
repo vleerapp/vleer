@@ -1,7 +1,7 @@
 pub mod bundled;
 pub mod image_cache;
 
-use crate::data::db::repo::Database;
+use crate::data::db::Database;
 use crate::data::images::{NO_IMAGE, decode_limit, resolve_album_image, resolve_song_image};
 use crate::data::models::Cuid;
 use crate::ui::assets::bundled::BundledAssets;

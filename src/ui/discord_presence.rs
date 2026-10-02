@@ -1,5 +1,5 @@
 use crate::data::config::Config;
-use crate::data::db::repo::Database;
+use crate::data::db::Database;
 use crate::data::models::Cuid;
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
@@ -16,6 +16,8 @@ struct CachedSongInfo {
     title: String,
     duration: i32,
     artist_name: Option<String>,
+    large_image: Option<String>,
+    small_image: Option<String>,
 }
 
 impl DiscordPresence {
@@ -86,10 +88,19 @@ impl DiscordPresence {
 
                         let artist_name = Some(song.artists.join(", ")).filter(|s| !s.is_empty());
 
+                        let (song_omm, artist_omm) = db.song_omm_ids(&id).unwrap_or_default();
+                        let ids: Vec<String> =
+                            song_omm.iter().chain(artist_omm.iter()).cloned().collect();
+                        let urls = crate::data::omm::fetch_artwork_urls(ids).await;
+                        let large_image = song_omm.and_then(|id| urls.get(&id).cloned());
+                        let small_image = artist_omm.and_then(|id| urls.get(&id).cloned());
+
                         cached_song_info = Some(CachedSongInfo {
                             title: song.title,
                             duration: song.duration / 1000,
                             artist_name,
+                            large_image,
+                            small_image,
                         });
                     } else {
                         cached_song_info = None;
@@ -109,7 +120,14 @@ impl DiscordPresence {
                         let remaining_secs = total_secs.saturating_sub(elapsed_secs);
                         let end = unix_now_i64() + remaining_secs;
                         let start = end - total_secs;
-                        Some((song.title.clone(), song.artist_name.clone(), start, end))
+                        Some((
+                            song.title.clone(),
+                            song.artist_name.clone(),
+                            song.large_image.clone(),
+                            song.small_image.clone(),
+                            start,
+                            end,
+                        ))
                     }
                     _ => None,
                 };
@@ -120,7 +138,7 @@ impl DiscordPresence {
                     .spawn(async move {
                         let mut client = client.lock();
                         match &desired {
-                            Some((title, artist_name, start, end)) => {
+                            Some((title, artist_name, large_image, small_image, start, end)) => {
                                 let mut act = activity::Activity::new()
                                     .status_display_type(StatusDisplayType::Details)
                                     .details(title)
@@ -131,6 +149,20 @@ impl DiscordPresence {
 
                                 if let Some(name) = artist_name {
                                     act = act.state(name);
+                                }
+
+                                if large_image.is_some() || small_image.is_some() {
+                                    let mut assets = activity::Assets::new();
+                                    if let Some(url) = large_image {
+                                        assets = assets.large_image(url).large_text(title);
+                                    }
+                                    if let Some(url) = small_image {
+                                        assets = assets.small_image(url);
+                                        if let Some(name) = artist_name {
+                                            assets = assets.small_text(name);
+                                        }
+                                    }
+                                    act = act.assets(assets);
                                 }
 
                                 client.set_activity(act).is_ok()

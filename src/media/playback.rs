@@ -1,7 +1,7 @@
 use super::equalizer::{Equalizer, EqualizerSource};
 use super::queue::Queue;
 use crate::data::config::{Config, EqualizerSettings};
-use crate::data::db::repo::Database;
+use crate::data::db::Database;
 use crate::data::models::{Cuid, EventType};
 use crate::media::controller::{MediaController, PlaybackState};
 use crate::media::visualizer::{F32Converter, VisualizerSource, VisualizerState};

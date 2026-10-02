@@ -20,7 +20,11 @@ impl ButtonVariant {
         match self {
             Self::Default => (variables.element, variables.element_hover, variables.text),
             Self::Active => (variables.text, variables.text_hover, variables.background),
-            Self::Accent => (variables.accent, variables.accent_hover, variables.text),
+            Self::Accent => (
+                variables.accent,
+                variables.accent_hover,
+                variables.background,
+            ),
         }
     }
 }

@@ -3,7 +3,7 @@ use gpui::{Context, IntoElement, Render, prelude::FluentBuilder, *};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
-    data::{db::repo::Database, models::ArtistListItem},
+    data::{db::Database, models::ArtistListItem},
     ui::{
         components::{
             card::{

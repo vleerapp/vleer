@@ -1,4 +1,4 @@
-use crate::data::db::repo::Database;
+use crate::data::db::Database;
 use crate::data::images::resolve_song_image;
 use crate::data::models::Song;
 use crate::media::playback::Playback;

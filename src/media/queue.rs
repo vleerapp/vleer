@@ -1,5 +1,5 @@
 use crate::data::{
-    db::repo::Database,
+    db::Database,
     models::{Cuid, Song},
 };
 use gpui::{App, Global};

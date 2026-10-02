@@ -128,6 +128,26 @@ pub struct AudioMetadata {
     pub duration: Duration,
     pub genres: Vec<String>,
     pub lufs: Option<f32>,
+    pub isrc: Option<String>,
+    pub upc: Option<String>,
+}
+
+pub fn normalize_isrc(raw: &str) -> Option<String> {
+    let code: String = raw
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_ascii_uppercase();
+    let valid = code.len() == 12
+        && code[..2].chars().all(|c| c.is_ascii_alphabetic())
+        && code[2..5].chars().all(|c| c.is_ascii_alphanumeric())
+        && code[5..].chars().all(|c| c.is_ascii_digit());
+    valid.then_some(code)
+}
+
+pub fn normalize_upc(raw: &str) -> Option<String> {
+    let digits: String = raw.chars().filter(|c| c.is_ascii_digit()).collect();
+    ((8..=14).contains(&digits.len()) && digits.chars().any(|c| c != '0')).then_some(digits)
 }
 
 fn clean_name(value: &str) -> Option<String> {
@@ -233,7 +253,7 @@ fn extract_artists(tag: &Tag) -> Vec<String> {
 }
 
 fn extract_metadata_from_tag(tag: Option<&Tag>, duration: Duration) -> AudioMetadata {
-    let (title, artists, album, album_artist, genres, year, track_number, lufs) =
+    let (title, artists, album, album_artist, genres, year, track_number, lufs, isrc, upc) =
         if let Some(tag) = tag {
             let title = tag.title().map(|s| s.to_string());
             let artists = extract_artists(tag);
@@ -258,6 +278,9 @@ fn extract_metadata_from_tag(tag: Option<&Tag>, duration: Duration) -> AudioMeta
                     .map(|gain| -18.0 - (gain))
             });
 
+            let isrc = tag.get_string(ItemKey::Isrc).and_then(normalize_isrc);
+            let upc = tag.get_string(ItemKey::Barcode).and_then(normalize_upc);
+
             (
                 title,
                 artists,
@@ -267,9 +290,22 @@ fn extract_metadata_from_tag(tag: Option<&Tag>, duration: Duration) -> AudioMeta
                 year,
                 track_number,
                 lufs,
+                isrc,
+                upc,
             )
         } else {
-            (None, vec![], None, None, vec![], None, None, None)
+            (
+                None,
+                vec![],
+                None,
+                None,
+                vec![],
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
         };
 
     AudioMetadata {
@@ -282,6 +318,8 @@ fn extract_metadata_from_tag(tag: Option<&Tag>, duration: Duration) -> AudioMeta
         track_number,
         duration,
         lufs,
+        isrc,
+        upc,
     }
 }
 
@@ -383,4 +421,24 @@ fn convert_to_jpeg(img: DynamicImage) -> Result<Vec<u8>> {
         .context("Failed to encode image as JPEG")?;
 
     Ok(buffer.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_isrc_and_upc() {
+        assert_eq!(
+            normalize_isrc("us-rc1-76-07839").as_deref(),
+            Some("USRC17607839")
+        );
+        assert_eq!(normalize_isrc("not an isrc"), None);
+        assert_eq!(
+            normalize_upc("0602 5778 1234 5").as_deref(),
+            Some("0602577812345")
+        );
+        assert_eq!(normalize_upc("0000000000000"), None);
+        assert_eq!(normalize_upc("12"), None);
+    }
 }

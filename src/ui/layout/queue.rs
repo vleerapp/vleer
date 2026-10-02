@@ -5,7 +5,7 @@ use gpui::prelude::FluentBuilder;
 use gpui::*;
 
 use crate::data::config::Config;
-use crate::data::db::repo::Database;
+use crate::data::db::Database;
 use crate::data::models::{Cuid, Song};
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;

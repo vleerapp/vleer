@@ -1,4 +1,4 @@
-use crate::data::db::repo::Database;
+use crate::data::db::Database;
 use crate::data::models::{Album, Artist, Cuid, Playlist, PlaylistListItem, Song};
 use crate::media::playback::{
     play_album_last, play_album_next, play_playlist_last, play_playlist_next,
@@ -385,7 +385,7 @@ impl Render for ContextMenu {
                             .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                                 let new_id = Cuid::new();
                                 let db = cx.global::<Database>().clone();
-                                if let Err(e) = db.upsert_playlist(&new_id, "", None, None, false) {
+                                if let Err(e) = db.upsert_playlist(&new_id, "", None, false) {
                                     error!("Failed to create playlist: {}", e);
                                     return;
                                 }

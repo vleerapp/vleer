@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use crate::ui::assets::{ImageRequest, cover_uri};
 use crate::{
-    data::{db::repo::Database, models::AlbumListItem},
+    data::{db::Database, models::AlbumListItem},
     ui::{
         app::MainWindow,
         components::{

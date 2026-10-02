@@ -5,7 +5,7 @@ use rand::seq::SliceRandom;
 
 use crate::ui::assets::genre_cover_uri;
 use crate::{
-    data::{db::repo::Database, models::GenreListItem},
+    data::{db::Database, models::GenreListItem},
     ui::{
         components::{
             card::{

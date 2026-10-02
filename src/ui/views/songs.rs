@@ -8,7 +8,7 @@ use tracing::error;
 use crate::ui::assets::{ImageRequest, cover_uri};
 use crate::{
     data::{
-        db::repo::Database,
+        db::Database,
         models::{SongListItem, SongSort},
     },
     media::queue::Queue,

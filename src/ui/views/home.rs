@@ -1,7 +1,7 @@
 use crate::media::playback::{play_album_now, play_song_now};
 use crate::ui::assets::ImageRequest;
 use crate::{
-    data::{db::repo::Database, models::RecentItem},
+    data::{db::Database, models::RecentItem},
     ui::{
         app::MainWindow,
         components::{

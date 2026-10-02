@@ -5,7 +5,7 @@ use std::sync::{Arc, OnceLock};
 use tokio::sync::Semaphore;
 use tracing::{debug, warn};
 
-use crate::data::db::repo::{AlbumImageTarget, Database};
+use crate::data::db::{AlbumImageTarget, Database};
 use crate::data::metadata::{encode_cover, image_id_for, read_tag_images};
 use crate::data::models::Cuid;
 

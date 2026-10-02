@@ -7,7 +7,7 @@ use std::{collections::HashMap, rc::Rc};
 use tracing::{debug, error};
 
 use crate::{
-    data::{config::Config, db::repo::Database, scanner::Scanner, telemetry::Telemetry},
+    data::{config::Config, db::Database, scanner::Scanner, telemetry::Telemetry},
     media::{controller::MediaController, playback::Playback, queue::Queue},
     services::{
         lastfm::{LastfmClient, LastfmScrobbler},

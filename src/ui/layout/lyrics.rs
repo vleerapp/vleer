@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use crate::{
     data::{
-        db::repo::Database,
+        db::Database,
         lyrics::{Line, Lyrics, active_line, active_line_by, is_gap, resolve},
         models::Cuid,
     },
