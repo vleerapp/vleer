@@ -16,7 +16,7 @@ use std::time::{Instant, UNIX_EPOCH};
 use tracing::{debug, error, info, warn};
 
 use crate::data::config::Config;
-use crate::data::db::repo::{BatchTrack, Database, ScanCache};
+use crate::data::db::{BatchTrack, Database, ScanCache};
 use crate::data::metadata::{AudioMetadata, read_track};
 use crate::data::telemetry::Telemetry;
 use crate::ui::components::context_menu::{BackgroundUiEvent, BackgroundUiNotifier};
@@ -505,7 +505,7 @@ impl Scanner {
         });
 
         let force = options.force;
-        crate::data::db::repo::write_profile::reset();
+        crate::data::db::write_profile::reset();
         let files = Arc::new(audio_files);
         let chunk_count = files.len().div_ceil(READ_CHUNK_SIZE);
 
@@ -663,8 +663,8 @@ impl Scanner {
             walk_time, state_time, read_time, write_time, index_time, missing_time
         );
         let (lock, albums, songs, artists, genres, commit) =
-            crate::data::db::repo::write_profile::snapshot();
-        let (commits, wal_mb) = crate::data::db::repo::write_profile::commit_stats();
+            crate::data::db::write_profile::snapshot();
+        let (commits, wal_mb) = crate::data::db::write_profile::commit_stats();
         info!(
             "Write breakdown: waiting for connection {lock:?}, albums {albums:?}, songs \
              {songs:?}, artists {artists:?}, genres {genres:?}, commit {commit:?} over \
@@ -786,13 +786,16 @@ impl Scanner {
                 let started = Instant::now();
                 let artists =
                     crate::data::omm::warm_artist_metadata(db.clone(), cancel.clone()).await;
-                let songs = crate::data::omm::warm_song_metadata(db.clone(), cancel).await;
+                let songs =
+                    crate::data::omm::warm_song_metadata(db.clone(), cancel.clone()).await;
+                let albums = crate::data::omm::warm_album_metadata(db.clone(), cancel).await;
 
-                if artists > 0 || songs > 0 {
+                if artists > 0 || songs > 0 || albums > 0 {
                     info!(
-                        "Resolved metadata for {} artist(s) and {} song(s) in {:?}",
+                        "Resolved metadata for {} artist(s), {} song(s) and {} album(s) in {:?}",
                         artists,
                         songs,
+                        albums,
                         started.elapsed()
                     );
                     db.rebuild_search_index();
@@ -1005,6 +1008,8 @@ impl Scanner {
                     file_size: track.file_size,
                     file_modified: track.file_modified,
                     lufs: meta.lufs,
+                    isrc: meta.isrc.as_deref(),
+                    upc: meta.upc.as_deref(),
                 }
             })
             .collect();
@@ -1411,6 +1416,8 @@ mod tests {
                 file_size: t.file_size,
                 file_modified: t.file_modified,
                 lufs: t.metadata.lufs,
+                isrc: t.metadata.isrc.as_deref(),
+                upc: t.metadata.upc.as_deref(),
             })
             .collect();
 
