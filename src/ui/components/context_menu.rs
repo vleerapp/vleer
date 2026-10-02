@@ -451,7 +451,7 @@ impl Render for ContextMenu {
                                     .smooth_scroll(&submenu_scroll),
                             ),
                         )
-                        .with_priority(2),
+                        .priority(2),
                     )
                 } else {
                     None
@@ -482,7 +482,7 @@ impl Render for ContextMenu {
                     .child(flex_col().w_full().children(menu_items)),
             ),
         )
-        .with_priority(1);
+        .priority(1);
 
         flex_row()
             .child(main_menu)

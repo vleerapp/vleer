@@ -355,9 +355,13 @@ impl Element for Scrollbar {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        let hitbox = window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            window.insert_hitbox(bounds, HitboxBehavior::Normal)
-        });
+        let hitbox = window.with_content_mask(
+            Some(ContentMask {
+                bounds,
+                ..Default::default()
+            }),
+            |window| window.insert_hitbox(bounds, HitboxBehavior::Normal),
+        );
         let state = window
             .use_state(cx, |_, _| ScrollbarState::default())
             .read(cx)
@@ -455,9 +459,13 @@ impl Element for Scrollbar {
                     size: size(thumb_length, thumb_width),
                 }
             };
-            let bar_hitbox = window.with_content_mask(Some(ContentMask { bounds }), |window| {
-                window.insert_hitbox(bounds, HitboxBehavior::Normal)
-            });
+            let bar_hitbox = window.with_content_mask(
+                Some(ContentMask {
+                    bounds,
+                    ..Default::default()
+                }),
+                |window| window.insert_hitbox(bounds, HitboxBehavior::Normal),
+            );
             states.push(AxisPrepaintState {
                 axis,
                 bar_hitbox,
@@ -505,6 +513,7 @@ impl Element for Scrollbar {
         window.with_content_mask(
             Some(ContentMask {
                 bounds: hitbox_bounds,
+                ..Default::default()
             }),
             |window| {
                 for axis_state in &prepaint.states {

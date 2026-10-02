@@ -694,7 +694,7 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(Self::copy))
             .on_action(cx.listener(Self::enter))
-            .on_action(|_: &Escape, window, _| window.blur())
+            .on_action(|_: &Escape, window, cx| window.blur(cx))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_down(
                 MouseButton::Navigate(NavigationDirection::Back),
@@ -704,9 +704,9 @@ impl Render for TextInput {
                 MouseButton::Navigate(NavigationDirection::Forward),
                 |_, window, _| window.prevent_default(),
             )
-            .on_mouse_down_out(|event, window, _| {
+            .on_mouse_down_out(|event, window, cx| {
                 if event.button == MouseButton::Left {
-                    window.blur();
+                    window.blur(cx);
                 }
             })
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -909,39 +909,45 @@ impl Element for TextElement {
             cx,
         );
 
-        window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            if self.is_focused
-                && let Some(selection) = prepaint.selection.take()
-            {
-                window.paint_quad(selection);
-            }
-
-            if let Some(line) = prepaint.line.as_ref() {
-                let origin = point(
-                    bounds.left() - prepaint.scroll_offset + prepaint.x_offset,
-                    bounds.top() + prepaint.y_offset,
-                );
-                if let Err(e) = line.paint(
-                    origin,
-                    window.line_height(),
-                    gpui::TextAlign::Left,
-                    None,
-                    window,
-                    cx,
-                ) {
-                    tracing::error!("Failed to paint input line: {}", e);
+        window.with_content_mask(
+            Some(ContentMask {
+                bounds,
+                ..Default::default()
+            }),
+            |window| {
+                if self.is_focused
+                    && let Some(selection) = prepaint.selection.take()
+                {
+                    window.paint_quad(selection);
                 }
-            }
 
-            if focus_handle.is_focused(window) {
-                let elapsed = blink_start.elapsed().as_millis();
-                let blink_on = (elapsed / 500).is_multiple_of(2);
-
-                if blink_on && let Some(cursor) = prepaint.cursor.take() {
-                    window.paint_quad(cursor);
+                if let Some(line) = prepaint.line.as_ref() {
+                    let origin = point(
+                        bounds.left() - prepaint.scroll_offset + prepaint.x_offset,
+                        bounds.top() + prepaint.y_offset,
+                    );
+                    if let Err(e) = line.paint(
+                        origin,
+                        window.line_height(),
+                        gpui::TextAlign::Left,
+                        None,
+                        window,
+                        cx,
+                    ) {
+                        tracing::error!("Failed to paint input line: {}", e);
+                    }
                 }
-            }
-        });
+
+                if focus_handle.is_focused(window) {
+                    let elapsed = blink_start.elapsed().as_millis();
+                    let blink_on = (elapsed / 500).is_multiple_of(2);
+
+                    if blink_on && let Some(cursor) = prepaint.cursor.take() {
+                        window.paint_quad(cursor);
+                    }
+                }
+            },
+        );
 
         let line = prepaint.line.take();
         let scroll_offset = prepaint.scroll_offset;

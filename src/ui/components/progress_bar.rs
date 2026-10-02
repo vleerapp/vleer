@@ -286,6 +286,7 @@ impl Element for ProgressSlider {
             window.with_content_mask(
                 Some(ContentMask {
                     bounds: filled_clip,
+                    ..Default::default()
                 }),
                 |window| {
                     filled_layout
@@ -309,6 +310,7 @@ impl Element for ProgressSlider {
             window.with_content_mask(
                 Some(ContentMask {
                     bounds: unfilled_clip,
+                    ..Default::default()
                 }),
                 |window| {
                     unfilled_layout
