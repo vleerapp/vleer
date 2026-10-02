@@ -7,7 +7,7 @@ use crate::media::controller::{MediaController, PlaybackState};
 use crate::media::visualizer::{F32Converter, VisualizerSource, VisualizerState};
 use crate::ui::components::context_menu::{BackgroundUiEvent, BackgroundUiNotifier, QueueChanged};
 use anyhow::{Context, Result};
-use gpui::{App, AsyncWindowContext, BorrowAppContext, Global, Window};
+use gpui::{App, AsyncApp, BorrowAppContext, Global};
 use parking_lot::Mutex;
 use rodio::decoder::{Decoder, DecoderBuilder};
 use rodio::mixer::Mixer;
@@ -157,7 +157,7 @@ impl Playback {
     fn load_song_by_id(&mut self, cx: &mut App, song_id: Cuid) {
         let db = cx.global::<Database>().clone();
         let config = cx.global::<Config>().clone();
-        let eq_settings = config.get().equalizer.clone();
+        let eq_settings = config.get().playback.equalizer.clone();
         let equalizer = self.equalizer.clone();
         let visualizer_state = self.visualizer_state.clone();
         let volume = self.volume;
@@ -407,7 +407,7 @@ impl Playback {
         let token = self.load_token;
         let lufs = self.current_lufs;
         let volume = self.volume;
-        let eq_settings = cx.global::<Config>().get().equalizer.clone();
+        let eq_settings = cx.global::<Config>().get().playback.equalizer.clone();
         let equalizer = self.equalizer.clone();
         let visualizer_state = self.visualizer_state.clone();
 
@@ -651,14 +651,15 @@ impl Playback {
 
     pub fn apply_config(&mut self, config: &Config) {
         let settings = config.get();
-        self.volume = settings.audio.volume;
+        self.volume = settings.playback.volume;
 
         let mut eq = self.equalizer.lock();
-        eq.apply_settings(&settings.equalizer);
+        eq.apply_settings(&settings.playback.equalizer);
 
-        self.visualizer_state.set_enabled(settings.audio.visualizer);
         self.visualizer_state
-            .set_tap_enabled(settings.audio.spectrum);
+            .set_enabled(settings.appearance.visualizer);
+        self.visualizer_state
+            .set_tap_enabled(settings.appearance.spectrum.enabled);
 
         debug!("Applied config to playback");
     }
@@ -736,48 +737,37 @@ impl Playback {
         }
     }
 
-    pub fn start_monitor<T: 'static>(window: &Window, cx: &mut gpui::Context<T>) {
+    pub fn start_monitor(cx: &mut App) {
         let executor = cx.background_executor().clone();
-        cx.spawn_in(window, |_entity, cx: &mut AsyncWindowContext| {
-            let mut cx = cx.clone();
-            let executor = executor;
-            async move {
-                loop {
-                    executor.timer(Duration::from_millis(100)).await;
+        cx.spawn(async move |cx: &mut AsyncApp| {
+            loop {
+                executor.timer(Duration::from_millis(100)).await;
 
-                    cx.update(|_window, cx| {
-                        let lost = cx
-                            .try_global::<Playback>()
-                            .is_some_and(|p| p.device_lost() && !p.get_loading());
-                        if lost {
-                            cx.update_global::<Playback, _>(|playback, cx| {
-                                playback.recover_device(cx);
-                            });
-                        }
-                    })
-                    .ok();
-
-                    let should_advance = cx
-                        .update(|_window, cx| {
-                            cx.try_global::<Playback>()
-                                .map(|p| {
-                                    p.output_ready()
-                                        && p.empty()
-                                        && p.get_playing()
-                                        && !p.get_loading()
-                                })
-                                .unwrap_or(false)
-                        })
-                        .unwrap_or(false);
-
-                    if should_advance {
-                        cx.update(|_window, cx| {
-                            cx.update_global::<Playback, _>(|playback, cx| {
-                                playback.advance_auto(cx);
-                            });
-                        })
-                        .ok();
+                cx.update(|cx| {
+                    let lost = cx
+                        .try_global::<Playback>()
+                        .is_some_and(|p| p.device_lost() && !p.get_loading());
+                    if lost {
+                        cx.update_global::<Playback, _>(|playback, cx| {
+                            playback.recover_device(cx);
+                        });
                     }
+                });
+
+                let should_advance = cx.update(|cx| {
+                    cx.try_global::<Playback>()
+                        .map(|p| {
+                            p.output_ready() && p.empty() && p.get_playing() && !p.get_loading()
+                        })
+                        .unwrap_or(false)
+                });
+
+                if should_advance {
+                    cx.update(|cx| {
+                        cx.update_global::<Playback, _>(|playback, cx| {
+                            playback.advance_auto(cx);
+                        });
+                    });
                 }
             }
         })

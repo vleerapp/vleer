@@ -2,7 +2,7 @@ use anyhow::Ok;
 use futures::StreamExt;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_platform::application;
+use gpui_ce_platform::application;
 use std::{collections::HashMap, rc::Rc};
 use tracing::{debug, error};
 
@@ -13,6 +13,7 @@ use crate::{
         lastfm::{LastfmClient, LastfmScrobbler},
         lrclib::LrclibClient,
     },
+    system_tray,
     ui::{
         assets::{
             VleerAssetSource,
@@ -393,11 +394,12 @@ impl Render for MainWindow {
 }
 
 pub fn find_fonts(cx: &mut App) -> Result<()> {
-    let paths = cx.asset_source().list("!bundled:fonts")?;
+    let assets = VleerAssetSource::new();
+    let paths = assets.list("!bundled:fonts")?;
     let mut fonts = vec![];
     for path in paths {
         if (path.ends_with(".ttf") || path.ends_with(".otf"))
-            && let Some(v) = cx.asset_source().load(&path)?
+            && let Some(v) = assets.load(&path)?
         {
             fonts.push(v);
         }
@@ -451,6 +453,8 @@ pub async fn run() -> Result<()> {
             LastfmScrobbler::init(cx);
             Updater::init(cx, navbar::status());
             MediaController::init(cx);
+            Playback::start_monitor(cx);
+            system_tray::init(cx);
 
             if let Some(warning) = cx.global::<Config>().parse_warning.clone() {
                 navbar::status().set(
@@ -470,7 +474,7 @@ pub async fn run() -> Result<()> {
             }
 
             {
-                let config = cx.global::<Config>().get().updater.clone();
+                let config = cx.global::<Config>().get().updates.clone();
                 if config.auto_check && !crate::updater::is_managed_externally() {
                     let updater = cx.global::<Updater>().clone();
                     crate::updater::run_check_in_background(
@@ -502,58 +506,68 @@ pub async fn run() -> Result<()> {
             })
             .detach();
 
-            cx.open_window(
-                WindowOptions {
-                    titlebar: Some(TitlebarOptions {
-                        title: Some(SharedString::new("Vleer")),
-                        appears_transparent: true,
-                        traffic_light_position: None,
-                    }),
-                    app_id: Some("vleer".to_string()),
-                    kind: WindowKind::Normal,
-                    window_min_size: Some(Size::new(px(754.0), px(443.0))),
-                    ..Default::default()
-                },
-                |window, cx| {
-                    window.set_window_title("Vleer");
-
-                    #[cfg(target_os = "windows")]
-                    if let Some(mc) = cx.try_global::<MediaController>() {
-                        mc.set_window_handle(window);
-                    }
-
-                    cx.new(|cx| {
-                        Playback::start_monitor(window, cx);
-
-                        let library_entity = cx.new(Library::new);
-                        let navbar_entity = cx.new(Navbar::new);
-                        let navbar_progress_entity = cx.new(NavbarProgressBar::new);
-                        let player_entity = cx.new(Player::new);
-                        let queue_entity = cx.new(QueuePane::new);
-                        let lyrics_entity = cx.new(LyricsPane::new);
-
-                        let views = ViewRegistry::register_all(window, cx);
-
-                        MainWindow {
-                            library: library_entity,
-                            navbar: navbar_entity,
-                            navbar_progress: navbar_progress_entity,
-                            player: player_entity,
-                            queue: queue_entity,
-                            lyrics: lyrics_entity,
-                            views,
-                            view_scroll: ScrollHandle::new(),
-                            current_view: AppView::Home,
-                            history: NavHistory::new(AppView::Home),
-                            titlebar_should_move: false,
-                        }
-                    })
-                },
-            )
-            .expect("failed to open main window");
+            open_main_window(cx);
 
             Scanner::init(cx);
         });
 
     Ok(())
+}
+
+pub fn open_main_window(cx: &mut App) {
+    cx.set_quit_mode(QuitMode::Default);
+
+    cx.open_window(
+        WindowOptions {
+            titlebar: Some(TitlebarOptions {
+                title: Some(SharedString::new("Vleer")),
+                appears_transparent: true,
+                traffic_light_position: None,
+            }),
+            app_id: Some("vleer".to_string()),
+            kind: WindowKind::Normal,
+            window_min_size: Some(Size::new(px(754.0), px(443.0))),
+            ..Default::default()
+        },
+        |window, cx| {
+            window.set_window_title("Vleer");
+            window.on_window_should_close(cx, |_window, cx| {
+                system_tray::prepare_close(cx);
+                true
+            });
+
+            #[cfg(target_os = "windows")]
+            if let Some(mc) = cx.try_global::<MediaController>() {
+                mc.set_window_handle(window);
+            }
+
+            cx.new(|cx| {
+                let library_entity = cx.new(Library::new);
+                let navbar_entity = cx.new(Navbar::new);
+                let navbar_progress_entity = cx.new(NavbarProgressBar::new);
+                let player_entity = cx.new(Player::new);
+                let queue_entity = cx.new(QueuePane::new);
+                let lyrics_entity = cx.new(LyricsPane::new);
+
+                let views = ViewRegistry::register_all(window, cx);
+
+                MainWindow {
+                    library: library_entity,
+                    navbar: navbar_entity,
+                    navbar_progress: navbar_progress_entity,
+                    player: player_entity,
+                    queue: queue_entity,
+                    lyrics: lyrics_entity,
+                    views,
+                    view_scroll: ScrollHandle::new(),
+                    current_view: AppView::Home,
+                    history: NavHistory::new(AppView::Home),
+                    titlebar_should_move: false,
+                }
+            })
+        },
+    )
+    .expect("failed to open main window");
+
+    cx.activate(true);
 }

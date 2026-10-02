@@ -52,7 +52,7 @@ pub fn register_actions(cx: &mut App) {
     debug!("Actions: {:?}", cx.all_action_names());
 }
 
-fn quit(_: &Quit, cx: &mut App) {
+pub fn quit(_: &Quit, cx: &mut App) {
     info!("Quitting...");
 
     cx.update_global::<Config, _>(|config, _| {
@@ -122,7 +122,7 @@ fn reload_config(_: &ReloadConfig, cx: &mut App) {
 
     let config = cx.global::<Config>().clone();
     let (eq_enabled, gains, q_values) = {
-        let eq = &config.get().equalizer;
+        let eq = &config.get().playback.equalizer;
         (eq.enabled, eq.gains.clone(), eq.q_values.clone())
     };
     cx.update_global::<Playback, _>(|playback, _cx| {
@@ -174,7 +174,7 @@ fn scan(_: &Scan, cx: &mut App) {
 
 fn check_for_updates(_: &CheckForUpdates, cx: &mut App) {
     let updater = cx.global::<Updater>().clone();
-    let channel = cx.global::<Config>().get().updater.channel;
+    let channel = cx.global::<Config>().get().updates.channel;
     run_check_in_background(updater, channel, cx.background_executor());
 }
 
