@@ -8,6 +8,23 @@ use crate::ui::{
 
 pub type ClickHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ButtonVariant {
+    Default,
+    Active,
+    Accent,
+}
+
+impl ButtonVariant {
+    fn colors(self, variables: &Variables) -> (Rgba, Rgba, Rgba) {
+        match self {
+            Self::Default => (variables.element, variables.element_hover, variables.text),
+            Self::Active => (variables.text, variables.text_hover, variables.background),
+            Self::Accent => (variables.accent, variables.accent_hover, variables.text),
+        }
+    }
+}
+
 #[derive(IntoElement)]
 pub struct Button {
     id: ElementId,
@@ -19,6 +36,7 @@ pub struct Button {
     color: Option<Rgba>,
     hover_color: Option<Rgba>,
     bg_color: Option<Rgba>,
+    variant: Option<ButtonVariant>,
 }
 
 impl Button {
@@ -37,7 +55,13 @@ impl Button {
             color: None,
             hover_color: None,
             bg_color: None,
+            variant: None,
         }
+    }
+
+    pub fn variant(mut self, variant: ButtonVariant) -> Self {
+        self.variant = Some(variant);
+        self
     }
 
     pub fn icon(mut self, icon_path: impl Into<SharedString>) -> Self {
@@ -90,8 +114,15 @@ impl InteractiveElement for Button {
 impl RenderOnce for Button {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let variables = cx.global::<Variables>();
-        let color = self.color.unwrap_or(variables.text_secondary);
-        let hover_color = self.hover_color.unwrap_or(variables.text);
+        let filled = self.variant.map(|variant| variant.colors(variables));
+        let color = match filled {
+            Some((_, _, text)) => text,
+            None => self.color.unwrap_or(variables.text_secondary),
+        };
+        let hover_color = match filled {
+            Some((_, _, text)) => text,
+            None => self.hover_color.unwrap_or(variables.text),
+        };
         let group_id = self.group_id.clone();
 
         let icon_element = self.icon.map(|icon_path| {
@@ -103,10 +134,22 @@ impl RenderOnce for Button {
         self.base
             .id(self.id)
             .cursor_pointer()
-            .p(px(8.0))
             .group(self.group_id.clone())
             .text_color(color)
-            .when_some(self.bg_color, |this, bg| this.bg(bg))
+            .map(|this| match filled {
+                Some((bg, hover_bg, _)) => this
+                    .px(px(16.0))
+                    .py(px(8.0))
+                    .gap(px(8.0))
+                    .bg(bg)
+                    .hover(move |s| s.bg(hover_bg))
+                    .when(self.variant == Some(ButtonVariant::Active), |this| {
+                        this.font_weight(FontWeight::MEDIUM)
+                    }),
+                None => this
+                    .p(px(8.0))
+                    .when_some(self.bg_color, |this, bg| this.bg(bg)),
+            })
             .group_hover(self.group_id, |s| s.text_color(hover_color))
             .when_some(self.on_click, |this, on_click| {
                 this.on_click(move |event, window, cx| {
