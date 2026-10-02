@@ -22,7 +22,7 @@ rusqlite = { version = "0.40.2", features = ["bundled", "chrono"] }
 rusqlite_migration = { version = "2.6.0", features = ["from-directory"] }
 parking_lot = "0.12.5"
 serde = { version = "1.0.229", features = ["derive"] }
-toml = "1.1.6+spec-1.1.0"
+toml = "1.1.6"
 rodio = { git = "https://github.com/vleerapp/rodio", rev = "8e5961ca2cc88cbff5f1a5686d8253b6e655ad8d", features = [
   "symphonia",
   "symphonia-all",

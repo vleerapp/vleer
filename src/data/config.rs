@@ -89,12 +89,13 @@ impl Default for LibrarySettings {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "u32", into = "u32")]
 pub enum FftSize {
     S1024,
     S2048,
     S4096,
+    #[default]
     S8192,
     S16384,
 }
@@ -126,12 +127,6 @@ impl FftSize {
             Self::S8192 => "8192 (balanced)",
             Self::S16384 => "16384 (most detailed)",
         }
-    }
-}
-
-impl Default for FftSize {
-    fn default() -> Self {
-        Self::S8192
     }
 }
 
@@ -622,11 +617,11 @@ channel = "stable"
     #[test]
     fn round_trips_and_rounds_gains() {
         let mut config = SettingsConfig::default();
-        config.playback.equalizer.gains[0] = 3.5999999;
+        config.playback.equalizer.gains[0] = 3.5235;
         config.playback.equalizer.gains[1] = -0.001;
         config.appearance.spectrum.fft_size = FftSize::S2048;
         let text = toml::to_string_pretty(&config).unwrap();
-        assert!(text.contains("3.6,"), "{text}");
+        assert!(text.contains("3.52,"), "{text}");
         assert!(text.contains("fft_size = 2048"), "{text}");
         let (back, migrated) = parse(&text).unwrap();
         assert!(!migrated);
