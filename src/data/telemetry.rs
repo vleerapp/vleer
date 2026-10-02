@@ -10,7 +10,7 @@ use tracing::{debug, error, info};
 use ureq::Agent;
 use uuid::Uuid;
 
-use crate::data::{config::Config, db::repo::Database};
+use crate::data::{config::Config, db::Database};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Os {

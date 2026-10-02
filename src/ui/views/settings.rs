@@ -1,7 +1,7 @@
 use gpui::{Context, Entity, IntoElement, Render, prelude::FluentBuilder as _, *};
 
 use crate::data::config::{Config, FftSize, UpdateChannel};
-use crate::data::db::repo::Database;
+use crate::data::db::Database;
 use crate::data::scanner::{Scanner, expand_tilde};
 use crate::media::playback::Playback;
 use crate::services::lastfm::{LastfmAuthStatus, LastfmClient};

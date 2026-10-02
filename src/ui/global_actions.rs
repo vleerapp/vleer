@@ -2,7 +2,7 @@ use gpui::{App, BorrowAppContext, Context, KeyBinding, Window, actions};
 use tracing::{debug, error, info};
 
 use crate::{
-    data::{config::Config, db::repo::Database, scanner::Scanner},
+    data::{config::Config, db::Database, scanner::Scanner},
     media::playback::Playback,
     ui::{app::MainWindow, views::AppView},
     updater::{Updater, run_check_in_background},

@@ -6,7 +6,7 @@ use lofty::probe::Probe;
 use lofty::tag::ItemKey;
 use tracing::debug;
 
-use crate::data::db::repo::Database;
+use crate::data::db::Database;
 use crate::data::models::{Song, StoredLyrics};
 use crate::services::lrclib::{LrclibClient, LrclibHit, LrclibQuery};
 

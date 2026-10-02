@@ -1,4 +1,4 @@
-use crate::data::db::repo::Database;
+use crate::data::db::Database;
 use crate::data::models::{Album, Artist, Cuid, Playlist, PlaylistListItem, Song};
 use crate::media::playback::{
     play_album_last, play_album_next, play_playlist_last, play_playlist_next,

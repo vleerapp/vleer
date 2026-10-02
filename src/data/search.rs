@@ -1,8 +1,8 @@
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 
-use crate::data::db::models::SearchResultRow;
 use crate::data::models::Cuid;
+use crate::data::models::SearchResultRow;
 
 #[derive(Clone)]
 pub struct SongSearchEntry {

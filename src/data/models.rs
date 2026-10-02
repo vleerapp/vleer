@@ -1,8 +1,4 @@
-use crate::data::db::models::{
-    AlbumListRow, AlbumRow, ArtistListRow, ArtistRow, EventContextRow, EventRow, ImageRow,
-    PinnedItemRow, PlaylistListRow, PlaylistRow, PlaylistTrackRow, SearchResultRow, SongListRow,
-    SongRow,
-};
+use rusqlite::Row;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -76,6 +72,7 @@ pub struct Song {
     pub track_number: Option<i32>,
     pub favorite: bool,
     pub lufs: Option<f32>,
+    pub isrc: Option<String>,
     pub pinned: bool,
     pub date_added: String,
     pub date_updated: String,
@@ -108,6 +105,7 @@ pub struct Album {
     pub title: String,
     pub artists: Vec<String>,
     pub image_id: Option<String>,
+    pub upc: Option<String>,
     pub favorite: bool,
     pub pinned: bool,
 }
@@ -232,145 +230,169 @@ pub struct PinnedItem {
     pub item_type: String,
 }
 
-impl From<SongRow> for Song {
-    fn from(row: SongRow) -> Self {
+impl From<SearchResultRow> for PinnedItem {
+    fn from(r: SearchResultRow) -> Self {
         Self {
-            id: row.id,
-            title: row.title,
-            artists: row.artists,
-            album_id: row.album_id,
-            file_path: row.file_path,
-            file_size: row.file_size,
-            file_modified: row.file_modified,
-            genres: row.genres,
-            date: row.date,
-            duration: row.duration,
-            image_id: row.image_id,
-            track_number: row.track_number,
-            favorite: row.favorite,
-            lufs: row.lufs,
-            pinned: row.pinned,
-            date_added: row.date_added,
-            date_updated: row.date_updated,
+            id: r.id,
+            name: r.name,
+            image_id: r.image,
+            item_type: r.item_type,
         }
     }
 }
 
-impl From<ArtistRow> for Artist {
-    fn from(row: ArtistRow) -> Self {
-        Self {
-            id: row.id,
-            name: row.name,
-            image_id: row.image_id,
-            favorite: row.favorite,
-            pinned: row.pinned,
-        }
+fn split_concat(s: Option<String>) -> Vec<String> {
+    s.map(|v| {
+        v.split(',')
+            .map(|x| x.to_string())
+            .filter(|x| !x.is_empty())
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+impl Image {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("id")?,
+            data: row.get("data")?,
+            date_created: row.get("date_created")?,
+            date_updated: row.get("date_updated")?,
+        })
     }
 }
 
-impl From<AlbumRow> for Album {
-    fn from(row: AlbumRow) -> Self {
-        Self {
-            id: row.id,
-            title: row.title,
-            artists: row.artists,
-            image_id: row.image_id,
-            favorite: row.favorite,
-            pinned: row.pinned,
-        }
+impl Song {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("id")?,
+            title: row.get("title")?,
+            artists: split_concat(row.get::<_, Option<String>>("artists")?),
+            album_id: row.get("album_id")?,
+            file_path: row.get("file_path")?,
+            file_size: row.get("file_size")?,
+            file_modified: row.get("file_modified")?,
+            genres: split_concat(row.get::<_, Option<String>>("genres")?),
+            date: row.get("date")?,
+            duration: row.get("duration")?,
+            image_id: row.get("image_id")?,
+            track_number: row.get("track_number")?,
+            favorite: row.get("favorite")?,
+            lufs: row.get("lufs")?,
+            isrc: row.get("isrc")?,
+            pinned: row.get("pinned")?,
+            date_added: row.get("date_added")?,
+            date_updated: row.get("date_updated")?,
+        })
     }
 }
 
-impl From<PlaylistRow> for Playlist {
-    fn from(row: PlaylistRow) -> Self {
-        Self {
-            id: row.id,
-            name: row.name,
-            description: row.description,
-            image_id: row.image_id,
-            pinned: row.pinned,
-            date_updated: row.date_updated,
-            date_created: row.date_created,
-        }
+impl SongListItem {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("id")?,
+            title: row.get("title")?,
+            artist_name: row.get("artist_name")?,
+            album_title: row.get("album_title")?,
+            album_id: row.get("album_id")?,
+            duration: row.get("duration")?,
+            image_id: row.get("image_id")?,
+            genres: row.get("genres")?,
+        })
     }
 }
 
-impl From<PlaylistTrackRow> for PlaylistTrack {
-    fn from(row: PlaylistTrackRow) -> Self {
-        Self {
-            id: row.id,
-            playlist_id: row.playlist_id,
-            song: row.song.into(),
-            position: row.position,
-            album_title: row.album_title,
-        }
+impl Artist {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("id")?,
+            name: row.get("name")?,
+            image_id: row.get("image_id")?,
+            favorite: row.get("favorite")?,
+            pinned: row.get("pinned")?,
+        })
     }
 }
 
-impl From<ImageRow> for Image {
-    fn from(row: ImageRow) -> Self {
-        Self {
-            id: row.id,
-            data: row.data,
-            date_created: row.date_created,
-            date_updated: row.date_updated,
-        }
+impl ArtistListItem {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("id")?,
+            name: row.get("name")?,
+            image_id: row.get("image_id")?,
+        })
     }
 }
 
-impl From<SongListRow> for SongListItem {
-    fn from(row: SongListRow) -> Self {
-        Self {
-            id: row.id,
-            title: row.title,
-            artist_name: row.artist_name,
-            album_title: row.album_title,
-            album_id: row.album_id,
-            duration: row.duration,
-            image_id: row.image_id,
-            genres: row.genres,
-        }
+impl Album {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("id")?,
+            title: row.get("title")?,
+            artists: split_concat(row.get::<_, Option<String>>("artists")?),
+            image_id: row.get("image_id")?,
+            upc: row.get("upc")?,
+            favorite: row.get("favorite")?,
+            pinned: row.get("pinned")?,
+        })
     }
 }
 
-impl From<ArtistListRow> for ArtistListItem {
-    fn from(row: ArtistListRow) -> Self {
-        Self {
-            id: row.id,
-            name: row.name,
-            image_id: row.image_id,
-        }
+impl AlbumListItem {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("id")?,
+            title: row.get("title")?,
+            artist_name: row.get("artist_name")?,
+            image_id: row.get("image_id")?,
+            year: row.get("year")?,
+        })
     }
 }
 
-impl From<PlaylistListRow> for PlaylistListItem {
-    fn from(row: PlaylistListRow) -> Self {
-        Self {
-            id: row.id,
-            name: row.name,
-            image_id: row.image_id,
-            song_count: row.song_count,
-        }
+impl Playlist {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("id")?,
+            name: row.get("name")?,
+            description: row.get("description")?,
+            image_id: row.get("image_id")?,
+            pinned: row.get("pinned")?,
+            date_updated: row.get("date_updated")?,
+            date_created: row.get("date_created")?,
+        })
     }
 }
 
-impl From<AlbumListRow> for AlbumListItem {
-    fn from(row: AlbumListRow) -> Self {
-        Self {
-            id: row.id,
-            title: row.title,
-            artist_name: row.artist_name,
-            image_id: row.image_id,
-            year: row.year,
-        }
+impl PlaylistListItem {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("id")?,
+            name: row.get("name")?,
+            image_id: row.get("image_id")?,
+            song_count: row.get("song_count")?,
+        })
     }
 }
 
-impl From<EventRow> for Event {
-    fn from(row: EventRow) -> Self {
-        Self {
-            id: row.id,
-            event_type: match row.event_type.as_str() {
+impl PlaylistTrack {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("pt_id")?,
+            playlist_id: row.get("playlist_id")?,
+            position: row.get("position")?,
+            song: Song::from_row(row)?,
+            album_title: row.get("album_title")?,
+        })
+    }
+}
+
+impl Event {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        let event_type: String = row.get("event_type")?;
+        Ok(Self {
+            id: row.get("id")?,
+            event_type: match event_type.as_str() {
                 "PLAY" => EventType::Play,
                 "STOP" => EventType::Stop,
                 "PAUSE" => EventType::Pause,
@@ -380,41 +402,106 @@ impl From<EventRow> for Event {
                     EventType::Play
                 }
             },
-            context_id: row.context_id,
-            timestamp: row.timestamp,
-        }
+            context_id: row.get("context_id")?,
+            timestamp: row.get("timestamp")?,
+        })
     }
 }
 
-impl From<EventContextRow> for EventContext {
-    fn from(row: EventContextRow) -> Self {
-        Self {
-            id: row.id,
-            song_id: row.song_id,
-            playlist_id: row.playlist_id,
-            date_created: row.date_created,
-        }
+impl EventContext {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("id")?,
+            song_id: row.get("song_id")?,
+            playlist_id: row.get("playlist_id")?,
+            date_created: row.get("date_created")?,
+        })
     }
 }
 
-impl From<PinnedItemRow> for PinnedItem {
-    fn from(row: PinnedItemRow) -> Self {
-        Self {
-            id: row.id,
-            name: row.name,
-            image_id: row.image_id,
-            item_type: row.item_type,
-        }
+impl PinnedItem {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get("id")?,
+            name: row.get("name")?,
+            image_id: row.get("image_id")?,
+            item_type: row.get("item_type")?,
+        })
     }
 }
 
-impl From<SearchResultRow> for PinnedItem {
-    fn from(r: SearchResultRow) -> Self {
-        Self {
-            id: r.id,
-            name: r.name,
-            image_id: r.image,
-            item_type: r.item_type,
+pub trait Toggleable {
+    const TABLE: &'static str;
+    const ID_COL: &'static str = "id";
+}
+
+impl Toggleable for Song {
+    const TABLE: &'static str = "songs";
+}
+impl Toggleable for Album {
+    const TABLE: &'static str = "albums";
+}
+impl Toggleable for Artist {
+    const TABLE: &'static str = "artists";
+}
+impl Toggleable for Playlist {
+    const TABLE: &'static str = "playlists";
+}
+
+#[derive(Debug, Clone)]
+pub struct SearchResultRow {
+    pub id: Cuid,
+    pub name: String,
+    pub image: Option<String>,
+    pub item_type: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RecentItemRow {
+    pub song_count: i64,
+    pub first_song_id: Cuid,
+    pub first_song_title: String,
+    pub image_id: Option<String>,
+    pub first_year: Option<String>,
+    pub album_id: Option<Cuid>,
+    pub album_title: Option<String>,
+    pub artist_name: Option<String>,
+}
+
+impl RecentItemRow {
+    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            song_count: row.get("song_count")?,
+            first_song_id: row.get("first_song_id")?,
+            first_song_title: row.get("first_song_title")?,
+            image_id: row.get("image_id")?,
+            first_year: row.get("first_year")?,
+            album_id: row.get("album_id")?,
+            album_title: row.get("album_title")?,
+            artist_name: row.get("artist_name")?,
+        })
+    }
+
+    pub fn into_recent_item(self) -> RecentItem {
+        if let Some(album_id) = self.album_id
+            && self.song_count > 1
+        {
+            RecentItem::Album {
+                id: album_id,
+                title: self
+                    .album_title
+                    .unwrap_or_else(|| "Unknown Album".to_string()),
+                artist_name: self.artist_name,
+                year: self.first_year,
+                image_id: self.image_id,
+            }
+        } else {
+            RecentItem::Song {
+                id: self.first_song_id,
+                title: self.first_song_title,
+                artist_name: self.artist_name,
+                image_id: self.image_id,
+            }
         }
     }
 }

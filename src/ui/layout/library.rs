@@ -1,4 +1,4 @@
-use crate::data::db::repo::Database;
+use crate::data::db::Database;
 use crate::data::models::{Cuid, PinnedItem};
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;

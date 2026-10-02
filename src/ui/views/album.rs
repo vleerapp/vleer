@@ -7,7 +7,7 @@ use std::sync::Arc;
 use crate::ui::assets::{ImageRequest, cover_uri};
 use crate::{
     data::{
-        db::repo::Database,
+        db::Database,
         models::{Album, Cuid},
     },
     media::{
