@@ -10,7 +10,7 @@ use crate::{
 
 actions!(
     vleer,
-    [Quit, ReloadConfig, Scan, ForceScan, CheckForUpdates]
+    [Quit, ReloadConfig, Scan, ForceScan, CheckForUpdates, SnapshotSvg]
 );
 actions!(navigation, [GoBack, GoForward, OpenSettings]);
 actions!(player, [PlayPause, Next, Previous]);
@@ -21,6 +21,8 @@ pub fn register_actions(cx: &mut App) {
     cx.on_action(scan);
     cx.on_action(force_scan);
     cx.on_action(check_for_updates);
+    cx.on_action(snapshot_svg);
+    gpui::vector_capture::set_sink(write_snapshot);
 
     cx.on_action(go_back);
     cx.on_action(go_forward);
@@ -35,6 +37,7 @@ pub fn register_actions(cx: &mut App) {
     cx.bind_keys([KeyBinding::new("secondary-r", Scan, None)]);
     cx.bind_keys([KeyBinding::new("secondary-shift-r", ForceScan, None)]);
     cx.bind_keys([KeyBinding::new("secondary-u", CheckForUpdates, None)]);
+    cx.bind_keys([KeyBinding::new("secondary-alt-shift-s", SnapshotSvg, None)]);
 
     cx.bind_keys([KeyBinding::new("secondary-alt-right", Next, None)]);
     cx.bind_keys([KeyBinding::new("secondary-alt-left", Previous, None)]);
@@ -62,6 +65,27 @@ pub fn quit(_: &Quit, cx: &mut App) {
     });
 
     cx.quit();
+}
+
+fn snapshot_svg(_: &SnapshotSvg, cx: &mut App) {
+    let Some(handle) = cx.active_window() else {
+        return;
+    };
+    cx.defer(move |cx| {
+        handle
+            .update(cx, |_, window, _| window.capture_vector_snapshot())
+            .ok();
+    });
+}
+
+fn write_snapshot(capture: gpui::vector_capture::Capture) {
+    let path = std::env::current_dir()
+        .unwrap_or_default()
+        .join("snapshot.svg");
+    match std::fs::write(&path, crate::ui::snapshot::to_svg(&capture)) {
+        Ok(()) => info!("Wrote snapshot to {}", path.display()),
+        Err(e) => error!("Failed to write snapshot: {}", e),
+    }
 }
 
 fn navigate(cx: &mut App, f: fn(&mut MainWindow, &mut Window, &mut Context<MainWindow>)) {

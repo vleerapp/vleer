@@ -4,5 +4,6 @@ pub mod components;
 pub mod discord_presence;
 pub mod global_actions;
 pub mod layout;
+pub mod snapshot;
 pub mod variables;
 pub mod views;

@@ -10,9 +10,10 @@ license = "AGPL-3.0"
 categories = ["multimedia::audio"]
 
 [dependencies]
-gpui-ce = { git = "https://github.com/gpui-ce/gpui-ce", rev = "175ef66578817bf96b2e26b0cd568dd4f4793529", features = ["font-kit", "x11", "wayland"] }
-gpui_ce_platform = { git = "https://github.com/gpui-ce/gpui-ce", rev = "175ef66578817bf96b2e26b0cd568dd4f4793529", features = ["font-kit", "x11", "wayland"] }
+gpui-ce = { path = "vendor/gpui-ce/crates/gpui", features = ["font-kit", "x11", "wayland"] }
+gpui_ce_platform = { path = "vendor/gpui-ce/crates/gpui_platform", features = ["font-kit", "x11", "wayland"] }
 anyhow = "1.0.104"
+base64 = "0.22"
 dirs = "7.0.0"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
