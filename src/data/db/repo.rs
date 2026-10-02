@@ -567,6 +567,22 @@ impl Database {
         Ok(row.map(Into::into))
     }
 
+    pub fn song_omm_ids(&self, song_id: &Cuid) -> Result<(Option<String>, Option<String>)> {
+        let conn = self.conn.lock();
+        let ids = conn
+            .prepare_cached(
+                "SELECT NULLIF(s.omm_id, ''),
+                        (SELECT NULLIF(ar.omm_id, '') FROM songs_artists sa
+                         JOIN artists ar ON ar.id = sa.artist_id
+                         WHERE sa.song_id = s.id AND NULLIF(ar.omm_id, '') IS NOT NULL
+                         ORDER BY sa.position LIMIT 1)
+                 FROM songs s WHERE s.id = ?1",
+            )?
+            .query_row(params![song_id], |row| Ok((row.get(0)?, row.get(1)?)))
+            .optional()?;
+        Ok(ids.unwrap_or((None, None)))
+    }
+
     pub fn get_lyrics(&self, song_id: &Cuid, retry_days: u32) -> Result<Option<StoredLyrics>> {
         let conn = self.conn.lock();
         let row = conn

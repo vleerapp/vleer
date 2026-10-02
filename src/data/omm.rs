@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow};
 use parking_lot::Mutex;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -23,6 +24,11 @@ const MAX_RETRY_AFTER_SECS: u64 = 60;
 #[derive(Deserialize)]
 struct IdentifyResponse {
     data: Identified,
+}
+
+#[derive(Deserialize)]
+struct CatalogResponse {
+    data: Vec<Identified>,
 }
 
 #[derive(Deserialize)]
@@ -230,6 +236,39 @@ fn download_artwork(artwork_url: &str) -> Result<Option<Vec<u8>>> {
             warn!("artwork request: GET {url} -> HTTP {status}, body: {body}");
             Err(anyhow!("artwork download returned HTTP {status}"))
         }
+    }
+}
+
+fn catalog_artwork(ids: &[String]) -> Result<HashMap<String, String>> {
+    let url = format!("{BASE_URL}/catalog");
+    throttle();
+    let mut response = agent().get(&url).query("ids", ids.join(",")).call()?;
+    match response.status().as_u16() {
+        200 => Ok(response
+            .body_mut()
+            .read_json::<CatalogResponse>()?
+            .data
+            .into_iter()
+            .filter_map(|item| {
+                let artwork = item.attributes.artwork_url.filter(|u| !u.is_empty())?;
+                Some((item.id, sized_artwork_url(&artwork)))
+            })
+            .collect()),
+        status => Err(anyhow!("catalog returned HTTP {status}")),
+    }
+}
+
+pub async fn fetch_artwork_urls(ids: Vec<String>) -> HashMap<String, String> {
+    if ids.is_empty() {
+        return HashMap::new();
+    }
+    match blocking(move || catalog_artwork(&ids)).await {
+        Ok(Ok(urls)) => urls,
+        Ok(Err(e)) => {
+            warn!("catalog artwork lookup failed: {e}");
+            HashMap::new()
+        }
+        Err(_) => HashMap::new(),
     }
 }
 
