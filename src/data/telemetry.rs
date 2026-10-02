@@ -67,8 +67,23 @@ impl Telemetry {
         cx.set_global(telemetry);
     }
 
+    fn id_path(&self) -> PathBuf {
+        self.data_dir.join("telemetry_id.txt")
+    }
+
+    pub fn version_changed(&self) -> bool {
+        fs::read_to_string(self.id_path())
+            .ok()
+            .and_then(|s| {
+                s.lines()
+                    .nth(1)
+                    .map(|v| v.trim() != env!("CARGO_PKG_VERSION"))
+            })
+            .unwrap_or(true)
+    }
+
     pub fn submit(&self, db: &Database, config: &Config) {
-        if !config.get().telemetry {
+        if !config.get().privacy.telemetry {
             debug!("Telemetry disabled in settings, skipping submission.");
             return;
         }
@@ -95,11 +110,16 @@ impl Telemetry {
         };
 
         let agent = self.agent.clone();
+        let id_path = self.id_path();
         self.executor
             .spawn(async move {
                 match agent.post(url).send_json(&payload) {
                     Ok(res) if res.status().is_success() => {
-                        info!("Telemetry sent, payload: {payload:?}")
+                        info!("Telemetry sent, payload: {payload:?}");
+                        let identity = format!("{}\n{}", payload.user_id, payload.app_version);
+                        if let Err(e) = fs::write(&id_path, identity) {
+                            error!("Telemetry failed to store sent version: {e}");
+                        }
                     }
                     Ok(res) => error!("Telemetry status: {}, payload: {payload:?}", res.status()),
                     Err(e) if cfg!(debug_assertions) => {
@@ -121,9 +141,10 @@ impl Telemetry {
     }
 
     fn get_or_create_user_id(&self) -> Result<Uuid> {
-        let path = self.data_dir.join("telemetry_id.txt");
+        let path = self.id_path();
         if let Ok(s) = fs::read_to_string(&path)
-            && let Ok(id) = Uuid::parse_str(s.trim())
+            && let Some(line) = s.lines().next()
+            && let Ok(id) = Uuid::parse_str(line.trim())
         {
             return Ok(id);
         }

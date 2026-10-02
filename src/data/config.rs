@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use gpui::{App, Global};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use tracing::{debug, info, warn};
 
 type SaveJob = (PathBuf, String);
@@ -32,13 +32,22 @@ fn save_worker() -> &'static std::sync::mpsc::Sender<SaveJob> {
     })
 }
 
+fn round_hundredths(value: f32) -> f64 {
+    let rounded = (value * 100.0).round() / 100.0 + 0.0;
+    format!("{rounded}").parse().unwrap_or(f64::from(value))
+}
+
+fn serialize_rounded<S: Serializer>(values: &[f32], serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.collect_seq(values.iter().map(|v| round_hundredths(*v)))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EqualizerSettings {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
     pub frequencies: Vec<i32>,
-    #[serde(default)]
+    #[serde(default, serialize_with = "serialize_rounded")]
     pub gains: Vec<f32>,
     #[serde(default)]
     pub q_values: Vec<f32>,
@@ -55,13 +64,21 @@ impl Default for EqualizerSettings {
     }
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GeneralSettings {
+    #[serde(default)]
+    pub tray_icon: bool,
+    #[serde(default)]
+    pub close_to_tray: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScanSettings {
+pub struct LibrarySettings {
     #[serde(default)]
     pub paths: Vec<String>,
 }
 
-impl Default for ScanSettings {
+impl Default for LibrarySettings {
     fn default() -> Self {
         Self {
             paths: dirs::audio_dir()
@@ -72,24 +89,134 @@ impl Default for ScanSettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AudioSettings {
-    #[serde(default = "defaults::visualizer")]
-    pub visualizer: bool,
-    #[serde(default = "defaults::spectrum")]
-    pub spectrum: bool,
-    #[serde(default = "defaults::volume")]
-    pub volume: f32,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "u32", into = "u32")]
+pub enum FftSize {
+    S1024,
+    S2048,
+    S4096,
+    S8192,
+    S16384,
 }
 
-impl Default for AudioSettings {
-    fn default() -> Self {
-        Self {
-            visualizer: true,
-            spectrum: true,
-            volume: 0.5,
+impl FftSize {
+    pub const ALL: [Self; 5] = [
+        Self::S1024,
+        Self::S2048,
+        Self::S4096,
+        Self::S8192,
+        Self::S16384,
+    ];
+
+    pub fn samples(self) -> usize {
+        match self {
+            Self::S1024 => 1024,
+            Self::S2048 => 2048,
+            Self::S4096 => 4096,
+            Self::S8192 => 8192,
+            Self::S16384 => 16384,
         }
     }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::S1024 => "1024 (fastest)",
+            Self::S2048 => "2048",
+            Self::S4096 => "4096",
+            Self::S8192 => "8192 (balanced)",
+            Self::S16384 => "16384 (most detailed)",
+        }
+    }
+}
+
+impl Default for FftSize {
+    fn default() -> Self {
+        Self::S8192
+    }
+}
+
+impl From<u32> for FftSize {
+    fn from(value: u32) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|size| size.samples() == value as usize)
+            .unwrap_or_else(|| {
+                warn!("Unsupported fft_size {value}, using default");
+                Self::default()
+            })
+    }
+}
+
+impl From<FftSize> for u32 {
+    fn from(size: FftSize) -> Self {
+        size.samples() as u32
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpectrumSettings {
+    #[serde(default = "defaults::spectrum")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub peak_caps: bool,
+    #[serde(default)]
+    pub fft_size: FftSize,
+}
+
+impl Default for SpectrumSettings {
+    fn default() -> Self {
+        Self {
+            enabled: defaults::spectrum(),
+            peak_caps: false,
+            fft_size: FftSize::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppearanceSettings {
+    #[serde(default = "defaults::visualizer")]
+    pub visualizer: bool,
+    #[serde(default)]
+    pub spectrum: SpectrumSettings,
+}
+
+impl Default for AppearanceSettings {
+    fn default() -> Self {
+        Self {
+            visualizer: defaults::visualizer(),
+            spectrum: SpectrumSettings::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaybackSettings {
+    #[serde(default = "defaults::volume")]
+    pub volume: f32,
+    #[serde(default)]
+    pub equalizer: EqualizerSettings,
+}
+
+impl Default for PlaybackSettings {
+    fn default() -> Self {
+        Self {
+            volume: defaults::volume(),
+            equalizer: EqualizerSettings::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PrivacySettings {
+    #[serde(default)]
+    pub telemetry: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DiscordSettings {
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,17 +239,25 @@ impl Default for LastfmSettings {
     }
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct IntegrationsSettings {
+    #[serde(default)]
+    pub discord: DiscordSettings,
+    #[serde(default)]
+    pub lastfm: LastfmSettings,
+}
+
 pub use crate::updater::UpdateChannel;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpdaterSettings {
+pub struct UpdatesSettings {
     #[serde(default = "defaults::auto_check")]
     pub auto_check: bool,
     #[serde(default = "defaults::channel")]
     pub channel: UpdateChannel,
 }
 
-impl Default for UpdaterSettings {
+impl Default for UpdatesSettings {
     fn default() -> Self {
         Self {
             auto_check: true,
@@ -136,24 +271,24 @@ pub struct SettingsConfig {
     #[serde(default = "defaults::version")]
     pub version: u32,
     #[serde(default)]
-    pub telemetry: bool,
+    pub general: GeneralSettings,
     #[serde(default)]
-    pub discord_rpc: bool,
+    pub library: LibrarySettings,
     #[serde(default)]
-    pub equalizer: EqualizerSettings,
+    pub appearance: AppearanceSettings,
     #[serde(default)]
-    pub scan: ScanSettings,
+    pub playback: PlaybackSettings,
     #[serde(default)]
-    pub audio: AudioSettings,
+    pub privacy: PrivacySettings,
     #[serde(default)]
-    pub updater: UpdaterSettings,
+    pub integrations: IntegrationsSettings,
     #[serde(default)]
-    pub lastfm: LastfmSettings,
+    pub updates: UpdatesSettings,
 }
 
 mod defaults {
     pub fn version() -> u32 {
-        1
+        2
     }
     pub fn visualizer() -> bool {
         true
@@ -179,14 +314,103 @@ impl Default for SettingsConfig {
     fn default() -> Self {
         Self {
             version: defaults::version(),
-            telemetry: false,
-            discord_rpc: false,
-            equalizer: EqualizerSettings::default(),
-            scan: ScanSettings::default(),
-            audio: AudioSettings::default(),
-            updater: UpdaterSettings::default(),
-            lastfm: LastfmSettings::default(),
+            general: GeneralSettings::default(),
+            library: LibrarySettings::default(),
+            appearance: AppearanceSettings::default(),
+            playback: PlaybackSettings::default(),
+            privacy: PrivacySettings::default(),
+            integrations: IntegrationsSettings::default(),
+            updates: UpdatesSettings::default(),
         }
+    }
+}
+
+#[derive(Deserialize)]
+struct LegacyAudio {
+    #[serde(default = "defaults::visualizer")]
+    visualizer: bool,
+    #[serde(default = "defaults::spectrum")]
+    spectrum: bool,
+    #[serde(default = "defaults::volume")]
+    volume: f32,
+}
+
+impl Default for LegacyAudio {
+    fn default() -> Self {
+        Self {
+            visualizer: defaults::visualizer(),
+            spectrum: defaults::spectrum(),
+            volume: defaults::volume(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct LegacyConfig {
+    #[serde(default)]
+    telemetry: bool,
+    #[serde(default)]
+    discord_rpc: bool,
+    #[serde(default)]
+    equalizer: EqualizerSettings,
+    #[serde(default)]
+    scan: LibrarySettings,
+    #[serde(default)]
+    audio: LegacyAudio,
+    #[serde(default)]
+    updater: UpdatesSettings,
+    #[serde(default)]
+    lastfm: LastfmSettings,
+}
+
+impl From<LegacyConfig> for SettingsConfig {
+    fn from(legacy: LegacyConfig) -> Self {
+        Self {
+            version: defaults::version(),
+            general: GeneralSettings::default(),
+            library: legacy.scan,
+            appearance: AppearanceSettings {
+                visualizer: legacy.audio.visualizer,
+                spectrum: SpectrumSettings {
+                    enabled: legacy.audio.spectrum,
+                    ..SpectrumSettings::default()
+                },
+            },
+            playback: PlaybackSettings {
+                volume: legacy.audio.volume,
+                equalizer: legacy.equalizer,
+            },
+            privacy: PrivacySettings {
+                telemetry: legacy.telemetry,
+            },
+            integrations: IntegrationsSettings {
+                discord: DiscordSettings {
+                    enabled: legacy.discord_rpc,
+                },
+                lastfm: legacy.lastfm,
+            },
+            updates: legacy.updater,
+        }
+    }
+}
+
+fn parse(content: &str) -> Result<(SettingsConfig, bool), toml::de::Error> {
+    let value: toml::Value = toml::from_str(content)?;
+    let version = value
+        .get("version")
+        .and_then(toml::Value::as_integer)
+        .unwrap_or(1);
+
+    if version < i64::from(defaults::version()) {
+        debug!(
+            "Migrating config from version {} to {}",
+            version,
+            defaults::version()
+        );
+        let legacy: LegacyConfig = value.try_into()?;
+        Ok((legacy.into(), true))
+    } else {
+        Ok((value.try_into()?, false))
     }
 }
 
@@ -214,11 +438,15 @@ impl Config {
         debug!("Loading config from {:?}", config_path);
 
         let mut parse_warning: Option<String> = None;
+        let mut needs_save = false;
         let mut config = if config_path.exists() {
             let content = fs::read_to_string(&config_path).context("Failed to read config file")?;
 
-            match toml::from_str(&content) {
-                Ok(config) => config,
+            match parse(&content) {
+                Ok((config, migrated)) => {
+                    needs_save = migrated;
+                    config
+                }
                 Err(e) => {
                     warn!("Failed to parse config file: {}", e);
                     parse_warning = Some("Settings file is corrupted, using defaults".to_string());
@@ -236,9 +464,7 @@ impl Config {
             config
         };
 
-        Self::validate_equalizer(&mut config.equalizer);
-        let needs_save = config.version < defaults::version();
-        Self::migrate_config(&mut config);
+        Self::validate_equalizer(&mut config.playback.equalizer);
 
         let config = Self {
             config,
@@ -251,19 +477,6 @@ impl Config {
         }
 
         Ok(config)
-    }
-
-    fn migrate_config(config: &mut SettingsConfig) {
-        const CURRENT_VERSION: u32 = 1;
-
-        if config.version < CURRENT_VERSION {
-            debug!(
-                "Migrating config from version {} to {}",
-                config.version, CURRENT_VERSION
-            );
-
-            config.version = CURRENT_VERSION;
-        }
     }
 
     fn validate_equalizer(eq: &mut EqualizerSettings) {
@@ -296,27 +509,31 @@ impl Config {
             return;
         }
         f(&mut self.config);
-        self.config.audio.volume = self.config.audio.volume.clamp(0.0, 1.0);
-        self.config.lastfm.scrobble_threshold =
-            self.config.lastfm.scrobble_threshold.clamp(0.05, 1.0);
-        let scan_paths: Vec<String> = self
+        self.config.playback.volume = self.config.playback.volume.clamp(0.0, 1.0);
+        self.config.integrations.lastfm.scrobble_threshold = self
             .config
-            .scan
+            .integrations
+            .lastfm
+            .scrobble_threshold
+            .clamp(0.05, 1.0);
+        let library_paths: Vec<String> = self
+            .config
+            .library
             .paths
             .iter()
             .filter(|p| !p.is_empty())
             .cloned()
             .collect();
-        if !scan_paths.is_empty() {
-            self.config.scan.paths = scan_paths;
+        if !library_paths.is_empty() {
+            self.config.library.paths = library_paths;
         }
-        Self::validate_equalizer(&mut self.config.equalizer);
+        Self::validate_equalizer(&mut self.config.playback.equalizer);
         self.save_in_background();
     }
 
     fn save_in_background(&self) {
         let mut config = self.config.clone();
-        Self::validate_equalizer(&mut config.equalizer);
+        Self::validate_equalizer(&mut config.playback.equalizer);
         match toml::to_string_pretty(&config) {
             Ok(content) => {
                 let _ = save_worker().send((self.config_path.clone(), content));
@@ -329,7 +546,7 @@ impl Config {
         debug!("Saving config to {:?}", self.config_path);
 
         let mut config = self.config.clone();
-        Self::validate_equalizer(&mut config.equalizer);
+        Self::validate_equalizer(&mut config.playback.equalizer);
 
         let content = toml::to_string_pretty(&config).context("Failed to serialize config")?;
         fs::write(&self.config_path, content).context("Failed to write config file")?;
@@ -346,9 +563,9 @@ impl Config {
             let content =
                 fs::read_to_string(&self.config_path).context("Failed to read config file")?;
 
-            match toml::from_str::<SettingsConfig>(&content) {
-                Ok(mut config) => {
-                    Self::validate_equalizer(&mut config.equalizer);
+            match parse(&content) {
+                Ok((mut config, _)) => {
+                    Self::validate_equalizer(&mut config.playback.equalizer);
                     self.config = config;
                     self.parse_warning = None;
 
@@ -363,5 +580,62 @@ impl Config {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrates_v1_layout() {
+        let old = r#"
+telemetry = true
+discord_rpc = true
+[audio]
+visualizer = false
+spectrum = false
+volume = 0.25
+[scan]
+paths = ["/music"]
+[lastfm]
+username = "a"
+scrobble_threshold = 0.7
+[updater]
+auto_check = false
+channel = "stable"
+"#;
+        let (config, migrated) = parse(old).unwrap();
+        assert!(migrated);
+        assert_eq!(config.version, 2);
+        assert!(config.privacy.telemetry);
+        assert!(config.integrations.discord.enabled);
+        assert!(!config.appearance.visualizer);
+        assert!(!config.appearance.spectrum.enabled);
+        assert_eq!(config.appearance.spectrum.fft_size, FftSize::S8192);
+        assert_eq!(config.playback.volume, 0.25);
+        assert_eq!(config.library.paths, vec!["/music".to_string()]);
+        assert_eq!(config.integrations.lastfm.username.as_deref(), Some("a"));
+        assert!(!config.updates.auto_check);
+    }
+
+    #[test]
+    fn round_trips_and_rounds_gains() {
+        let mut config = SettingsConfig::default();
+        config.playback.equalizer.gains[0] = 3.5999999;
+        config.playback.equalizer.gains[1] = -0.001;
+        config.appearance.spectrum.fft_size = FftSize::S2048;
+        let text = toml::to_string_pretty(&config).unwrap();
+        assert!(text.contains("3.6,"), "{text}");
+        assert!(text.contains("fft_size = 2048"), "{text}");
+        let (back, migrated) = parse(&text).unwrap();
+        assert!(!migrated);
+        assert_eq!(back.appearance.spectrum.fft_size, FftSize::S2048);
+    }
+
+    #[test]
+    fn unknown_fft_size_falls_back() {
+        let (config, _) = parse("version = 2\n[appearance.spectrum]\nfft_size = 3000\n").unwrap();
+        assert_eq!(config.appearance.spectrum.fft_size, FftSize::S8192);
     }
 }

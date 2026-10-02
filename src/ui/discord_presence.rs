@@ -51,7 +51,7 @@ impl DiscordPresence {
 
                 let discord_enabled = cx.update(|app| {
                     app.try_global::<Config>()
-                        .map(|c| c.get().discord_rpc)
+                        .map(|c| c.get().integrations.discord.enabled)
                         .unwrap_or(false)
                 });
 

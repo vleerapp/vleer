@@ -486,7 +486,7 @@ impl Render for SongTableItem {
                 .is_some_and(|s| s.id == data.id);
             let is_playing = is_current && cx.global::<Playback>().get_playing();
 
-            let visualizer_enabled_for_anim = cx.global::<Config>().get().audio.visualizer;
+            let visualizer_enabled_for_anim = cx.global::<Config>().get().appearance.visualizer;
             if is_playing && visualizer_enabled_for_anim && !self.is_animating {
                 self.is_animating = true;
 
@@ -534,7 +534,7 @@ impl Render for SongTableItem {
                 .detach();
             }
 
-            let visualizer_enabled = cx.global::<Config>().get().audio.visualizer;
+            let visualizer_enabled = cx.global::<Config>().get().appearance.visualizer;
             let spectrum = if is_playing && visualizer_enabled {
                 cx.global::<Playback>().get_spectrum()
             } else {

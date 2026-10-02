@@ -222,7 +222,7 @@ impl Scanner {
         let background_ui = cx.try_global::<BackgroundUiNotifier>().cloned();
         let executor = cx.background_executor().clone();
 
-        let scan_paths = expand_scan_paths(&config.get().scan.paths);
+        let scan_paths = expand_scan_paths(&config.get().library.paths);
         let scanner = Scanner::new(scan_paths, executor.clone(), background_ui.clone());
 
         cx.set_global(scanner.clone());
@@ -236,7 +236,7 @@ impl Scanner {
         let last_paths: Arc<std::sync::Mutex<Vec<PathBuf>>> =
             Arc::new(std::sync::Mutex::new(scanner.get_scan_paths()));
         cx.observe_global::<Config>(move |cx| {
-            let new_paths = expand_scan_paths(&cx.global::<Config>().get().scan.paths);
+            let new_paths = expand_scan_paths(&cx.global::<Config>().get().library.paths);
             let (changed, removed_paths) = {
                 let mut last = match last_paths.lock() {
                     Ok(l) => l,
@@ -339,7 +339,10 @@ impl Scanner {
                                 match scanner.scan(&db_clone).await {
                                 Ok(stats) => {
 
-                                    if stats.scanned > 0 || stats.removed > 0 {
+                                    if stats.scanned > 0
+                                        || stats.removed > 0
+                                        || telemetry_clone.version_changed()
+                                    {
                                         telemetry_clone.submit(&db_clone, &config_clone);
                                     }
 

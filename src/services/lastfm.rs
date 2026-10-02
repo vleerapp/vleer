@@ -238,8 +238,8 @@ impl LastfmScrobbler {
                 let (session_key, threshold) = cx.update(|app| {
                     let cfg = app.global::<Config>().get();
                     (
-                        cfg.lastfm.session_key.clone(),
-                        cfg.lastfm.scrobble_threshold,
+                        cfg.integrations.lastfm.session_key.clone(),
+                        cfg.integrations.lastfm.scrobble_threshold,
                     )
                 });
                 let Some(session_key) = session_key else {

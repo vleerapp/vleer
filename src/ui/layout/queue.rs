@@ -477,7 +477,7 @@ impl Render for QueuePane {
         }
 
         let is_globally_playing = cx.global::<Playback>().get_playing();
-        let visualizer_enabled = cx.global::<Config>().get().audio.visualizer;
+        let visualizer_enabled = cx.global::<Config>().get().appearance.visualizer;
         let spectrum = if is_globally_playing && visualizer_enabled {
             cx.global::<Playback>().get_spectrum()
         } else {
