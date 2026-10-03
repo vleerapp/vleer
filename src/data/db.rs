@@ -1622,6 +1622,21 @@ impl Database {
         )
     }
 
+    pub fn get_artist_song_ids(&self, artist_id: &Cuid) -> Result<Vec<Cuid>> {
+        let conn = self.conn.lock();
+        collect_mapped::<Cuid, _>(
+            &conn,
+            "SELECT s.id
+             FROM songs s
+             JOIN songs_artists sa ON sa.song_id = s.id
+             LEFT JOIN albums al ON al.id = s.album_id
+             WHERE sa.artist_id = ?1
+             ORDER BY al.title COLLATE NOCASE, s.track_number, s.title COLLATE NOCASE",
+            params![artist_id],
+            |row| row.get(0),
+        )
+    }
+
     pub fn get_artist(&self, id: &Cuid) -> Result<Option<Artist>> {
         let conn = self.conn.lock();
         let row = conn

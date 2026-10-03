@@ -900,6 +900,21 @@ pub fn play_album_now(album_id: Cuid, cx: &mut App) {
     .detach();
 }
 
+pub fn play_artist_now(artist_id: Cuid, cx: &mut App) {
+    let db = cx.global::<Database>().clone();
+    let bg = cx.background_executor().clone();
+    cx.spawn(async move |cx| {
+        let song_ids = bg
+            .spawn(async move { db.get_artist_song_ids(&artist_id).unwrap_or_default() })
+            .await;
+        if song_ids.is_empty() {
+            return;
+        }
+        cx.update(|cx| play_song_ids_now(song_ids, cx));
+    })
+    .detach();
+}
+
 pub fn play_album_next(album_id: Cuid, cx: &mut App) {
     let db = cx.global::<Database>().clone();
     let bg = cx.background_executor().clone();
