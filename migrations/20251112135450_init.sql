@@ -74,19 +74,12 @@ CREATE TABLE IF NOT EXISTS playlist_songs (
 CREATE TABLE IF NOT EXISTS events (
     id TEXT PRIMARY KEY,
     event_type TEXT CHECK(
-        event_type IN ('PLAY', 'STOP', 'PAUSE', 'RESUME')
+        event_type IN ('PLAY', 'STOP', 'PAUSE', 'RESUME', 'SEEK')
     ) NOT NULL,
-    context_id TEXT,
-    timestamp TEXT DEFAULT (DATETIME('now')),
-    FOREIGN KEY (context_id) REFERENCES event_contexts(id) ON DELETE CASCADE
-);
-CREATE TABLE IF NOT EXISTS event_contexts (
-    id TEXT PRIMARY KEY,
-    song_id TEXT,
+    song_id TEXT NOT NULL,
     playlist_id TEXT,
-    date_created TEXT DEFAULT (DATETIME('now')),
-    FOREIGN KEY (song_id) REFERENCES songs(id) ON DELETE CASCADE ON UPDATE CASCADE,
-    FOREIGN KEY (playlist_id) REFERENCES playlists(id) ON DELETE CASCADE
+    position INTEGER,
+    timestamp TEXT NOT NULL DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f', 'now'))
 );
 CREATE TABLE IF NOT EXISTS images (
     id TEXT PRIMARY KEY NOT NULL,
@@ -130,11 +123,9 @@ CREATE INDEX IF NOT EXISTS idx_songs_album ON songs(album_id);
 CREATE INDEX IF NOT EXISTS idx_songs_file_path ON songs(file_path);
 CREATE INDEX IF NOT EXISTS idx_albums_artists_album ON albums_artists(album_id);
 CREATE INDEX IF NOT EXISTS idx_albums_artists_artist ON albums_artists(artist_id);
-CREATE INDEX IF NOT EXISTS idx_events_type ON EVENTS(event_type);
+CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
 CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
-CREATE INDEX IF NOT EXISTS idx_events_context ON events(context_id);
-CREATE INDEX IF NOT EXISTS idx_event_contexts_song ON event_contexts(song_id);
-CREATE INDEX IF NOT EXISTS idx_event_contexts_playlist ON event_contexts(playlist_id);
+CREATE INDEX IF NOT EXISTS idx_events_song ON events(song_id);
 CREATE INDEX IF NOT EXISTS idx_songs_favorite ON songs(favorite);
 CREATE INDEX IF NOT EXISTS idx_albums_favorite ON albums(favorite);
 CREATE INDEX IF NOT EXISTS idx_artists_favorite ON artists(favorite);

@@ -183,25 +183,31 @@ pub struct PlaylistTrack {
 pub struct Event {
     pub id: Cuid,
     pub event_type: EventType,
-    pub context_id: Option<Cuid>,
+    pub song_id: Cuid,
+    pub playlist_id: Option<Cuid>,
+    pub position: Option<i64>,
     pub timestamp: String,
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EventContext {
-    pub id: Cuid,
-    pub song_id: Option<Cuid>,
-    pub playlist_id: Option<Cuid>,
-    pub date_created: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum EventType {
     Play,
     Stop,
     Pause,
     Resume,
+    Seek,
+}
+
+impl EventType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            EventType::Play => "PLAY",
+            EventType::Stop => "STOP",
+            EventType::Pause => "PAUSE",
+            EventType::Resume => "RESUME",
+            EventType::Seek => "SEEK",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -395,24 +401,16 @@ impl Event {
                 "STOP" => EventType::Stop,
                 "PAUSE" => EventType::Pause,
                 "RESUME" => EventType::Resume,
+                "SEEK" => EventType::Seek,
                 other => {
                     tracing::error!("Unknown event type in DB: {}; defaulting to PLAY", other);
                     EventType::Play
                 }
             },
-            context_id: row.get("context_id")?,
-            timestamp: row.get("timestamp")?,
-        })
-    }
-}
-
-impl EventContext {
-    pub fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
-        Ok(Self {
-            id: row.get("id")?,
             song_id: row.get("song_id")?,
             playlist_id: row.get("playlist_id")?,
-            date_created: row.get("date_created")?,
+            position: row.get("position")?,
+            timestamp: row.get("timestamp")?,
         })
     }
 }

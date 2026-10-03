@@ -693,8 +693,8 @@ impl Render for Player {
                         if duration > 0.0 {
                             let seek_time = value * duration;
 
-                            cx.update_global::<Playback, _>(|playback, _cx| {
-                                if let Err(e) = playback.seek(seek_time) {
+                            cx.update_global::<Playback, _>(|playback, cx| {
+                                if let Err(e) = playback.seek(seek_time, cx) {
                                     tracing::error!("Failed to seek: {}", e);
                                 }
                             });

@@ -669,8 +669,8 @@ fn synced_rows(
                         }
                     }))
                     .on_click(cx.listener(move |_this, _event, window, cx| {
-                        cx.update_global::<Playback, _>(|playback, _cx| {
-                            if let Err(e) = playback.seek(at) {
+                        cx.update_global::<Playback, _>(|playback, cx| {
+                            if let Err(e) = playback.seek(at, cx) {
                                 tracing::error!("Failed to seek: {}", e);
                             }
                         });
@@ -720,8 +720,8 @@ fn synced_rows(
                     }
                 }))
                 .on_click(cx.listener(move |_this, _event, window, cx| {
-                    cx.update_global::<Playback, _>(|playback, _cx| {
-                        if let Err(e) = playback.seek(at) {
+                    cx.update_global::<Playback, _>(|playback, cx| {
+                        if let Err(e) = playback.seek(at, cx) {
                             tracing::error!("Failed to seek: {}", e);
                         }
                     });
