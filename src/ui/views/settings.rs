@@ -19,8 +19,7 @@ use tracing::error;
 
 const CONTENT_WIDTH: f32 = 704.0;
 const APP_ICON: &str = "!bundled:images/icon-512.png";
-const TELEMETRY_DASHBOARD: &str =
-    "https://graf.wireway.ch/public-dashboards/c518e42c7bc14c5ba95040671fb9e467";
+const TELEMETRY_DASHBOARD: &str = "https://vleer.app/stats";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SettingsTab {
