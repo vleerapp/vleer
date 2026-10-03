@@ -1,9 +1,9 @@
 use crate::data::{
     ids::fold_key,
     models::{
-        Album, AlbumListItem, Artist, ArtistListItem, Cuid, Event, EventContext, EventType,
-        GenreListItem, Image, PinnedItem, Playlist, PlaylistListItem, PlaylistTrack, RecentItem,
-        RecentItemRow, SearchResultRow, Song, SongListItem, SongSort, StoredLyrics, Toggleable,
+        Album, AlbumListItem, Artist, ArtistListItem, Cuid, Event, EventType, GenreListItem, Image,
+        PinnedItem, Playlist, PlaylistListItem, PlaylistTrack, RecentItem, RecentItemRow,
+        SearchResultRow, Song, SongListItem, SongSort, StoredLyrics, Toggleable,
     },
     search::{
         AlbumSearchEntry, ArtistSearchEntry, PlaylistSearchEntry, SearchIndex, SongSearchEntry,
@@ -1214,6 +1214,8 @@ impl Database {
                                  WHERE id = ?1",
                             )?
                             .execute(params![song_id, old_id])?;
+                            tx.prepare_cached("UPDATE events SET song_id = ?1 WHERE song_id = ?2")?
+                                .execute(params![song_id, old_id])?;
                             tx.prepare_cached("DELETE FROM songs WHERE id = ?1")?
                                 .execute(params![old_id])?;
                             tx.prepare_cached("UPDATE songs SET file_path = ?1 WHERE id = ?2")?
@@ -1221,6 +1223,8 @@ impl Database {
                         }
                         None => {
                             tx.prepare_cached("UPDATE songs SET id = ?1 WHERE id = ?2")?
+                                .execute(params![song_id, old_id])?;
+                            tx.prepare_cached("UPDATE events SET song_id = ?1 WHERE song_id = ?2")?
                                 .execute(params![song_id, old_id])?;
                         }
                     }
@@ -1262,6 +1266,10 @@ impl Database {
                                         track.file_path,
                                         orphan_id
                                     ])?;
+                                    tx.prepare_cached(
+                                        "UPDATE events SET song_id = ?1 WHERE song_id = ?2",
+                                    )?
+                                    .execute(params![song_id, orphan_id])?;
                                 }
                                 None => inserted += 1,
                             }
@@ -1430,7 +1438,7 @@ impl Database {
                  WHERE id = ?1",
             )?
             .execute(params![live_id, stale_id])?;
-            for table in ["playlist_songs", "event_contexts", "lyrics"] {
+            for table in ["playlist_songs", "events", "lyrics"] {
                 tx.prepare_cached(&format!(
                     "UPDATE OR IGNORE {table} SET song_id = ?1 WHERE song_id = ?2"
                 ))?
@@ -1611,6 +1619,21 @@ impl Database {
              ORDER BY s.track_number ASC",
             params![album_id],
             Song::from_row,
+        )
+    }
+
+    pub fn get_artist_song_ids(&self, artist_id: &Cuid) -> Result<Vec<Cuid>> {
+        let conn = self.conn.lock();
+        collect_mapped::<Cuid, _>(
+            &conn,
+            "SELECT s.id
+             FROM songs s
+             JOIN songs_artists sa ON sa.song_id = s.id
+             LEFT JOIN albums al ON al.id = s.album_id
+             WHERE sa.artist_id = ?1
+             ORDER BY al.title COLLATE NOCASE, s.track_number, s.title COLLATE NOCASE",
+            params![artist_id],
+            |row| row.get(0),
         )
     }
 
@@ -1915,100 +1938,38 @@ impl Database {
         )
     }
 
-    #[allow(dead_code)]
-    pub fn get_event(&self, id: &Cuid) -> Result<Option<Event>> {
-        let conn = self.conn.lock();
-        let row = conn
-            .query_row(
-                "SELECT * FROM events WHERE id = ?1",
-                params![id],
-                Event::from_row,
-            )
-            .optional()?;
-        Ok(row)
-    }
-
-    pub fn insert_event(&self, event_type: EventType, context_id: Option<&Cuid>) -> Result<Cuid> {
-        let id = Cuid::new();
-        let event_type_str = match event_type {
-            EventType::Play => "PLAY",
-            EventType::Stop => "STOP",
-            EventType::Pause => "PAUSE",
-            EventType::Resume => "RESUME",
-        };
-
+    pub fn insert_event(
+        &self,
+        event_type: EventType,
+        song_id: &Cuid,
+        playlist_id: Option<&Cuid>,
+        position: Option<i64>,
+        unix_seconds: f64,
+    ) -> Result<()> {
         let conn = self.conn.lock();
         conn.execute(
-            "INSERT INTO events (id, event_type, context_id) VALUES (?1, ?2, ?3)",
-            params![id, event_type_str, context_id],
+            "INSERT INTO events (id, event_type, song_id, playlist_id, position, timestamp)
+             VALUES (?1, ?2, ?3, ?4, ?5, STRFTIME('%Y-%m-%d %H:%M:%f', ?6, 'unixepoch'))",
+            params![
+                Cuid::new(),
+                event_type.as_str(),
+                song_id,
+                playlist_id,
+                position,
+                unix_seconds
+            ],
         )?;
-
-        Ok(id)
+        Ok(())
     }
 
     #[allow(dead_code)]
     pub fn get_events_by_type(&self, event_type: EventType) -> Result<Vec<Event>> {
-        let event_type_str = match event_type {
-            EventType::Play => "PLAY",
-            EventType::Stop => "STOP",
-            EventType::Pause => "PAUSE",
-            EventType::Resume => "RESUME",
-        };
         let conn = self.conn.lock();
         collect_mapped::<Event, _>(
             &conn,
-            "SELECT * FROM events WHERE event_type = ?1 ORDER BY timestamp DESC",
-            params![event_type_str],
+            "SELECT * FROM events WHERE event_type = ?1 ORDER BY timestamp DESC, rowid DESC",
+            params![event_type.as_str()],
             Event::from_row,
-        )
-    }
-
-    pub fn insert_event_context(
-        &self,
-        song_id: Option<&Cuid>,
-        playlist_id: Option<&Cuid>,
-    ) -> Result<Cuid> {
-        let id = Cuid::new();
-        let conn = self.conn.lock();
-        conn.execute(
-            "INSERT INTO event_contexts (id, song_id, playlist_id) VALUES (?1, ?2, ?3)",
-            params![id, song_id, playlist_id],
-        )?;
-        Ok(id)
-    }
-
-    #[allow(dead_code)]
-    pub fn get_event_context(&self, id: &Cuid) -> Result<Option<EventContext>> {
-        let conn = self.conn.lock();
-        let row = conn
-            .query_row(
-                "SELECT * FROM event_contexts WHERE id = ?1",
-                params![id],
-                EventContext::from_row,
-            )
-            .optional()?;
-        Ok(row)
-    }
-
-    #[allow(dead_code)]
-    pub fn get_event_context_by_song(&self, song_id: &Cuid) -> Result<Vec<EventContext>> {
-        let conn = self.conn.lock();
-        collect_mapped::<EventContext, _>(
-            &conn,
-            "SELECT * FROM event_contexts WHERE song_id = ?1",
-            params![song_id],
-            EventContext::from_row,
-        )
-    }
-
-    #[allow(dead_code)]
-    pub fn get_event_context_by_playlist(&self, playlist_id: &Cuid) -> Result<Vec<EventContext>> {
-        let conn = self.conn.lock();
-        collect_mapped::<EventContext, _>(
-            &conn,
-            "SELECT * FROM event_contexts WHERE playlist_id = ?1",
-            params![playlist_id],
-            EventContext::from_row,
         )
     }
 
@@ -2189,12 +2150,10 @@ impl Database {
         let mut stmt = conn.prepare_cached(
             r#"
             WITH recent_song_plays AS (
-                SELECT ec.song_id, MAX(e.timestamp) AS most_recent_date
-                FROM events e
-                JOIN event_contexts ec ON e.context_id = ec.id
-                WHERE e.event_type = ?1
-                  AND ec.song_id IS NOT NULL
-                GROUP BY ec.song_id
+                SELECT song_id, MAX(timestamp) AS most_recent_date
+                FROM events
+                WHERE event_type = ?1
+                GROUP BY song_id
                 ORDER BY most_recent_date DESC
                 LIMIT ?2
             )
@@ -2590,7 +2549,8 @@ mod tests {
         let old_id = song_id_for(&db, "/music/old/1.flac");
         db.upsert_playlist_song(&playlist, &old_id).unwrap();
         db.set_favorite::<Song>(&old_id, true).unwrap();
-        let context = db.insert_event_context(Some(&old_id), None).unwrap();
+        db.insert_event(EventType::Play, &old_id, None, Some(0), 0.0)
+            .unwrap();
 
         let added = db
             .upsert_tracks_batch(
@@ -2610,10 +2570,9 @@ mod tests {
         assert!(song.favorite);
         let tracks = db.get_playlist_songs(&playlist).unwrap();
         assert_eq!(tracks.len(), 1);
-        assert_eq!(
-            db.get_event_context(&context).unwrap().unwrap().song_id,
-            Some(song.id)
-        );
+        let events = db.get_events_by_type(EventType::Play).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].song_id, song.id);
         cleanup(&path);
     }
 

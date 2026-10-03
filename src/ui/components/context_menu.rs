@@ -1,7 +1,7 @@
 use crate::data::db::Database;
 use crate::data::models::{Album, Artist, Cuid, Playlist, PlaylistListItem, Song};
 use crate::media::playback::{
-    play_album_last, play_album_next, play_playlist_last, play_playlist_next,
+    play_album_last, play_album_next, play_artist_now, play_playlist_last, play_playlist_next,
 };
 use crate::media::queue::Queue;
 use crate::ui::app::MainWindow;
@@ -728,7 +728,10 @@ pub fn artist_context_menu_items(artist_id: Cuid, cx: &App) -> Vec<ContextMenuIt
     let pin_icon = if pinned { icons::UNPIN } else { icons::PIN };
 
     vec![
-        ContextMenuItem::entry("Play all songs", icons::PLAY, move |_, _| {}),
+        ContextMenuItem::entry("Play all songs", icons::PLAY, {
+            let id = artist_id.clone();
+            move |_, cx| play_artist_now(id.clone(), cx)
+        }),
         ContextMenuItem::separator(),
         ContextMenuItem::entry(fav_label, fav_icon, {
             let id = artist_id.clone();

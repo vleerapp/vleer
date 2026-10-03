@@ -17,7 +17,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use symphonia_adapter_libopus::OpusDecoder;
 
 use tokio::sync::mpsc;
@@ -67,6 +67,17 @@ pub struct Playback {
 }
 
 impl Global for Playback {}
+
+struct EventRecord {
+    event_type: EventType,
+    song_id: Cuid,
+    playlist_id: Option<Cuid>,
+    position: i64,
+    unix_seconds: f64,
+    background_ui: Option<BackgroundUiNotifier>,
+}
+
+static EVENT_TX: OnceLock<std::sync::mpsc::Sender<EventRecord>> = OnceLock::new();
 
 static PLAYBACK_CMD_TX: OnceLock<mpsc::UnboundedSender<PlaybackCommand>> = OnceLock::new();
 
@@ -249,7 +260,7 @@ impl Playback {
                     playback.play(cx);
                     applied = true;
                     debug!("Song applied to playback");
-                    Self::log_event(cx, EventType::Play, Some(song.id.clone()));
+                    playback.log_event(cx, EventType::Play, Some(song.id.clone()));
                 });
 
                 if !applied {
@@ -366,8 +377,8 @@ impl Playback {
                         });
                     }
                     PlaybackCommand::Seek(position) => {
-                        cx.update_global::<Playback, _>(|playback, _cx| {
-                            playback.seek(position).ok();
+                        cx.update_global::<Playback, _>(|playback, cx| {
+                            playback.seek(position, cx).ok();
                         });
                     }
                 });
@@ -447,7 +458,7 @@ impl Playback {
                             playback.paused = true;
                             let (position, was_playing) =
                                 playback.resume.take().unwrap_or((0.0, false));
-                            playback.seek(position).ok();
+                            playback.seek_raw(position).ok();
                             if was_playing {
                                 playback.play(cx);
                             }
@@ -492,7 +503,7 @@ impl Playback {
     pub fn stop(&mut self, cx: &mut App) {
         let song_id = cx.global::<Queue>().get_current_song_id();
         if song_id.is_some() {
-            Self::log_event(cx, EventType::Stop, song_id);
+            self.log_event(cx, EventType::Stop, song_id);
         }
 
         self.load_token = self.load_token.wrapping_add(1);
@@ -527,20 +538,28 @@ impl Playback {
             let song_id = cx.global::<Queue>().get_current_song_id();
             self.play(cx);
             if !self.paused {
-                Self::log_event(cx, EventType::Resume, song_id);
+                self.log_event(cx, EventType::Resume, song_id);
             }
         } else {
             let song_id = cx.global::<Queue>().get_current_song_id();
             self.pause(cx);
             if self.paused {
-                Self::log_event(cx, EventType::Pause, song_id);
+                self.log_event(cx, EventType::Pause, song_id);
             }
         }
     }
 
-    pub fn seek(&mut self, position: f32) -> Result<()> {
+    pub fn seek(&mut self, position: f32, cx: &App) -> Result<()> {
+        if self.seek_raw(position)? {
+            let song_id = cx.global::<Queue>().get_current_song_id();
+            self.log_event(cx, EventType::Seek, song_id);
+        }
+        Ok(())
+    }
+
+    fn seek_raw(&mut self, position: f32) -> Result<bool> {
         if self.loading {
-            return Ok(());
+            return Ok(false);
         }
         if let Some(file_path) = &self.current_file {
             let was_playing = !self.paused;
@@ -553,7 +572,7 @@ impl Playback {
                 .with_byte_len(file_len)
                 .build()?;
             if source.try_seek(Duration::from_secs_f32(position)).is_err() {
-                return Ok(());
+                return Ok(false);
             }
 
             let eq_source = EqualizerSource::new(source, self.equalizer.clone());
@@ -575,8 +594,9 @@ impl Playback {
                 }
             }
             self.position = position;
+            return Ok(true);
         }
-        Ok(())
+        Ok(false)
     }
 
     pub fn set_volume(&mut self, volume: f32, _cx: &mut App) {
@@ -683,7 +703,7 @@ impl Playback {
     pub fn next(&mut self, cx: &mut App) {
         let current = cx.global::<Queue>().get_current_song_id();
         if current.is_some() {
-            Self::log_event(cx, EventType::Stop, current);
+            self.log_event(cx, EventType::Stop, current);
         }
         let song_id = cx.update_global::<Queue, _>(|queue, _| queue.next_manual());
         if let Some(song_id) = song_id {
@@ -702,7 +722,7 @@ impl Playback {
     pub fn advance_auto(&mut self, cx: &mut App) {
         let current = cx.global::<Queue>().get_current_song_id();
         if current.is_some() {
-            Self::log_event(cx, EventType::Stop, current);
+            self.log_event(cx, EventType::Stop, current);
         }
         let song_id = cx.update_global::<Queue, _>(|queue, _| queue.next());
         if let Some(song_id) = song_id {
@@ -721,7 +741,7 @@ impl Playback {
     pub fn previous(&mut self, cx: &mut App) {
         let current = cx.global::<Queue>().get_current_song_id();
         if current.is_some() {
-            Self::log_event(cx, EventType::Stop, current);
+            self.log_event(cx, EventType::Stop, current);
         }
         let song_id = cx.update_global::<Queue, _>(|queue, _| queue.previous_manual());
         if let Some(song_id) = song_id {
@@ -774,31 +794,49 @@ impl Playback {
         .detach();
     }
 
-    fn log_event(cx: &App, event_type: EventType, song_id: Option<Cuid>) {
-        let db = cx.global::<Database>().clone();
-        let background_ui = cx.try_global::<BackgroundUiNotifier>().cloned();
-        let should_notify_home = matches!(event_type, EventType::Play);
-        let playlist_id = cx.global::<Queue>().current_playlist_id.clone();
-        cx.background_executor()
-            .spawn(async move {
-                let context_id = if let Some(song_id) = &song_id {
-                    match db.insert_event_context(Some(song_id), playlist_id.as_ref()) {
-                        Ok(id) => Some(id),
-                        Err(e) => {
-                            error!("Failed to insert event context: {}", e);
-                            None
+    fn log_event(&self, cx: &App, event_type: EventType, song_id: Option<Cuid>) {
+        let Some(song_id) = song_id else {
+            return;
+        };
+        let record = EventRecord {
+            event_type,
+            song_id,
+            playlist_id: cx.global::<Queue>().current_playlist_id.clone(),
+            position: (self.get_position() * 1000.0) as i64,
+            unix_seconds: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0.0, |d| d.as_secs_f64()),
+            background_ui: cx.try_global::<BackgroundUiNotifier>().cloned(),
+        };
+        let tx = EVENT_TX.get_or_init(|| {
+            let db = cx.global::<Database>().clone();
+            let (tx, rx) = std::sync::mpsc::channel::<EventRecord>();
+            std::thread::spawn(move || {
+                for record in rx {
+                    let result = db.insert_event(
+                        record.event_type,
+                        &record.song_id,
+                        record.playlist_id.as_ref(),
+                        Some(record.position),
+                        record.unix_seconds,
+                    );
+                    match result {
+                        Ok(()) => {
+                            if matches!(record.event_type, EventType::Play)
+                                && let Some(background_ui) = record.background_ui
+                            {
+                                background_ui.notify(BackgroundUiEvent::HomeDataChanged);
+                            }
                         }
+                        Err(e) => error!("Failed to insert event: {}", e),
                     }
-                } else {
-                    None
-                };
-                if let Err(e) = db.insert_event(event_type, context_id.as_ref()) {
-                    error!("Failed to insert event: {}", e);
-                } else if should_notify_home && let Some(background_ui) = background_ui {
-                    background_ui.notify(BackgroundUiEvent::HomeDataChanged);
                 }
-            })
-            .detach();
+            });
+            tx
+        });
+        if tx.send(record).is_err() {
+            error!("Event writer stopped");
+        }
     }
 
     fn compute_log_volume(volume: f32) -> f32 {
@@ -853,6 +891,21 @@ pub fn play_album_now(album_id: Cuid, cx: &mut App) {
                     .map(|song| song.id)
                     .collect::<Vec<_>>()
             })
+            .await;
+        if song_ids.is_empty() {
+            return;
+        }
+        cx.update(|cx| play_song_ids_now(song_ids, cx));
+    })
+    .detach();
+}
+
+pub fn play_artist_now(artist_id: Cuid, cx: &mut App) {
+    let db = cx.global::<Database>().clone();
+    let bg = cx.background_executor().clone();
+    cx.spawn(async move |cx| {
+        let song_ids = bg
+            .spawn(async move { db.get_artist_song_ids(&artist_id).unwrap_or_default() })
             .await;
         if song_ids.is_empty() {
             return;

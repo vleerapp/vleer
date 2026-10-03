@@ -116,15 +116,8 @@ impl SongPageCache {
             self.last_query = query.to_string();
             self.last_sort = sort;
             self.last_ascending = ascending;
-            self.invalidate();
+            self.refresh();
         }
-    }
-
-    fn invalidate(&mut self) {
-        self.pages.clear();
-        self.count = None;
-        self.count_version = None;
-        self.bump();
     }
 
     fn refresh(&mut self) {
