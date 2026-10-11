@@ -215,6 +215,7 @@ impl Element for ProgressSlider {
                     features: Default::default(),
                     fallbacks: None,
                     weight: FontWeight(500.0),
+                    width: Default::default(),
                     style: Default::default(),
                 },
                 color: rgb_to_hsla(variables.background),
@@ -223,12 +224,11 @@ impl Element for ProgressSlider {
                 underline: None,
                 strikethrough: None,
             }];
-            Some(window.text_system().shape_line(
-                time_text.clone().into(),
-                px(14.0),
-                &filled_runs,
-                None,
-            ))
+            Some(
+                window
+                    .text_system()
+                    .shape_line(time_text.clone().into(), px(14.0), &filled_runs),
+            )
         } else {
             None
         };
@@ -241,6 +241,7 @@ impl Element for ProgressSlider {
                     features: Default::default(),
                     fallbacks: None,
                     weight: Default::default(),
+                    width: Default::default(),
                     style: Default::default(),
                 },
                 color: rgb_to_hsla(variables.accent),
@@ -253,7 +254,6 @@ impl Element for ProgressSlider {
                 time_text.clone().into(),
                 px(14.0),
                 &unfilled_runs,
-                None,
             ))
         } else {
             None

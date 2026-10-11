@@ -3,12 +3,13 @@ use gpui::{
     ElementInputHandler, Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable,
     GlobalElementId, IntoElement, KeyBinding, LayoutId, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, NavigationDirection, PaintQuad, Pixels, Point, Render, Rgba,
-    ShapedLine, SharedString, Style, Subscription, TextRun, UTF16Selection, Window, actions, fill,
-    point, prelude::*, px, relative, rgb_to_hsla, rgba, size,
+    ShapedLine, ShapedTextLayout, SharedString, Style, Subscription, TextRun, UTF16Selection,
+    Window, actions, fill, point, prelude::*, px, relative, rgb_to_hsla, rgba, size,
 };
 use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 use unicode_segmentation::*;
@@ -18,6 +19,32 @@ use crate::ui::{
     global_actions::PlayPause,
     variables::Variables,
 };
+
+fn text_layout(line: &ShapedLine) -> ShapedTextLayout {
+    ShapedTextLayout {
+        layout: Arc::clone(&**line),
+        wrap_width: None,
+    }
+}
+
+fn x_for_index(line: &ShapedLine, index: usize) -> Pixels {
+    let line_height = line.ascent + line.descent;
+    text_layout(line)
+        .visual_position_for_byte_index(index.min(line.len()), line_height)
+        .map(|p| p.x)
+        .unwrap_or(if index >= line.len() {
+            line.width
+        } else {
+            px(0.0)
+        })
+}
+
+fn index_for_x(line: &ShapedLine, x: Pixels) -> usize {
+    let line_height = line.ascent + line.descent;
+    text_layout(line)
+        .closest_byte_index_for_pixel_point(point(x, line_height / 2.0), line_height)
+        .unwrap_or_else(|i| i)
+}
 
 pub type Validator = Rc<RefCell<dyn Fn(&str) -> bool>>;
 
@@ -408,7 +435,10 @@ impl TextInput {
             return self.content.len();
         }
         let x_offset = self.horizontal_text_offset(bounds.size.width, line.width);
-        line.closest_index_for_x(position.x - bounds.left() + self.scroll_offset - x_offset)
+        index_for_x(
+            line,
+            position.x - bounds.left() + self.scroll_offset - x_offset,
+        )
     }
 
     fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -617,11 +647,11 @@ impl EntityInputHandler for TextInput {
         let range = self.range_from_utf16(&range_utf16);
         Some(Bounds::from_corners(
             point(
-                origin_x + last_layout.x_for_index(range.start),
+                origin_x + x_for_index(last_layout, range.start),
                 bounds.top(),
             ),
             point(
-                origin_x + last_layout.x_for_index(range.end),
+                origin_x + x_for_index(last_layout, range.end),
                 bounds.bottom(),
             ),
         ))
@@ -636,8 +666,11 @@ impl EntityInputHandler for TextInput {
         let last_bounds = self.last_bounds.as_ref()?;
         let last_layout = self.last_layout.as_ref()?;
         let x_offset = self.horizontal_text_offset(last_bounds.size.width, last_layout.width);
-        let utf8_index = last_layout
-            .index_for_x(point.x - last_bounds.left() + self.scroll_offset - x_offset)?;
+        let line_height = last_layout.ascent + last_layout.descent;
+        let x = point.x - last_bounds.left() + self.scroll_offset - x_offset;
+        let utf8_index = text_layout(last_layout)
+            .byte_index_for_pixel_point(gpui::point(x, line_height / 2.0), line_height)
+            .ok()?;
         Some(self.offset_to_utf16(utf8_index))
     }
 }
@@ -825,13 +858,13 @@ impl Element for TextElement {
         let font_size = style.font_size.to_pixels(window.rem_size());
         let line = window
             .text_system()
-            .shape_line(display_text, font_size, &runs, None);
+            .shape_line(display_text, font_size, &runs);
 
         let line_height = window.line_height();
         let y_offset = (bounds.size.height - line_height) / 2.0;
 
         let mut scroll_offset = input.scroll_offset;
-        let cursor_x = line.x_for_index(cursor_index);
+        let cursor_x = x_for_index(&line, cursor_index);
         let width = bounds.size.width;
         let x_offset = if self.centered {
             ((width - line.width).max(px(0.0))) / 2.0
@@ -865,8 +898,8 @@ impl Element for TextElement {
                 )),
             )
         } else {
-            let start_x = line.x_for_index(selected_range.start) - scroll_offset + x_offset;
-            let end_x = line.x_for_index(selected_range.end) - scroll_offset + x_offset;
+            let start_x = x_for_index(&line, selected_range.start) - scroll_offset + x_offset;
+            let end_x = x_for_index(&line, selected_range.end) - scroll_offset + x_offset;
             (
                 Some(fill(
                     Bounds::from_corners(
