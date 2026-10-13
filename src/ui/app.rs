@@ -22,8 +22,8 @@ use crate::{
         components::{
             card::ViewportWidth,
             context_menu::{
-                BackgroundUiEvent, BackgroundUiNotifier, HomeDataChanged, LibraryDataChanged,
-                PinnedItemsChanged, QueueChanged,
+                BackgroundUiEvent, BackgroundUiNotifier, CoversChanged, HomeDataChanged,
+                LibraryDataChanged, PinnedItemsChanged, QueueChanged,
             },
             div::{flex_col, flex_row},
             input::bind_input_keys,
@@ -501,11 +501,19 @@ pub async fn run() -> Result<()> {
                         BackgroundUiEvent::LibraryDataChanged => {
                             cx.set_global(LibraryDataChanged);
                         }
+                        BackgroundUiEvent::CoversChanged => {
+                            cx.set_global(CoversChanged);
+                        }
                     });
                 }
             })
             .detach();
 
+            crate::ui::assets::image_cache::init(cx);
+            cx.observe_global::<crate::ui::views::ActiveView>(|_| {
+                crate::data::images::priority::clear_visible();
+            })
+            .detach();
             open_main_window(cx);
 
             Scanner::init(cx);

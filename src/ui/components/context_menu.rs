@@ -30,13 +30,19 @@ pub struct HomeDataChanged;
 impl Global for HomeDataChanged {}
 
 #[derive(Default)]
+pub struct CoversChanged;
+impl Global for CoversChanged {}
+
+#[derive(Default)]
 pub struct QueueChanged;
 impl Global for QueueChanged {}
 
 #[derive(Clone, Copy, Debug)]
+#[allow(clippy::enum_variant_names)]
 pub enum BackgroundUiEvent {
     HomeDataChanged,
     LibraryDataChanged,
+    CoversChanged,
 }
 
 #[derive(Clone)]

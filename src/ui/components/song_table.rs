@@ -1,4 +1,5 @@
 use crate::data::config::Config;
+use crate::data::images::priority;
 use crate::data::models::Cuid;
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
@@ -1227,6 +1228,14 @@ impl Render for SongTable {
                                 if drag.is_none() {
                                     shift.update(cx, |shift, _| shift.clear());
                                 }
+
+                                let visible: Vec<Cuid> = range
+                                    .clone()
+                                    .filter_map(|idx| {
+                                        get_row(cx, idx, sort_method).map(|entry| entry.id.clone())
+                                    })
+                                    .collect();
+                                priority::set_visible_songs(visible);
 
                                 let items = range
                                     .map(|display_idx| {

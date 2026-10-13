@@ -8,9 +8,37 @@ use discord_rich_presence::{DiscordIpc, DiscordIpcClient, activity};
 use gpui::App;
 use parking_lot::Mutex;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct DiscordPresence {}
+
+type OmmIds = (Option<String>, Option<String>);
+
+const ARTWORK_RETRIES: u32 = 6;
+const ARTWORK_RETRY_DELAY: Duration = Duration::from_secs(10);
+
+struct Artwork {
+    omm: OmmIds,
+    large: Option<String>,
+    small: Option<String>,
+    complete: bool,
+}
+
+async fn artwork_for(db: &Database, id: &Cuid) -> Artwork {
+    let omm = db.song_omm_ids(id).unwrap_or_default();
+    let ids: Vec<String> = omm.0.iter().chain(omm.1.iter()).cloned().collect();
+    let urls = crate::data::omm::fetch_artwork_urls(ids).await;
+    let large = omm.0.as_ref().and_then(|id| urls.get(id).cloned());
+    let small = omm.1.as_ref().and_then(|id| urls.get(id).cloned());
+    let complete = omm.0.is_some() == large.is_some() && omm.1.is_some() == small.is_some();
+    Artwork {
+        omm,
+        large,
+        small,
+        complete,
+    }
+}
 
 struct CachedSongInfo {
     title: String,
@@ -33,6 +61,9 @@ impl DiscordPresence {
         cx.spawn(async move |cx| {
             let mut cached_song_id: Option<Cuid> = None;
             let mut cached_song_info: Option<CachedSongInfo> = None;
+            let mut cached_omm: OmmIds = (None, None);
+            let mut retries = 0u32;
+            let mut retry_at = Instant::now();
 
             loop {
                 cx.background_executor()
@@ -88,12 +119,11 @@ impl DiscordPresence {
 
                         let artist_name = Some(song.artists.join(", ")).filter(|s| !s.is_empty());
 
-                        let (song_omm, artist_omm) = db.song_omm_ids(&id).unwrap_or_default();
-                        let ids: Vec<String> =
-                            song_omm.iter().chain(artist_omm.iter()).cloned().collect();
-                        let urls = crate::data::omm::fetch_artwork_urls(ids).await;
-                        let large_image = song_omm.and_then(|id| urls.get(&id).cloned());
-                        let small_image = artist_omm.and_then(|id| urls.get(&id).cloned());
+                        let artwork = artwork_for(&db, &id).await;
+                        cached_omm = artwork.omm;
+                        retries = if artwork.complete { ARTWORK_RETRIES } else { 0 };
+                        retry_at = Instant::now() + ARTWORK_RETRY_DELAY;
+                        let (large_image, small_image) = (artwork.large, artwork.small);
 
                         cached_song_info = Some(CachedSongInfo {
                             title: song.title,
@@ -104,6 +134,28 @@ impl DiscordPresence {
                         });
                     } else {
                         cached_song_info = None;
+                        cached_omm = (None, None);
+                    }
+                } else if let (Some(id), Some(info)) = (&cached_song_id, cached_song_info.as_mut())
+                {
+                    let current = db.song_omm_ids(id).unwrap_or_default();
+                    let changed = current != cached_omm;
+                    let due = retries < ARTWORK_RETRIES && Instant::now() >= retry_at;
+                    if changed || due {
+                        let artwork = artwork_for(&db, id).await;
+                        tracing::debug!(
+                            "discord artwork refresh for {id}: changed={changed} complete={} large={}",
+                            artwork.complete,
+                            artwork.large.is_some()
+                        );
+                        retries = if changed { 0 } else { retries + 1 };
+                        if artwork.complete {
+                            retries = ARTWORK_RETRIES;
+                        }
+                        retry_at = Instant::now() + ARTWORK_RETRY_DELAY;
+                        cached_omm = artwork.omm;
+                        info.large_image = artwork.large;
+                        info.small_image = artwork.small;
                     }
                 }
 

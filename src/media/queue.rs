@@ -173,6 +173,20 @@ impl Queue {
         Some(song)
     }
 
+    pub fn reset_current_song_cache(&self) {
+        *self.current_song.borrow_mut() = None;
+    }
+
+    pub fn invalidate_current_song_cache(&self) {
+        let mut cache = self.current_song.borrow_mut();
+        if cache
+            .as_ref()
+            .is_some_and(|(_, song)| song.image_id.is_none())
+        {
+            *cache = None;
+        }
+    }
+
     pub fn get_current_song_id(&self) -> Option<Cuid> {
         self.current_index
             .and_then(|idx| self.items.get(idx).cloned())

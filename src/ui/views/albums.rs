@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use crate::ui::assets::{ImageRequest, cover_uri};
 use crate::{
-    data::{db::Database, models::AlbumListItem},
+    data::{db::Database, images::priority, models::AlbumListItem},
     ui::{
         app::MainWindow,
         components::{
@@ -268,6 +268,18 @@ impl AlbumsView {
         }
     }
 
+    fn report_visible(&self, range: std::ops::Range<usize>, items_per_row: usize) {
+        let start = range.start.saturating_mul(items_per_row);
+        let end = range
+            .end
+            .saturating_mul(items_per_row)
+            .min(self.total_count);
+        let ids = (start..end)
+            .filter_map(|index| self.get_album_at(index).map(|album| album.id))
+            .collect();
+        priority::set_visible_albums(ids);
+    }
+
     fn get_album_at(&self, index: usize) -> Option<AlbumListItem> {
         let page = index / self.page_size;
         let offset = index % self.page_size;
@@ -384,6 +396,7 @@ impl Render for AlbumsView {
                         move |range, _, cx| {
                             view_handle.update(cx, |this, cx| {
                                 this.ensure_pages_for_range(range.clone(), items_per_row, cx);
+                                this.report_visible(range.clone(), items_per_row);
                             });
 
                             range

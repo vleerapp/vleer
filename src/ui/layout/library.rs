@@ -4,11 +4,11 @@ use crate::media::playback::Playback;
 use crate::media::queue::Queue;
 use crate::ui::assets::image_cache::vleer_cache;
 use crate::ui::assets::{ImageRequest, cover_uri};
-use crate::ui::components::context_menu::LibraryDataChanged;
 use crate::ui::components::context_menu::{
     ContextMenu, PinnedItemsChanged, QueueChanged, album_context_menu_items,
     artist_context_menu_items, playlist_context_menu_items, song_context_menu_items,
 };
+use crate::ui::components::context_menu::{CoversChanged, LibraryDataChanged};
 use crate::ui::components::div::flex_row;
 use crate::ui::components::icons::icon;
 use crate::ui::components::scrollbar::ScrollableElement;
@@ -119,14 +119,11 @@ impl Library {
         })
         .detach();
 
-        cx.observe_global::<LibraryDataChanged>(|this, cx| {
-            reload_pinned_items(cx);
-            if !this.last_query.is_empty() {
-                let query = this.last_query.clone();
-                this.start_search(query, false, cx);
-            }
-        })
-        .detach();
+        cx.observe_global::<LibraryDataChanged>(|this, cx| this.refresh(cx))
+            .detach();
+
+        cx.observe_global::<CoversChanged>(|this, cx| this.refresh(cx))
+            .detach();
 
         Self {
             search_input,
@@ -137,6 +134,14 @@ impl Library {
             last_query: String::new(),
             _search_task: None,
             context_menu: cx.new(|_| ContextMenu::new()),
+        }
+    }
+
+    fn refresh(&mut self, cx: &mut Context<Self>) {
+        reload_pinned_items(cx);
+        if !self.last_query.is_empty() {
+            let query = self.last_query.clone();
+            self.start_search(query, false, cx);
         }
     }
 
@@ -347,7 +352,9 @@ fn pinned_item(
         )
         .child(
             div()
+                .min_w_0()
                 .overflow_x_hidden()
+                .whitespace_nowrap()
                 .text_ellipsis()
                 .font_weight(FontWeight(500.0))
                 .child(name),

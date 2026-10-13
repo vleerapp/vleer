@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS songs (
     id TEXT PRIMARY KEY,
+    omm_id TEXT,
     title TEXT NOT NULL,
     album_id TEXT,
     file_path TEXT NOT NULL,
@@ -9,7 +10,6 @@ CREATE TABLE IF NOT EXISTS songs (
     duration INTEGER NOT NULL,
     image_id TEXT,
     image_checked INTEGER NOT NULL DEFAULT 0,
-    omm_id TEXT,
     isrc TEXT,
     track_number INTEGER,
     favorite BOOLEAN DEFAULT FALSE,

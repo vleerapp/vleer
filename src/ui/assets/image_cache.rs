@@ -18,9 +18,26 @@ use tracing::{error, trace};
 
 use crate::data::images::is_missing_image;
 use crate::ui::assets::{VleerImageLoader, is_vleer_image};
+use crate::ui::components::context_menu::CoversChanged;
 
 const BUFFER: usize = 10;
 const FRAME_WINDOW: Duration = Duration::from_millis(50);
+
+pub fn init(cx: &mut App) {
+    cx.observe_global::<CoversChanged>(|cx| {
+        let caches: Vec<Entity<VleerImageCache>> = cx
+            .default_global::<CacheRegistry>()
+            .0
+            .values()
+            .cloned()
+            .collect();
+        for cache in caches {
+            cache.update(cx, |cache, cx| cache.drop_missing(cx));
+        }
+        cx.refresh_windows();
+    })
+    .detach();
+}
 
 pub fn vleer_cache(id: impl Into<ElementId>) -> VleerImageCacheProvider {
     VleerImageCacheProvider { id: id.into() }
@@ -74,6 +91,10 @@ impl CacheItem {
     fn get(&self) -> Option<ImageResult> {
         self.0.borrow().clone()
     }
+
+    fn is_loading(&self) -> bool {
+        self.0.borrow().is_none()
+    }
 }
 
 pub struct VleerImageCache {
@@ -106,24 +127,50 @@ impl VleerImageCache {
         })
     }
 
+    fn drop_missing(&mut self, cx: &mut App) {
+        let missing: Vec<u64> = self
+            .cache
+            .iter()
+            .filter(|(_, (item, _, _))| {
+                matches!(
+                    item.get(),
+                    Some(Err(gpui::ImageCacheError::Asset(message))) if is_missing_image(message.as_ref())
+                )
+            })
+            .map(|(hash, _)| *hash)
+            .collect();
+
+        for hash in missing {
+            if let Some((_, resource, _)) = self.cache.remove(&hash) {
+                ImageSource::Resource(resource).remove_asset(cx);
+            }
+        }
+    }
+
     fn evict_stale(&mut self, window: &mut gpui::Window, cx: &mut App) {
         let cutoff = self.newest.checked_sub(FRAME_WINDOW);
         let is_visible = |used: &Instant| cutoff.is_none_or(|cutoff| *used >= cutoff);
 
-        let mut stale: Vec<(u64, Instant)> = self
-            .cache
-            .iter()
-            .filter(|(_, (_, _, u))| !is_visible(u))
-            .map(|(h, (_, _, u))| (*h, *u))
-            .collect();
-
-        if stale.len() <= BUFFER {
-            return;
+        let mut loading: Vec<u64> = Vec::new();
+        let mut stale: Vec<(u64, Instant)> = Vec::new();
+        for (hash, (item, _, used)) in &self.cache {
+            if is_visible(used) {
+                continue;
+            }
+            if item.is_loading() {
+                loading.push(*hash);
+            } else {
+                stale.push((*hash, *used));
+            }
         }
 
         stale.sort_by_key(|(_, used)| *used);
-        let evict = stale.len() - BUFFER;
-        for (hash, _) in stale.into_iter().take(evict) {
+        let overflow = stale.len().saturating_sub(BUFFER);
+        let evict = loading
+            .into_iter()
+            .chain(stale.into_iter().take(overflow).map(|(hash, _)| hash));
+
+        for hash in evict {
             let Some((item, resource, _)) = self.cache.remove(&hash) else {
                 continue;
             };

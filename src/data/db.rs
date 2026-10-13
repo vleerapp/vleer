@@ -12,7 +12,7 @@ use crate::data::{
 use anyhow::Result;
 use gpui::Global;
 use parking_lot::Mutex;
-use rusqlite::{Connection, OptionalExtension, ToSql, params};
+use rusqlite::{Connection, OptionalExtension, ToSql, params, params_from_iter};
 use rusqlite_migration::Migrations;
 use rust_embed::RustEmbed;
 use std::collections::{HashMap, HashSet};
@@ -435,6 +435,48 @@ pub struct ArtistMetadata<'a> {
     pub image: Option<(&'a str, Option<&'a [u8]>)>,
 }
 
+const SONG_LOOKUP_SELECT: &str = "SELECT s.id, s.title, s.duration,
+                        (SELECT title FROM albums WHERE id = s.album_id),
+                        COALESCE((
+                            SELECT a.name FROM songs_artists sa
+                            JOIN artists a ON a.id = sa.artist_id
+                            WHERE sa.song_id = s.id ORDER BY sa.position LIMIT 1
+                        ), ''),
+                        s.isrc
+                 FROM songs s";
+
+const ALBUM_LOOKUP_SELECT: &str = "SELECT al.id, al.title, al.upc,
+                        COALESCE((
+                            SELECT a.name FROM albums_artists aa
+                            JOIN artists a ON a.id = aa.artist_id
+                            WHERE aa.album_id = al.id ORDER BY aa.position LIMIT 1
+                        ), '')
+                 FROM albums al";
+
+fn placeholders(count: usize) -> String {
+    vec!["?"; count].join(",")
+}
+
+fn song_lookup_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SongLookup> {
+    Ok(SongLookup {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        duration: row.get(2)?,
+        album: row.get(3)?,
+        artist: row.get(4)?,
+        isrc: row.get(5)?,
+    })
+}
+
+fn album_lookup_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AlbumLookup> {
+    Ok(AlbumLookup {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        upc: row.get(2)?,
+        artist: row.get(3)?,
+    })
+}
+
 fn insert_artist_alias(
     tx: &rusqlite::Transaction<'_>,
     alias: &str,
@@ -735,6 +777,19 @@ impl Database {
         })
     }
 
+    pub fn song_album_image(&self, song_id: &Cuid) -> Result<Option<String>> {
+        let conn = self.image_write_conn.lock();
+        let image: Option<String> = conn
+            .prepare_cached(
+                "SELECT a.image_id FROM albums a
+                 JOIN songs s ON s.album_id = a.id WHERE s.id = ?1",
+            )?
+            .query_row(params![song_id], |row| row.get(0))
+            .optional()?
+            .flatten();
+        Ok(image)
+    }
+
     pub fn album_needs_image(&self, album_id: &Cuid) -> Result<bool> {
         let conn = self.image_write_conn.lock();
         let missing: Option<bool> = conn
@@ -826,6 +881,53 @@ impl Database {
         Ok(rows)
     }
 
+    pub fn songs_needing_image_among(&self, ids: &[Cuid]) -> Result<Vec<Cuid>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.image_write_conn.lock();
+        let sql = format!(
+            "SELECT id FROM songs WHERE image_checked = 0 AND image_id IS NULL AND id IN ({})",
+            placeholders(ids.len())
+        );
+        let found: HashSet<Cuid> = conn
+            .prepare(&sql)?
+            .query_map(params_from_iter(ids), |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(ids
+            .iter()
+            .filter(|id| found.contains(*id))
+            .cloned()
+            .collect())
+    }
+
+    pub fn album_songs_needing_image(&self, album_ids: &[Cuid]) -> Result<Vec<Cuid>> {
+        if album_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.image_write_conn.lock();
+        let sql = format!(
+            "SELECT s.album_id, s.id FROM songs s
+             JOIN albums a ON a.id = s.album_id
+             WHERE s.image_checked = 0 AND s.image_id IS NULL AND a.image_id IS NULL
+               AND s.album_id IN ({})
+             ORDER BY s.track_number, s.id",
+            placeholders(album_ids.len())
+        );
+        let rows: Vec<(Cuid, Cuid)> = conn
+            .prepare(&sql)?
+            .query_map(params_from_iter(album_ids), |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        let mut seen = HashSet::new();
+        Ok(rows
+            .into_iter()
+            .filter(|(album_id, _)| seen.insert(album_id.clone()))
+            .map(|(_, song_id)| song_id)
+            .collect())
+    }
+
     pub fn song_lead_artist_needs_image(&self, song_id: &Cuid) -> Result<bool> {
         let conn = self.image_write_conn.lock();
         let found: Option<i64> = conn
@@ -879,30 +981,17 @@ impl Database {
         Ok(rows)
     }
 
-    pub fn songs_needing_metadata(&self, limit: i64) -> Result<Vec<SongLookup>> {
+    pub fn songs_needing_metadata(
+        &self,
+        limit: i64,
+        checked_only: bool,
+    ) -> Result<Vec<SongLookup>> {
         let conn = self.image_write_conn.lock();
         let rows = conn
-            .prepare_cached(
-                "SELECT s.id, s.title, s.duration,
-                        (SELECT title FROM albums WHERE id = s.album_id),
-                        COALESCE((
-                            SELECT a.name FROM songs_artists sa
-                            JOIN artists a ON a.id = sa.artist_id
-                            WHERE sa.song_id = s.id ORDER BY sa.position LIMIT 1
-                        ), ''),
-                        s.isrc
-                 FROM songs s WHERE s.omm_id IS NULL LIMIT ?1",
-            )?
-            .query_map(params![limit], |row| {
-                Ok(SongLookup {
-                    id: row.get(0)?,
-                    title: row.get(1)?,
-                    duration: row.get(2)?,
-                    album: row.get(3)?,
-                    artist: row.get(4)?,
-                    isrc: row.get(5)?,
-                })
-            })?
+            .prepare_cached(&format!(
+                "{SONG_LOOKUP_SELECT} WHERE s.omm_id IS NULL AND (?2 = 0 OR s.image_checked = 1) LIMIT ?1"
+            ))?
+            .query_map(params![limit, checked_only as i64], song_lookup_from_row)?
             .collect::<rusqlite::Result<_>>()?;
         Ok(rows)
     }
@@ -910,22 +999,63 @@ impl Database {
     pub fn albums_needing_metadata(&self, limit: i64) -> Result<Vec<AlbumLookup>> {
         let conn = self.image_write_conn.lock();
         let rows = conn
-            .prepare_cached(
-                "SELECT al.id, al.title, al.upc,
-                        COALESCE((
-                            SELECT a.name FROM albums_artists aa
-                            JOIN artists a ON a.id = aa.artist_id
-                            WHERE aa.album_id = al.id ORDER BY aa.position LIMIT 1
-                        ), '')
-                 FROM albums al WHERE al.omm_id IS NULL LIMIT ?1",
-            )?
-            .query_map(params![limit], |row| {
-                Ok(AlbumLookup {
-                    id: row.get(0)?,
-                    title: row.get(1)?,
-                    upc: row.get(2)?,
-                    artist: row.get(3)?,
-                })
+            .prepare_cached(&format!(
+                "{ALBUM_LOOKUP_SELECT} WHERE al.omm_id IS NULL LIMIT ?1"
+            ))?
+            .query_map(params![limit], album_lookup_from_row)?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    pub fn songs_needing_metadata_among(&self, ids: &[Cuid]) -> Result<Vec<SongLookup>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.image_write_conn.lock();
+        let sql = format!(
+            "{SONG_LOOKUP_SELECT} WHERE s.omm_id IS NULL AND s.id IN ({})",
+            placeholders(ids.len())
+        );
+        let mut rows: Vec<SongLookup> = conn
+            .prepare(&sql)?
+            .query_map(params_from_iter(ids), song_lookup_from_row)?
+            .collect::<rusqlite::Result<_>>()?;
+        rows.sort_by_key(|row| ids.iter().position(|id| *id == row.id));
+        Ok(rows)
+    }
+
+    pub fn albums_needing_metadata_among(&self, ids: &[Cuid]) -> Result<Vec<AlbumLookup>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.image_write_conn.lock();
+        let sql = format!(
+            "{ALBUM_LOOKUP_SELECT} WHERE al.omm_id IS NULL AND al.id IN ({})",
+            placeholders(ids.len())
+        );
+        let mut rows: Vec<AlbumLookup> = conn
+            .prepare(&sql)?
+            .query_map(params_from_iter(ids), album_lookup_from_row)?
+            .collect::<rusqlite::Result<_>>()?;
+        rows.sort_by_key(|row| ids.iter().position(|id| *id == row.id));
+        Ok(rows)
+    }
+
+    pub fn lead_artists_needing_metadata(&self, song_ids: &[Cuid]) -> Result<Vec<(Cuid, String)>> {
+        if song_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.image_write_conn.lock();
+        let sql = format!(
+            "SELECT DISTINCT ar.id, ar.name FROM songs_artists sa
+             JOIN artists ar ON ar.id = sa.artist_id
+             WHERE sa.position = 0 AND ar.omm_id IS NULL AND sa.song_id IN ({})",
+            placeholders(song_ids.len())
+        );
+        let rows = conn
+            .prepare(&sql)?
+            .query_map(params_from_iter(song_ids), |row| {
+                Ok((row.get(0)?, row.get(1)?))
             })?
             .collect::<rusqlite::Result<_>>()?;
         Ok(rows)

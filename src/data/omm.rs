@@ -1,8 +1,9 @@
 use anyhow::{Result, anyhow};
+use futures::StreamExt;
 use parking_lot::Mutex;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tracing::{debug, warn};
@@ -12,7 +13,10 @@ use ureq::http::Response;
 use crate::data::db::{
     AlbumLookup, AlbumMetadata, ArtistMetadata, Database, SongBackfill, SongLookup,
 };
-use crate::data::images::{prepare_image, write_with_retry};
+use crate::data::images::priority::{self, Progress, Tier};
+use crate::data::images::{
+    prepare_image, resolve_album_image, resolve_song_file_image, write_with_retry,
+};
 use crate::data::metadata::{normalize_isrc, normalize_upc};
 use crate::data::models::Cuid;
 
@@ -25,6 +29,14 @@ const ARTWORK_SIZE: &str = "512";
 const REQUEST_INTERVAL: Duration = Duration::from_millis(50);
 const RATE_LIMIT_RETRIES: u32 = 5;
 const MAX_RETRY_AFTER_SECS: u64 = 60;
+const MAX_CONSECUTIVE_FAILURES: usize = 5;
+const MAX_BACKOFF_ROUNDS: usize = 8;
+const BULK_CONCURRENCY: usize = 3;
+const BACKOFF_STEP: Duration = Duration::from_secs(15);
+const MAX_BACKOFF: Duration = Duration::from_secs(120);
+const FAILED_HOLD: Duration = Duration::from_secs(30);
+const MAX_ITEM_ATTEMPTS: u32 = 3;
+const DONE_HOLD: Duration = Duration::from_secs(3600);
 
 type PreparedImage = (String, Option<Vec<u8>>);
 
@@ -228,6 +240,9 @@ fn get_json<T: serde::de::DeserializeOwned>(
     let url = format!("{BASE_URL}{path}");
 
     for _ in 0..=RATE_LIMIT_RETRIES {
+        if cancel.load(Ordering::Acquire) {
+            return Err(anyhow!("metadata pass cancelled"));
+        }
         throttle();
         let mut request = agent().get(&url);
         for (key, value) in query {
@@ -251,6 +266,10 @@ fn get_json<T: serde::de::DeserializeOwned>(
             }
             status => {
                 let body = response.body_mut().read_to_string().unwrap_or_default();
+                if status == 504 && body.contains("Match failed") {
+                    debug!("metadata request: GET {url} {query:?} -> no match");
+                    return Ok(None);
+                }
                 warn!("metadata request: GET {url} {query:?} -> HTTP {status}, body: {body}");
                 return Err(anyhow!("{path} returned HTTP {status}"));
             }
@@ -527,16 +546,213 @@ pub async fn fetch_artwork_urls(ids: Vec<String>) -> HashMap<String, String> {
     }
 }
 
-async fn resolve_artist_metadata(
+#[derive(Default)]
+struct Skip {
+    held: HashMap<Cuid, (Instant, bool)>,
+    attempts: HashMap<Cuid, u32>,
+    claimed: HashSet<Cuid>,
+}
+
+impl Skip {
+    fn contains(&self, id: &Cuid) -> bool {
+        self.claimed.contains(id)
+            || self
+                .held
+                .get(id)
+                .is_some_and(|(until, _)| *until > Instant::now())
+    }
+
+    fn claim(&mut self, id: &Cuid) -> bool {
+        if self.contains(id) {
+            return false;
+        }
+        self.claimed.insert(id.clone());
+        true
+    }
+
+    fn release(&mut self, id: &Cuid) {
+        self.claimed.remove(id);
+    }
+
+    fn hold(&mut self, id: Cuid, duration: Duration) {
+        self.held.insert(id, (Instant::now() + duration, false));
+    }
+
+    fn fail(&mut self, id: Cuid) {
+        let attempts = self.attempts.entry(id.clone()).or_default();
+        *attempts += 1;
+        if *attempts >= MAX_ITEM_ATTEMPTS {
+            self.hold(id, DONE_HOLD);
+        } else {
+            self.held.insert(id, (Instant::now() + FAILED_HOLD, true));
+        }
+    }
+
+    fn active(&self) -> usize {
+        let now = Instant::now();
+        self.held.values().filter(|(until, _)| *until > now).count()
+    }
+
+    fn retry_in(&self) -> Option<Duration> {
+        let now = Instant::now();
+        self.held
+            .values()
+            .filter(|(until, failed)| *failed && *until > now)
+            .map(|(until, _)| *until - now)
+            .min()
+    }
+
+    fn clear(&mut self) {
+        self.held.clear();
+        self.attempts.clear();
+    }
+}
+
+#[derive(Default)]
+pub struct MetadataCounts {
+    pub songs: usize,
+    pub artists: usize,
+    pub albums: usize,
+    pub bulk: usize,
+}
+
+#[derive(Clone)]
+struct Pass {
     db: Database,
-    artist_id: Cuid,
-    name: String,
     cancel: Arc<AtomicBool>,
-) -> Result<bool> {
+    skip: Arc<Mutex<Skip>>,
+    failures: Arc<AtomicUsize>,
+    rounds: Arc<AtomicUsize>,
+    counts: Arc<Mutex<MetadataCounts>>,
+    progress: Arc<Mutex<Progress>>,
+}
+
+impl Pass {
+    fn cancelled(&self) -> bool {
+        self.cancel.load(Ordering::Acquire)
+    }
+
+    fn offline(&self) -> bool {
+        self.failures.load(Ordering::Acquire) >= MAX_CONSECUTIVE_FAILURES
+    }
+
+    async fn recover(&self) -> bool {
+        if self.cancelled() {
+            return false;
+        }
+        if !self.offline() {
+            return true;
+        }
+
+        let round = self.rounds.fetch_add(1, Ordering::AcqRel) + 1;
+        if round > MAX_BACKOFF_ROUNDS {
+            warn!("metadata lookups kept failing, giving up until the next scan");
+            return false;
+        }
+
+        let wait = (BACKOFF_STEP * round as u32).min(MAX_BACKOFF);
+        warn!("metadata lookups failing, retrying in {wait:?} (round {round})");
+        if !self.sleep_or_wake(wait).await || self.cancelled() {
+            return false;
+        }
+
+        self.skip.lock().clear();
+        self.failures.store(0, Ordering::Release);
+        true
+    }
+
+    async fn sleep_or_wake(&self, wait: Duration) -> bool {
+        let seen = priority::WAKE.seen();
+        let cancel = self.cancel.clone();
+        let sleep = blocking(move || sleep_unless_cancelled(wait, &cancel));
+        match futures::future::select(Box::pin(priority::WAKE.changed(seen)), sleep).await {
+            futures::future::Either::Left(_) => false,
+            futures::future::Either::Right((slept, _)) => slept.is_ok_and(|result| result.is_ok()),
+        }
+    }
+
+    async fn idle(&self) {
+        let seen = priority::WAKE.seen();
+        let retry = self.skip.lock().retry_in();
+        match retry {
+            Some(wait) => {
+                let cancel = self.cancel.clone();
+                let sleep = blocking(move || sleep_unless_cancelled(wait, &cancel));
+                futures::future::select(Box::pin(priority::WAKE.changed(seen)), sleep).await;
+            }
+            None => priority::WAKE.changed(seen).await,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Outcome {
+    Resolved,
+    ResolvedWithImage,
+    Unresolved,
+    Skipped,
+}
+
+enum Work {
+    Song(SongLookup, Vec<SongResource>),
+    Artist(Cuid, String),
+    Album(AlbumLookup, Vec<AlbumResource>),
+}
+
+impl Work {
+    fn id(&self) -> Cuid {
+        match self {
+            Work::Song(song, _) => song.id.clone(),
+            Work::Artist(id, _) => id.clone(),
+            Work::Album(album, _) => album.id.clone(),
+        }
+    }
+}
+
+fn priority_work(db: &Database, skip: &Skip) -> Option<(Tier, Work)> {
+    let snapshot = priority::snapshot();
+    let playing: Vec<Cuid> = snapshot.playing.into_iter().collect();
+
+    let song = |ids: &[Cuid]| {
+        db.songs_needing_metadata_among(ids)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|song| !skip.contains(&song.id))
+    };
+    let artist = |ids: &[Cuid]| {
+        db.lead_artists_needing_metadata(ids)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|(id, _)| !skip.contains(id))
+    };
+
+    if let Some(found) = song(&playing) {
+        return Some((Tier::Playing, Work::Song(found, Vec::new())));
+    }
+    if let Some((id, name)) = artist(&playing) {
+        return Some((Tier::Playing, Work::Artist(id, name)));
+    }
+    if let Some(found) = song(&snapshot.songs) {
+        return Some((Tier::Visible, Work::Song(found, Vec::new())));
+    }
+    if let Some(found) = db
+        .albums_needing_metadata_among(&snapshot.albums)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|album| !skip.contains(&album.id))
+    {
+        return Some((Tier::Visible, Work::Album(found, Vec::new())));
+    }
+    artist(&snapshot.songs).map(|(id, name)| (Tier::Visible, Work::Artist(id, name)))
+}
+
+async fn resolve_artist_metadata(pass: &Pass, artist_id: Cuid, name: String) -> Result<Outcome> {
+    let db = pass.db.clone();
+    let cancel = pass.cancel.clone();
     let trimmed = name.trim().to_string();
     if trimmed.is_empty() || trimmed.chars().count() > MAX_NAME_CHARS {
         write_with_retry(move || db.mark_artist_metadata_missing(&artist_id)).await?;
-        return Ok(false);
+        return Ok(Outcome::Unresolved);
     }
 
     let identified = blocking(move || identify_artist(&trimmed, &cancel))
@@ -545,7 +761,7 @@ async fn resolve_artist_metadata(
 
     let Some(artist) = identified else {
         write_with_retry(move || db.mark_artist_metadata_missing(&artist_id)).await?;
-        return Ok(false);
+        return Ok(Outcome::Unresolved);
     };
 
     let image = match artist
@@ -558,6 +774,7 @@ async fn resolve_artist_metadata(
         None => None,
     };
 
+    let has_artwork = image.is_some();
     let ArtistResource {
         id: omm_id,
         attributes,
@@ -574,59 +791,35 @@ async fn resolve_artist_metadata(
     })
     .await?;
 
-    Ok(stored.is_some())
+    Ok(outcome_of(stored.is_some(), has_artwork))
 }
 
-pub async fn warm_artist_metadata(db: Database, cancel: Arc<AtomicBool>) -> usize {
-    let _pass = pass_lock().lock().await;
-    let mut resolved = 0usize;
-
-    loop {
-        if cancel.load(Ordering::Acquire) {
-            break;
-        }
-
-        let batch = match db.artists_needing_metadata(WARM_BATCH) {
-            Ok(batch) if !batch.is_empty() => batch,
-            Ok(_) => break,
-            Err(e) => {
-                warn!("metadata pass could not list artists: {e}");
-                break;
-            }
-        };
-
-        for (artist_id, name) in batch {
-            if cancel.load(Ordering::Acquire) {
-                return resolved;
-            }
-
-            match resolve_artist_metadata(db.clone(), artist_id, name, cancel.clone()).await {
-                Ok(true) => resolved += 1,
-                Ok(false) => {}
-                Err(e) => {
-                    warn!("metadata pass stopped: {e}");
-                    return resolved;
-                }
-            }
-        }
+fn outcome_of(stored: bool, image: bool) -> Outcome {
+    match (stored, image) {
+        (true, true) => Outcome::ResolvedWithImage,
+        (true, false) => Outcome::Resolved,
+        (false, _) => Outcome::Unresolved,
     }
-
-    resolved
 }
 
 async fn resolve_song_metadata(
-    db: Database,
+    pass: &Pass,
     song: SongLookup,
     candidates: Vec<SongResource>,
-    cancel: Arc<AtomicBool>,
-) -> Result<bool> {
+) -> Result<Outcome> {
+    let db = pass.db.clone();
+    let cancel = pass.cancel.clone();
     let song_id = song.id.clone();
     let title_for_log = song.title.clone();
     let title = song.title.trim();
     if title.is_empty() || title.chars().count() > MAX_NAME_CHARS {
         write_with_retry(move || db.mark_song_metadata_missing(&song_id)).await?;
-        return Ok(false);
+        return Ok(Outcome::Unresolved);
     }
+
+    let has_image = resolve_song_file_image(db.clone(), song_id.clone())
+        .await
+        .is_ok();
 
     let local_album = song.album.clone();
     let identified = blocking(move || {
@@ -640,12 +833,9 @@ async fn resolve_song_metadata(
 
     let Some(matched) = identified else {
         write_with_retry(move || db.mark_song_metadata_missing(&song_id)).await?;
-        return Ok(false);
+        return Ok(Outcome::Unresolved);
     };
 
-    let has_image = db
-        .song_image_target(&song_id)?
-        .is_some_and(|target| target.image_id.is_some());
     let song_image = match matched
         .attributes
         .artwork_url
@@ -677,6 +867,7 @@ async fn resolve_song_metadata(
         _ => None,
     };
 
+    let has_artwork = song_image.is_some() || album_image.is_some();
     let isrc = matched.attributes.isrc.as_deref().and_then(normalize_isrc);
     let omm_id = matched.id;
     let attributes = matched.attributes;
@@ -703,86 +894,24 @@ async fn resolve_song_metadata(
     })
     .await?;
 
-    Ok(stored)
-}
-
-pub async fn warm_song_metadata(db: Database, cancel: Arc<AtomicBool>) -> usize {
-    let _pass = pass_lock().lock().await;
-    let mut resolved = 0usize;
-
-    loop {
-        if cancel.load(Ordering::Acquire) {
-            break;
-        }
-
-        let batch = match db.songs_needing_metadata(WARM_BATCH) {
-            Ok(batch) if !batch.is_empty() => batch,
-            Ok(_) => break,
-            Err(e) => {
-                warn!("metadata pass could not list songs: {e}");
-                break;
-            }
-        };
-
-        let isrcs: Vec<String> = batch
-            .iter()
-            .filter_map(|song| song.isrc.clone())
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect();
-        let by_isrc = if isrcs.is_empty() {
-            HashMap::new()
-        } else {
-            let lookup_cancel = cancel.clone();
-            match blocking(move || songs_by_isrc(&isrcs, &lookup_cancel)).await {
-                Ok(Ok(found)) => found,
-                Ok(Err(e)) => {
-                    warn!("isrc batch lookup failed, falling back to identify: {e}");
-                    HashMap::new()
-                }
-                Err(_) => HashMap::new(),
-            }
-        };
-
-        for song in batch {
-            if cancel.load(Ordering::Acquire) {
-                return resolved;
-            }
-
-            let song_id = song.id.clone();
-            let song_title = song.title.clone();
-            let candidates = song
-                .isrc
-                .as_deref()
-                .and_then(normalize_isrc)
-                .and_then(|isrc| by_isrc.get(&isrc).cloned())
-                .unwrap_or_default();
-            match resolve_song_metadata(db.clone(), song, candidates, cancel.clone()).await {
-                Ok(true) => resolved += 1,
-                Ok(false) => {}
-                Err(e) => {
-                    warn!("song metadata pass stopped at {song_id} ({song_title}): {e:#}");
-                    return resolved;
-                }
-            }
-        }
-    }
-
-    resolved
+    Ok(outcome_of(stored, has_artwork))
 }
 
 async fn resolve_album_metadata(
-    db: Database,
+    pass: &Pass,
     album: AlbumLookup,
     candidates: Vec<AlbumResource>,
-    cancel: Arc<AtomicBool>,
-) -> Result<bool> {
+) -> Result<Outcome> {
+    let db = pass.db.clone();
+    let cancel = pass.cancel.clone();
     let album_id = album.id.clone();
     let title = album.title.trim();
     if title.is_empty() || title.chars().count() > MAX_NAME_CHARS {
         write_with_retry(move || db.mark_album_metadata_missing(&album_id)).await?;
-        return Ok(false);
+        return Ok(Outcome::Unresolved);
     }
+
+    let _ = resolve_album_image(db.clone(), album_id.clone()).await;
 
     let identified = blocking(move || {
         if let Some(matched) = pick_album(candidates, &album) {
@@ -795,7 +924,7 @@ async fn resolve_album_metadata(
 
     let Some(matched) = identified else {
         write_with_retry(move || db.mark_album_metadata_missing(&album_id)).await?;
-        return Ok(false);
+        return Ok(Outcome::Unresolved);
     };
 
     let image = match matched
@@ -813,6 +942,7 @@ async fn resolve_album_metadata(
         _ => None,
     };
 
+    let has_artwork = image.is_some();
     let upc = matched.attributes.upc.as_deref().and_then(normalize_upc);
     let omm_id = matched.id;
     let stored = write_with_retry(move || {
@@ -827,72 +957,289 @@ async fn resolve_album_metadata(
     })
     .await?;
 
-    Ok(stored)
+    Ok(outcome_of(stored, has_artwork))
 }
 
-pub async fn warm_album_metadata(db: Database, cancel: Arc<AtomicBool>) -> usize {
-    let _pass = pass_lock().lock().await;
-    let mut resolved = 0usize;
+async fn run_work(pass: &Pass, tier: Tier, work: Work) -> Result<Outcome> {
+    let id = work.id();
+    if !pass.skip.lock().claim(&id) {
+        return Ok(Outcome::Skipped);
+    }
+    let bump: fn(&mut MetadataCounts) = match &work {
+        Work::Song(..) => |counts| counts.songs += 1,
+        Work::Artist(..) => |counts| counts.artists += 1,
+        Work::Album(..) => |counts| counts.albums += 1,
+    };
 
-    loop {
-        if cancel.load(Ordering::Acquire) {
-            break;
-        }
+    let outcome = match work {
+        Work::Song(song, candidates) => resolve_song_metadata(pass, song, candidates).await,
+        Work::Artist(artist_id, name) => resolve_artist_metadata(pass, artist_id, name).await,
+        Work::Album(album, candidates) => resolve_album_metadata(pass, album, candidates).await,
+    };
 
-        let batch = match db.albums_needing_metadata(WARM_BATCH) {
-            Ok(batch) if !batch.is_empty() => batch,
-            Ok(_) => break,
-            Err(e) => {
-                warn!("metadata pass could not list albums: {e}");
-                break;
+    let mut skip = pass.skip.lock();
+    skip.release(&id);
+    match &outcome {
+        Ok(Outcome::Resolved | Outcome::ResolvedWithImage | Outcome::Unresolved) => {
+            pass.failures.store(0, Ordering::Release);
+            pass.rounds.store(0, Ordering::Release);
+            if tier != Tier::Bulk {
+                skip.hold(id.clone(), DONE_HOLD);
             }
-        };
-
-        let upcs: Vec<String> = batch
-            .iter()
-            .filter_map(|album| album.upc.clone())
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect();
-        let by_upc = if upcs.is_empty() {
-            HashMap::new()
-        } else {
-            let lookup_cancel = cancel.clone();
-            match blocking(move || albums_by_upc(&upcs, &lookup_cancel)).await {
-                Ok(Ok(found)) => found,
-                Ok(Err(e)) => {
-                    warn!("upc batch lookup failed, falling back to identify: {e}");
-                    HashMap::new()
+            drop(skip);
+            if matches!(outcome, Ok(Outcome::Resolved | Outcome::ResolvedWithImage)) {
+                debug!("metadata resolved for {id} tier={tier:?}");
+                let mut counts = pass.counts.lock();
+                bump(&mut counts);
+                if tier == Tier::Bulk {
+                    counts.bulk += 1;
                 }
-                Err(_) => HashMap::new(),
             }
-        };
-
-        for album in batch {
-            if cancel.load(Ordering::Acquire) {
-                return resolved;
+            if matches!(outcome, Ok(Outcome::ResolvedWithImage)) {
+                pass.progress.lock().changed(tier);
             }
+        }
+        Ok(Outcome::Skipped) => {}
+        Err(e) => {
+            warn!("metadata lookup for {id} failed: {e:#}");
+            pass.failures.fetch_add(1, Ordering::AcqRel);
+            skip.fail(id);
+        }
+    }
 
-            let album_id = album.id.clone();
-            let album_title = album.title.clone();
+    outcome
+}
+
+async fn song_works(pass: &Pass, batch: Vec<SongLookup>) -> Vec<Work> {
+    let isrcs: Vec<String> = batch
+        .iter()
+        .filter_map(|song| song.isrc.clone())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let by_isrc = if isrcs.is_empty() {
+        HashMap::new()
+    } else {
+        let lookup_cancel = pass.cancel.clone();
+        match blocking(move || songs_by_isrc(&isrcs, &lookup_cancel)).await {
+            Ok(Ok(found)) => found,
+            Ok(Err(e)) => {
+                warn!("isrc batch lookup failed, falling back to identify: {e}");
+                HashMap::new()
+            }
+            Err(_) => HashMap::new(),
+        }
+    };
+
+    batch
+        .into_iter()
+        .map(|song| {
+            let candidates = song
+                .isrc
+                .as_deref()
+                .and_then(normalize_isrc)
+                .and_then(|isrc| by_isrc.get(&isrc).cloned())
+                .unwrap_or_default();
+            Work::Song(song, candidates)
+        })
+        .collect()
+}
+
+async fn album_works(pass: &Pass, batch: Vec<AlbumLookup>) -> Vec<Work> {
+    let upcs: Vec<String> = batch
+        .iter()
+        .filter_map(|album| album.upc.clone())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let by_upc = if upcs.is_empty() {
+        HashMap::new()
+    } else {
+        let lookup_cancel = pass.cancel.clone();
+        match blocking(move || albums_by_upc(&upcs, &lookup_cancel)).await {
+            Ok(Ok(found)) => found,
+            Ok(Err(e)) => {
+                warn!("upc batch lookup failed, falling back to identify: {e}");
+                HashMap::new()
+            }
+            Err(_) => HashMap::new(),
+        }
+    };
+
+    batch
+        .into_iter()
+        .map(|album| {
             let candidates = album
                 .upc
                 .as_deref()
                 .and_then(|upc| by_upc.get(upc_key(upc)))
                 .cloned()
                 .unwrap_or_default();
-            match resolve_album_metadata(db.clone(), album, candidates, cancel.clone()).await {
-                Ok(true) => resolved += 1,
-                Ok(false) => {}
-                Err(e) => {
-                    warn!("album metadata pass stopped at {album_id} ({album_title}): {e:#}");
-                    return resolved;
-                }
+            Work::Album(album, candidates)
+        })
+        .collect()
+}
+
+fn unskipped<T>(batch: Vec<T>, pass: &Pass, id: impl Fn(&T) -> &Cuid) -> Vec<T> {
+    let skip = pass.skip.lock();
+    batch
+        .into_iter()
+        .filter(|item| !skip.contains(id(item)))
+        .collect()
+}
+
+enum Bulk {
+    Works(Vec<Work>),
+    WaitFile,
+    Done,
+}
+
+async fn next_bulk(pass: &Pass) -> Bulk {
+    let limit = WARM_BATCH + pass.skip.lock().active() as i64;
+    let file_busy = priority::file_busy();
+
+    match pass.db.songs_needing_metadata(limit, file_busy) {
+        Ok(batch) => {
+            let batch = unskipped(batch, pass, |song| &song.id);
+            if !batch.is_empty() {
+                return Bulk::Works(song_works(pass, batch).await);
             }
+        }
+        Err(e) => {
+            warn!("metadata pass could not list songs: {e}");
+            return Bulk::Done;
         }
     }
 
-    resolved
+    match pass.db.artists_needing_metadata(limit) {
+        Ok(batch) => {
+            let batch = unskipped(batch, pass, |(id, _)| id);
+            if !batch.is_empty() {
+                return Bulk::Works(
+                    batch
+                        .into_iter()
+                        .map(|(id, name)| Work::Artist(id, name))
+                        .collect(),
+                );
+            }
+        }
+        Err(e) => {
+            warn!("metadata pass could not list artists: {e}");
+            return Bulk::Done;
+        }
+    }
+
+    match pass.db.albums_needing_metadata(limit) {
+        Ok(batch) => {
+            let batch = unskipped(batch, pass, |album| &album.id);
+            if !batch.is_empty() {
+                return Bulk::Works(album_works(pass, batch).await);
+            }
+        }
+        Err(e) => {
+            warn!("metadata pass could not list albums: {e}");
+            return Bulk::Done;
+        }
+    }
+
+    if file_busy {
+        Bulk::WaitFile
+    } else {
+        Bulk::Done
+    }
+}
+
+async fn bulk_item(pass: &Pass, work: Work) {
+    if pass.cancelled() || pass.offline() {
+        return;
+    }
+    let _ = run_work(pass, Tier::Bulk, work).await;
+}
+
+async fn bulk_loop(pass: &Pass, on_idle: &(impl Fn(&MetadataCounts) + Send + Sync)) {
+    let mut gave_up = false;
+
+    loop {
+        if pass.cancelled() {
+            return;
+        }
+        if gave_up {
+            pass.idle().await;
+            continue;
+        }
+
+        match next_bulk(pass).await {
+            Bulk::Works(works) => {
+                futures::stream::iter(works)
+                    .for_each_concurrent(BULK_CONCURRENCY, |work| bulk_item(pass, work))
+                    .await;
+                if !pass.recover().await {
+                    gave_up = !pass.cancelled();
+                }
+            }
+            Bulk::WaitFile => {
+                let seen = priority::FILE_PROGRESS.seen();
+                futures::future::select(
+                    Box::pin(priority::FILE_PROGRESS.changed(seen)),
+                    Box::pin(priority::WAKE.changed(priority::WAKE.seen())),
+                )
+                .await;
+            }
+            Bulk::Done => {
+                pass.progress.lock().flush();
+                let report = {
+                    let mut counts = pass.counts.lock();
+                    (counts.bulk > 0).then(|| std::mem::take(&mut *counts))
+                };
+                if let Some(counts) = report {
+                    on_idle(&counts);
+                }
+                pass.idle().await;
+            }
+        }
+    }
+}
+
+async fn priority_loop(pass: &Pass) {
+    loop {
+        if pass.cancelled() {
+            return;
+        }
+
+        let next = priority_work(&pass.db, &pass.skip.lock());
+        match next {
+            Some((tier, work)) => {
+                let _ = run_work(pass, tier, work).await;
+            }
+            None => pass.idle().await,
+        }
+    }
+}
+
+pub async fn warm_metadata(
+    db: Database,
+    cancel: Arc<AtomicBool>,
+    progress: Progress,
+    on_idle: impl Fn(&MetadataCounts) + Send + Sync,
+) {
+    let _pass = pass_lock().lock().await;
+    let pass = Pass {
+        db,
+        cancel,
+        skip: Arc::new(Mutex::new(Skip::default())),
+        failures: Arc::new(AtomicUsize::new(0)),
+        rounds: Arc::new(AtomicUsize::new(0)),
+        counts: Arc::new(Mutex::new(MetadataCounts::default())),
+        progress: Arc::new(Mutex::new(progress)),
+    };
+
+    futures::future::join(priority_loop(&pass), bulk_loop(&pass, &on_idle)).await;
+
+    pass.progress.lock().flush();
+    let counts = std::mem::take(&mut *pass.counts.lock());
+    if counts.bulk > 0 {
+        on_idle(&counts);
+    }
 }
 
 #[cfg(test)]
@@ -935,6 +1282,91 @@ mod tests {
                 .iter()
                 .all(|c| c.len() <= MAX_LOOKUP_CHARS)
         );
+    }
+
+    #[test]
+    fn skip_claims_and_gives_up_after_repeated_failures() {
+        let id = Cuid::for_genre("x");
+        let mut skip = Skip::default();
+        assert!(skip.claim(&id));
+        assert!(!skip.claim(&id));
+        skip.release(&id);
+        assert!(skip.claim(&id));
+        skip.release(&id);
+
+        skip.fail(id.clone());
+        assert!(skip.contains(&id));
+        assert!(skip.retry_in().is_some());
+        skip.fail(id.clone());
+        skip.fail(id.clone());
+        assert!(skip.retry_in().is_none());
+        assert!(skip.contains(&id));
+        skip.clear();
+        assert!(!skip.contains(&id));
+    }
+
+    #[test]
+    fn priority_work_prefers_playing_then_visible_and_respects_skip() {
+        use crate::data::db::{BatchTrack, ScanCache};
+
+        let path =
+            std::path::PathBuf::from(format!("/tmp/vleer_omm_prio_{}.db", std::process::id()));
+        let db = Database::new(&path).unwrap();
+        let paths = ["/a.flac", "/b.flac", "/c.flac"];
+        let tracks: Vec<BatchTrack> = paths
+            .iter()
+            .map(|file_path| BatchTrack {
+                title: "T",
+                artists: &[],
+                genres: &[],
+                album: None,
+                album_artist: None,
+                file_path,
+                audio_hash: file_path,
+                duration: 1000,
+                track_number: None,
+                year: None,
+                recheck_image: false,
+                file_size: 1,
+                file_modified: 1,
+                lufs: None,
+                isrc: None,
+                upc: None,
+            })
+            .collect();
+        db.upsert_tracks_batch(&tracks, &mut ScanCache::default())
+            .unwrap();
+        let id = |path: &str| db.get_song_by_path(path).unwrap().unwrap().id;
+        let (a, b, c) = (id("/a.flac"), id("/b.flac"), id("/c.flac"));
+
+        priority::set_playing(Some(c.clone()));
+        priority::set_visible_songs(vec![b.clone(), a.clone()]);
+
+        let mut skip = Skip::default();
+        let (tier, work) = priority_work(&db, &skip).unwrap();
+        assert!(tier == Tier::Playing && work.id() == c);
+
+        skip.hold(c.clone(), Duration::from_secs(60));
+        let (tier, work) = priority_work(&db, &skip).unwrap();
+        assert!(tier == Tier::Visible && work.id() == b);
+
+        skip.hold(b, Duration::from_secs(60));
+        skip.hold(a, Duration::from_secs(60));
+        assert!(priority_work(&db, &skip).is_none());
+
+        priority::set_playing(None);
+        priority::clear_visible();
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(format!("{}-wal", path.display()));
+        let _ = std::fs::remove_file(format!("{}-shm", path.display()));
+    }
+
+    #[test]
+    fn wake_signal_releases_waiters() {
+        let signal = priority::Signal::new();
+        let seen = signal.seen();
+        signal.fire();
+        futures::executor::block_on(signal.changed(seen));
     }
 
     #[test]

@@ -11,7 +11,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::{
-    data::{config::Config, models::Cuid},
+    data::{config::Config, images::priority, models::Cuid},
     media::{
         playback::Playback,
         queue::{Queue, RepeatMode},
@@ -20,7 +20,10 @@ use crate::{
     ui::{
         components::{
             button::Button,
-            context_menu::{ContextMenu, QueueChanged, song_context_menu_items},
+            context_menu::{
+                ContextMenu, CoversChanged, LibraryDataChanged, QueueChanged,
+                song_context_menu_items,
+            },
             div::{flex_col, flex_row},
             icons::{self, icon},
             progress_bar::progress_slider,
@@ -255,6 +258,18 @@ impl Player {
         })
         .detach();
 
+        cx.observe_global::<LibraryDataChanged>(|_this, cx| {
+            cx.global::<Queue>().reset_current_song_cache();
+            cx.notify();
+        })
+        .detach();
+
+        cx.observe_global::<CoversChanged>(|_this, cx| {
+            cx.global::<Queue>().invalidate_current_song_cache();
+            cx.notify();
+        })
+        .detach();
+
         cx.spawn(async move |this, cx: &mut AsyncApp| {
             loop {
                 cx.background_executor()
@@ -346,6 +361,8 @@ impl Render for Player {
                 Vec<Range<usize>>,
             )>
         };
+
+        priority::set_playing(self.cached_song_data.as_ref().map(|c| c.id.clone()));
 
         let is_playing = cx.global::<Playback>().get_playing();
         let volume = cx.global::<Playback>().get_volume();
