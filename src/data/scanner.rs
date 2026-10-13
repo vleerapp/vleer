@@ -17,6 +17,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::data::config::Config;
 use crate::data::db::{BatchTrack, Database, ScanCache};
+use crate::data::images::priority::{self, Progress};
 use crate::data::metadata::{AudioMetadata, read_track};
 use crate::data::telemetry::Telemetry;
 use crate::ui::components::context_menu::{BackgroundUiEvent, BackgroundUiNotifier};
@@ -28,8 +29,8 @@ const SUPPORTED_EXTENSIONS: &[&str] = &[
     "aac", "aiff", "aif", "flac", "mp3", "mp4", "m4a", "mp4a", "ogg", "oga", "opus", "wav", "wv",
 ];
 
-const READ_CHUNK_SIZE: usize = 4096;
 const DB_FLUSH_SIZE: usize = 4096;
+const FLUSH_INTERVAL: Duration = Duration::from_secs(1);
 const UI_REFRESH_INTERVAL: Duration = Duration::from_millis(500);
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -67,6 +68,8 @@ pub struct ScannedTrack {
     pub recheck_image: bool,
 }
 
+type ReadOutcome = Option<(Option<ScannedTrack>, bool)>;
+
 #[derive(Default)]
 struct ScanOptions {
     force: bool,
@@ -83,7 +86,7 @@ pub struct Scanner {
     pending_changed_paths: Arc<AsyncMutex<HashSet<PathBuf>>>,
     incremental_worker_running: Arc<AtomicBool>,
 
-    warm_cancel: Arc<AtomicBool>,
+    warm_cancel: Arc<std::sync::Mutex<Arc<AtomicBool>>>,
     executor: BackgroundExecutor,
     background_ui: Option<BackgroundUiNotifier>,
 }
@@ -105,7 +108,7 @@ impl Scanner {
             force_pending: Arc::new(AtomicBool::new(false)),
             pending_changed_paths: Arc::new(AsyncMutex::new(HashSet::new())),
             incremental_worker_running: Arc::new(AtomicBool::new(false)),
-            warm_cancel: Arc::new(AtomicBool::new(false)),
+            warm_cancel: Arc::new(std::sync::Mutex::new(Arc::new(AtomicBool::new(false)))),
             executor,
             background_ui,
         }
@@ -507,30 +510,25 @@ impl Scanner {
         let force = options.force;
         crate::data::db::write_profile::reset();
         let files = Arc::new(audio_files);
-        let chunk_count = files.len().div_ceil(READ_CHUNK_SIZE);
-
         let files_done = Arc::new(AtomicUsize::new(0));
 
-        let read_chunk = |index: usize| {
+        let (outcome_tx, mut outcome_rx) = futures::channel::mpsc::unbounded::<ReadOutcome>();
+        {
             let files = files.clone();
             let state = existing_track_state.clone();
             let files_done = files_done.clone();
-            let (tx, rx) = futures::channel::oneshot::channel();
+            let cancel_flag = self.cancel_flag.clone();
             process_pool().spawn(move || {
-                let start = index * READ_CHUNK_SIZE;
-                let end = (start + READ_CHUNK_SIZE).min(files.len());
-                let outcomes: Vec<_> = files[start..end]
-                    .par_iter()
-                    .map(|path| {
-                        let outcome = process_one_file(path, &state, force);
-                        files_done.fetch_add(1, Ordering::Relaxed);
-                        outcome
-                    })
-                    .collect();
-                let _ = tx.send(outcomes);
+                files.par_iter().for_each_with(outcome_tx, |tx, path| {
+                    if cancel_flag.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    let outcome = process_one_file(path, &state, force);
+                    files_done.fetch_add(1, Ordering::Relaxed);
+                    let _ = tx.unbounded_send(outcome);
+                });
             });
-            rx
-        };
+        }
 
         let progress_scanner = self.clone();
         let progress_counter = files_done.clone();
@@ -555,51 +553,76 @@ impl Scanner {
         let mut dirty = false;
         let mut cancelled = false;
 
-        let mut inflight = (chunk_count > 0).then(|| read_chunk(0));
+        let mut last_flush = Instant::now();
+        let mut finished = files.is_empty();
 
-        for index in 0..chunk_count {
-            let Some(rx) = inflight.take() else {
-                break;
-            };
-
+        while !finished {
             let waiting = Instant::now();
-            let outcomes = rx.await.unwrap_or_default();
+            let next = match outcome_rx.try_recv() {
+                Ok(outcome) => Some(outcome),
+                Err(futures::channel::mpsc::TryRecvError::Closed) => None,
+                Err(futures::channel::mpsc::TryRecvError::Empty) => {
+                    let wait = FLUSH_INTERVAL.saturating_sub(last_flush.elapsed());
+                    let timer = self.executor.timer(wait);
+                    match futures::future::select(outcome_rx.next(), timer).await {
+                        futures::future::Either::Left((next, _)) => next,
+                        futures::future::Either::Right(_) => {
+                            read_time += waiting.elapsed();
+                            if !pending.is_empty() {
+                                self.flush_pending(
+                                    db,
+                                    &mut pending,
+                                    &mut cache,
+                                    &mut write_time,
+                                    (&mut scanned, &mut added, &mut updated, &mut failed),
+                                );
+                                dirty = true;
+                                last_flush = Instant::now();
+                            }
+                            if self.is_cancelled() {
+                                cancelled = true;
+                                break;
+                            }
+                            continue;
+                        }
+                    }
+                }
+            };
             read_time += waiting.elapsed();
+
+            match next {
+                Some(Some((_, true))) => failed += 1,
+                Some(Some((Some(track), _))) => pending.push(track),
+                Some(Some((None, _)) | None) => skipped += 1,
+                None => finished = true,
+            }
 
             if self.is_cancelled() {
                 cancelled = true;
+                while let Ok(outcome) = outcome_rx.try_recv() {
+                    match outcome {
+                        Some((_, true)) => failed += 1,
+                        Some((Some(track), _)) => pending.push(track),
+                        _ => {}
+                    }
+                }
                 break;
             }
 
-            if index + 1 < chunk_count {
-                inflight = Some(read_chunk(index + 1));
-            }
-
-            for outcome in outcomes {
-                match outcome {
-                    Some((_, true)) => failed += 1,
-                    Some((Some(track), _)) => pending.push(track),
-                    Some((None, _)) => skipped += 1,
-                    None => skipped += 1,
-                }
-            }
-
-            if pending.len() >= DB_FLUSH_SIZE {
-                let flush_started = Instant::now();
-                match self.flush_batch(db, &pending, &mut cache) {
-                    Ok((batch_added, batch_updated)) => {
-                        scanned += pending.len();
-                        added += batch_added;
-                        updated += batch_updated;
-                        dirty = true;
-                    }
-                    Err(e) => {
-                        error!("Failed to write scan batch: {}", e);
-                        failed += pending.len();
-                    }
-                }
-                write_time += flush_started.elapsed();
-                pending.clear();
+            if !pending.is_empty()
+                && (pending.len() >= DB_FLUSH_SIZE
+                    || last_flush.elapsed() >= FLUSH_INTERVAL
+                    || finished)
+            {
+                self.flush_pending(
+                    db,
+                    &mut pending,
+                    &mut cache,
+                    &mut write_time,
+                    (&mut scanned, &mut added, &mut updated, &mut failed),
+                );
+                dirty = true;
+                last_flush = Instant::now();
             }
 
             if dirty
@@ -729,7 +752,7 @@ impl Scanner {
             });
         }
 
-        self.warm_cancel.store(true, Ordering::Release);
+        self.cancel_warm_passes();
 
         self.cancel_flag.store(false, Ordering::Release);
         let options = ScanOptions {
@@ -749,60 +772,75 @@ impl Scanner {
         result
     }
 
+    fn covers_notifier(&self) -> Progress {
+        let notify: Arc<dyn Fn() + Send + Sync> = match self.background_ui.clone() {
+            Some(ui) => Arc::new(move || ui.notify(BackgroundUiEvent::CoversChanged)),
+            None => Arc::new(|| {}),
+        };
+        Progress::new(notify)
+    }
+
+    fn warm_flag(&self) -> std::sync::MutexGuard<'_, Arc<AtomicBool>> {
+        self.warm_cancel
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn cancel_warm_passes(&self) {
+        self.warm_flag().store(true, Ordering::Release);
+        priority::wake();
+    }
+
+    fn fresh_warm_flag(&self) -> Arc<AtomicBool> {
+        let flag = Arc::new(AtomicBool::new(false));
+        *self.warm_flag() = flag.clone();
+        flag
+    }
+
     fn spawn_image_warm_pass(&self, db: &Database) {
-        self.warm_cancel.store(false, Ordering::Release);
-
         let db = db.clone();
-        let cancel = self.warm_cancel.clone();
+        let cancel = self.fresh_warm_flag();
         let background_ui = self.background_ui.clone();
+        let progress = self.covers_notifier();
 
+        priority::set_file_busy(true);
         self.executor
             .spawn(async move {
-                let started = Instant::now();
-                let resolved = crate::data::images::warm_images(db, cancel).await;
-
-                if resolved > 0 {
-                    info!(
-                        "Resolved {} cover/artist image(s) in {:?}",
-                        resolved,
-                        started.elapsed()
-                    );
-                    if let Some(ui) = background_ui {
+                debug!("image warm pass started");
+                crate::data::images::warm_images(db, cancel, progress, move |resolved| {
+                    info!("Resolved {resolved} cover/artist image(s)");
+                    if let Some(ui) = &background_ui {
                         ui.notify(BackgroundUiEvent::LibraryDataChanged);
                         ui.notify(BackgroundUiEvent::HomeDataChanged);
                     }
-                }
+                })
+                .await;
             })
             .detach();
     }
 
     fn spawn_metadata_warm_pass(&self, db: &Database) {
         let db = db.clone();
-        let cancel = self.warm_cancel.clone();
+        let cancel = self.warm_flag().clone();
         let background_ui = self.background_ui.clone();
+        let progress = self.covers_notifier();
 
         self.executor
             .spawn(async move {
-                let started = Instant::now();
-                let artists =
-                    crate::data::omm::warm_artist_metadata(db.clone(), cancel.clone()).await;
-                let songs = crate::data::omm::warm_song_metadata(db.clone(), cancel.clone()).await;
-                let albums = crate::data::omm::warm_album_metadata(db.clone(), cancel).await;
-
-                if artists > 0 || songs > 0 || albums > 0 {
+                debug!("metadata warm pass started");
+                let index_db = db.clone();
+                crate::data::omm::warm_metadata(db, cancel, progress, move |counts| {
                     info!(
-                        "Resolved metadata for {} artist(s), {} song(s) and {} album(s) in {:?}",
-                        artists,
-                        songs,
-                        albums,
-                        started.elapsed()
+                        "Resolved metadata for {} artist(s), {} song(s) and {} album(s)",
+                        counts.artists, counts.songs, counts.albums
                     );
-                    db.rebuild_search_index();
-                    if let Some(ui) = background_ui {
+                    index_db.rebuild_search_index();
+                    if let Some(ui) = &background_ui {
                         ui.notify(BackgroundUiEvent::LibraryDataChanged);
                         ui.notify(BackgroundUiEvent::HomeDataChanged);
                     }
-                }
+                })
+                .await;
             })
             .detach();
     }
@@ -962,6 +1000,30 @@ impl Scanner {
                 }
             })
             .detach();
+    }
+
+    fn flush_pending(
+        &self,
+        db: &Database,
+        pending: &mut Vec<ScannedTrack>,
+        cache: &mut ScanCache,
+        write_time: &mut Duration,
+        (scanned, added, updated, failed): (&mut usize, &mut usize, &mut usize, &mut usize),
+    ) {
+        let started = Instant::now();
+        match self.flush_batch(db, pending, cache) {
+            Ok((batch_added, batch_updated)) => {
+                *scanned += pending.len();
+                *added += batch_added;
+                *updated += batch_updated;
+            }
+            Err(e) => {
+                error!("Failed to write scan batch: {}", e);
+                *failed += pending.len();
+            }
+        }
+        *write_time += started.elapsed();
+        pending.clear();
     }
 
     fn flush_batch(
