@@ -78,7 +78,9 @@ impl Render for QueueDragPayload {
                     )
                     .child(
                         div()
+                            .min_w_0()
                             .overflow_x_hidden()
+                            .whitespace_nowrap()
                             .text_ellipsis()
                             .font_weight(FontWeight(500.0))
                             .text_color(if is_current {
@@ -372,7 +374,9 @@ fn render_row(
                         .items_center()
                         .child(
                             div()
+                                .min_w_0()
                                 .overflow_x_hidden()
+                                .whitespace_nowrap()
                                 .text_ellipsis()
                                 .font_weight(FontWeight(500.0))
                                 .text_color(if is_current {
