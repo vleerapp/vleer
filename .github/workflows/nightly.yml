@@ -328,7 +328,23 @@ jobs:
       - name: Install minisign (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: choco install minisign -y
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zip = Join-Path $env:RUNNER_TEMP 'minisign.zip'
+          Invoke-WebRequest -Uri 'https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-win64.zip' -OutFile $zip
+
+          $expected = '37B600344E20C19314B2E82813DB2BFDCC408B77B876F7727889DBD46D539479'
+          $actual = (Get-FileHash -Algorithm SHA256 -Path $zip).Hash
+          if ($actual -ne $expected) {
+            throw "minisign checksum mismatch: got $actual, expected $expected"
+          }
+
+          $dest = Join-Path $env:RUNNER_TEMP 'minisign'
+          Expand-Archive -Path $zip -DestinationPath $dest -Force
+          $arch = if ("${{ matrix.arch }}" -eq "aarch64") { "aarch64" } else { "x86_64" }
+          $bin = Join-Path $dest "minisign-win64\$arch"
+          "$bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & (Join-Path $bin 'minisign.exe') -v
 
       - name: Sign binaries
         shell: bash
