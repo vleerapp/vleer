@@ -161,7 +161,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libxkbcommon-x11-dev
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libxkbcommon-x11-dev minisign
 
       - name: Install WiX Toolset (Windows)
         if: runner.os == 'Windows'
@@ -321,23 +321,27 @@ jobs:
           ART_ID="${{ steps.upload-unsigned-windows.outputs.artifact-id }}"
           gh api -X DELETE "repos/${{ github.repository }}/actions/artifacts/$ART_ID"
 
-      - name: Install GnuPG (macOS)
+      - name: Install minisign (macOS)
         if: runner.os == 'macOS'
-        run: brew install gnupg
+        run: brew install minisign
+
+      - name: Install minisign (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install minisign -y
 
       - name: Sign binaries
         shell: bash
         env:
-          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
-          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
         run: |
           set -euo pipefail
-          printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > minisign.key
           for f in target/dist/bundles/*; do
             [ -f "$f" ] || continue
-            gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" \
-              --detach-sign --armor --output "$f.sig" "$f"
+            minisign -SHWm "$f" -s minisign.key
           done
+          rm -f minisign.key
 
       - name: Rename artifacts
         id: rename
@@ -348,7 +352,7 @@ jobs:
           echo "prefix=$PREFIX" >> $GITHUB_OUTPUT
           cd target/dist/bundles
           for f in *; do
-            [[ "$f" == *.sig ]] && continue
+            [[ "$f" == *.minisig ]] && continue
             [[ -f "$f" ]] || continue
             case "$f" in
               *.tar.gz) EXT="tar.gz" ;;
@@ -357,7 +361,7 @@ jobs:
               *) EXT="${f##*.}" ;;
             esac
             mv "$f" "${PREFIX}.${EXT}"
-            [[ -f "${f}.sig" ]] && mv "${f}.sig" "${PREFIX}.${EXT}.sig"
+            [[ -f "${f}.minisig" ]] && mv "${f}.minisig" "${PREFIX}.${EXT}.minisig"
           done
 
       - name: Upload MSI (Windows)
@@ -371,7 +375,7 @@ jobs:
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v7
         with:
-          path: target/dist/bundles/${{ steps.rename.outputs.prefix }}.msi.sig
+          path: target/dist/bundles/${{ steps.rename.outputs.prefix }}.msi.minisig
           archive: false
 
       - name: Upload DMG (macOS)
@@ -385,7 +389,7 @@ jobs:
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v7
         with:
-          path: target/dist/bundles/${{ steps.rename.outputs.prefix }}.dmg.sig
+          path: target/dist/bundles/${{ steps.rename.outputs.prefix }}.dmg.minisig
           archive: false
 
       - name: Upload AppImage (Linux)
@@ -399,7 +403,7 @@ jobs:
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v7
         with:
-          path: target/dist/bundles/${{ steps.rename.outputs.prefix }}.AppImage.sig
+          path: target/dist/bundles/${{ steps.rename.outputs.prefix }}.AppImage.minisig
           archive: false
 
       - name: Upload tarball (Linux)
@@ -413,7 +417,7 @@ jobs:
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v7
         with:
-          path: target/dist/bundles/${{ steps.rename.outputs.prefix }}.tar.gz.sig
+          path: target/dist/bundles/${{ steps.rename.outputs.prefix }}.tar.gz.minisig
           archive: false
 
       - name: Upload to S3

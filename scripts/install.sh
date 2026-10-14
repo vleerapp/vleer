@@ -2,7 +2,7 @@
 set -eu
 
 API="https://api.vleer.app/update/v1/check"
-KEY_URL="https://raw.githubusercontent.com/vleerapp/vleer/main/assets/key.asc"
+PUBLIC_KEY="RWRh5nLZjKooTcjP0/fbHq6xIgU9c+QhLjaVPg6gqWv1MuNRV1RWgu28"
 
 CHANNEL="nightly"
 PREFIX="${HOME}/.local"
@@ -121,21 +121,16 @@ trap 'rm -rf "$TMP"' EXIT INT TERM
 info "downloading $VERSION"
 curl -fsSL -o "$TMP/vleer.tar.gz" "$URL" || die "download failed: $URL"
 
-if command -v gpg >/dev/null 2>&1; then
-  if curl -fsSL -o "$TMP/vleer.tar.gz.sig" "${URL}.sig" 2>/dev/null; then
+if command -v minisign >/dev/null 2>&1; then
+  if curl -fsSL -o "$TMP/vleer.tar.gz.minisig" "${URL}.minisig" 2>/dev/null; then
     info "verifying signature"
-    export GNUPGHOME="$TMP/gnupg"
-    mkdir -p "$GNUPGHOME"
-    chmod 700 "$GNUPGHOME"
-    fetch "$KEY_URL" | gpg --batch --quiet --import 2>/dev/null ||
-      die "could not import the Vleer signing key"
-    gpg --batch --quiet --verify "$TMP/vleer.tar.gz.sig" "$TMP/vleer.tar.gz" 2>/dev/null ||
+    minisign -Vqm "$TMP/vleer.tar.gz" -x "$TMP/vleer.tar.gz.minisig" -P "$PUBLIC_KEY" >/dev/null 2>&1 ||
       die "signature verification failed - refusing to install"
   else
     warn "no signature published for this build, skipping verification"
   fi
 else
-  warn "gpg not found, skipping signature verification"
+  warn "minisign not found, skipping signature verification"
 fi
 
 info "extracting"

@@ -5,21 +5,15 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use gpui::{App, Global};
-use openpgp::Cert;
-use openpgp::parse::Parse;
-use openpgp::parse::stream::{
-    DetachedVerifierBuilder, MessageLayer, MessageStructure, VerificationHelper,
-};
-use openpgp::policy::StandardPolicy;
+use minisign_verify::{PublicKey, Signature};
 use parking_lot::RwLock;
 use semver::Version;
-use sequoia_openpgp as openpgp;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 use ureq::Agent;
 
 const URL: &str = "https://api.vleer.app/update/v1/check";
-const PUBLIC_KEY: &[u8] = include_bytes!("../assets/key.asc");
+const PUBLIC_KEY: &str = "untrusted comment: minisign public key 4D28AA8CD972E661\nRWRh5nLZjKooTcjP0/fbHq6xIgU9c+QhLjaVPg6gqWv1MuNRV1RWgu28";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -297,16 +291,16 @@ impl Updater {
             .context("reading update file for verification")?;
         drop(file);
 
-        let sig_url = format!("{}.sig", asset.url);
-        let sig_bytes = agent
+        let sig_url = format!("{}.minisig", asset.url);
+        let sig_content = agent
             .get(&sig_url)
             .call()
             .context("downloading signature")?
             .body_mut()
-            .read_to_vec()
+            .read_to_string()
             .context("reading signature")?;
 
-        if let Err(e) = verify_signature(PUBLIC_KEY, &bytes, &sig_bytes) {
+        if let Err(e) = verify_signature(PUBLIC_KEY, &bytes, &sig_content) {
             let _ = std::fs::remove_file(&target);
             self.report_clear("update.download");
             return Err(e);
@@ -396,42 +390,12 @@ elseif (Test-Path '{fallback}') {{ Start-Process '{fallback}' }}
     }
 }
 
-pub fn verify_signature(public_key: &[u8], data: &[u8], sig_bytes: &[u8]) -> Result<()> {
-    let cert = Cert::from_bytes(public_key).context("invalid public key")?;
-    let policy = StandardPolicy::new();
-    let helper = Helper { cert };
-    let mut verifier = DetachedVerifierBuilder::from_bytes(sig_bytes)
-        .context("parsing signature")?
-        .with_policy(&policy, None, helper)
-        .context("initializing verifier")?;
-    verifier
-        .verify_bytes(data)
+pub fn verify_signature(public_key: &str, data: &[u8], sig_content: &str) -> Result<()> {
+    let pk = PublicKey::decode(public_key).context("invalid public key")?;
+    let sig = Signature::decode(sig_content).context("invalid signature format")?;
+    pk.verify(data, &sig, true)
         .context("signature verification failed")?;
     Ok(())
-}
-
-struct Helper {
-    cert: Cert,
-}
-
-impl VerificationHelper for Helper {
-    fn get_certs(&mut self, _ids: &[openpgp::KeyHandle]) -> openpgp::Result<Vec<Cert>> {
-        Ok(vec![self.cert.clone()])
-    }
-
-    fn check(&mut self, structure: MessageStructure) -> openpgp::Result<()> {
-        for layer in structure {
-            if let MessageLayer::SignatureGroup { results } = layer {
-                for result in results {
-                    if result.is_ok() {
-                        return Ok(());
-                    }
-                }
-                return Err(anyhow!("no valid signature"));
-            }
-        }
-        Err(anyhow!("no signature layer"))
-    }
 }
 
 #[cfg(target_os = "linux")]
@@ -675,7 +639,7 @@ mod tests {
                     let mut buf = [0u8; 4096];
                     let n = s.read(&mut buf).unwrap_or(0);
                     let req = String::from_utf8_lossy(&buf[..n]);
-                    if req.contains(".sig") {
+                    if req.contains(".minisig") {
                         let resp = format!(
                             "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                             sig.len(),
@@ -779,12 +743,12 @@ mod tests {
 
     #[test]
     fn verify_signature_rejects_invalid_public_key() {
-        assert!(verify_signature(b"not_a_key", b"data", b"not_a_sig").is_err());
+        assert!(verify_signature("not_a_key", b"data", "not_a_sig").is_err());
     }
 
     #[test]
     fn verify_signature_rejects_malformed_sig_content() {
-        assert!(verify_signature(PUBLIC_KEY, b"data", b"not a pgp signature").is_err());
+        assert!(verify_signature(PUBLIC_KEY, b"data", "not a minisig").is_err());
     }
 
     #[test]
@@ -895,7 +859,7 @@ mod tests {
     #[test]
     fn download_rejects_malformed_sig() {
         let data = b"fake installer".to_vec();
-        let url = serve_update(data, "not a valid pgp signature".to_string());
+        let url = serve_update(data, "not a valid minisig file".to_string());
         let dir = tmp_dir();
         let updater = Updater::new();
         let err = updater.download(&make_info(url)).unwrap_err();

@@ -44,11 +44,7 @@ unicode-segmentation = "1.13.3"
 ureq = { version = "3.4.2", features = ["json"] }
 uuid = { version = "1.28.0", features = ["serde", "v4"] }
 semver = "1.0.28"
-sequoia-openpgp = { version = "2.4.1", default-features = false, features = [
-  "crypto-rust",
-  "allow-experimental-crypto",
-  "allow-variable-time-crypto",
-] }
+minisign-verify = "0.2.5"
 spectrum-analyzer = "2.0.0"
 discord-rich-presence = "1.1.0"
 rand = "0.10.3"
@@ -116,7 +112,7 @@ codegen-units = 1
 panic = "abort"
 
 [build-dependencies]
-winresource = "0.1.31"
+winresource = "0.1.34"
 
 [package.metadata.packager]
 product_name = "Vleer"
@@ -127,11 +123,11 @@ category = "Music"
 identifier = "app.vleerapp.vleer"
 before_packaging_command = "cargo build --profile dist"
 icons = [
-  "assets/images/icon.png",
   "assets/images/icon-512.png",
   "assets/images/icon-256.png",
   "assets/images/icon-128.png",
   "assets/images/icon.icns",
+  "assets/windows/icon.ico",
 ]
 out_dir = "target/dist/bundles"
 formats = ["dmg", "wix", "appimage"]
