@@ -12,12 +12,32 @@ A free, open-source music app powered by the OpenMusic API Spec the open standar
 
 ![hero](https://github.com/user-attachments/assets/e0278231-226e-488a-b8d5-3c0c707a33f7)
 
+## Features
+
+- Native and fast, written in Rust with a GPU-rendered UI
+- Song and artist matching through [OpenMusicMetadata](https://docs.vleer.app) for clean names and artwork
+- No account required, telemetry covers only OS, version, and song count and is public
+- Fixes messy tags, merges duplicate artists, and fills in missing years and artwork without modifying your files
+- Songs identified by audio, so renaming or moving files doesn't break favorites, playlists, or history
+- Fuzzy search across songs, artists, albums, and playlists
+- Embedded lyrics first, then synced lyrics from LRCLIB
+- Fast scanner that indexes about 60,000 songs in 10 seconds
+- FLAC, MP3, OGG Vorbis, Opus, AAC, and WAV
+- Loudness normalization using ReplayGain tags
+- Parametric equalizer
+- Last.fm scrobbling
+- Discord Rich Presence
+- Live SQLite library that watches your folders
+- Spectrum visualizer
+- Self-updating, with stable and nightly channels
+
 ## Roadmap
 
-[Tracker](https://github.com/orgs/vleerapp/projects/4)
+Not final, and nothing here is shipped yet.
 
-- [ ] Stable local music player
-- [ ] OpenMusic API integration
+- [ ] Navidrome, Subsonic, and OpenSubsonic support
+- [ ] Soulseek integration
+- [ ] Recommendations based on your listening habits
 
 ## Installation
 
@@ -36,23 +56,21 @@ Install using the shell script:
 curl -fsSL https://raw.githubusercontent.com/vleerapp/vleer/main/scripts/install.sh | sh
 ```
 
-This installs to `~/.local` without root and keeps itself up to date from inside the app. Pass `--system` to install to `/usr/local` instead.
+Pass `--system` to install to `/usr/local` instead.
 
-An AppImage is also available for [ARM64](https://api.vleer.app/download/v1?os=linux&arch=aarch64&format=appimage&nightly=true) or [x64](https://api.vleer.app/download/v1?os=linux&arch=x86_64&format=appimage&nightly=true). AppImages do not self-update.
+#### Or using AppImage:
+ [ARM64](https://api.vleer.app/download/v1?os=linux&arch=aarch64&format=appimage&nightly=true) or [x64](https://api.vleer.app/download/v1?os=linux&arch=x86_64&format=appimage&nightly=true). AppImages do not self-update.
 
-Install from the AUR:
+#### Or using the AUR:
 
 ```sh
 yay -S vleer-git
 ```
 
-Or via Homebrew:
+#### Or using Homebrew:
 
 ```sh
 brew install vleerapp/vleer/vleer # stable versions
-```
-
-```sh
 brew install vleerapp/vleer/vleer-nightly # nightly builds
 ```
 
@@ -67,21 +85,21 @@ brew install vleerapp/vleer/vleer-nightly # nightly builds
 
 Download the DMG for [Apple silicon](https://api.vleer.app/download/v1?os=macos&arch=aarch64&nightly=true) or [Intel](https://api.vleer.app/download/v1?os=macos&arch=x86_64&nightly=true).
 
-After copying Vleer to Applications, open Terminal and run:
+> [!IMPORTANT]
+> 
+> After copying Vleer to Applications, open Terminal and run:
+>
+> ```sh
+> xattr -dr com.apple.quarantine /Applications/Vleer.app
+> ```
+>
+> This is required because Vleer isn't signed yet. Otherwise, macOS will refuse to open the app.
 
-```sh
-xattr -dr com.apple.quarantine /Applications/Vleer.app
-```
 
-This is required because Vleer isn't signed yet. Otherwise, macOS will refuse to open the app.
-
-Or via Homebrew (handles the quarantine step automatically):
+#### Or using Homebrew:
 
 ```sh
 brew install --cask vleerapp/vleer/vleer # stable versions
-```
-
-```sh
 brew install --cask vleerapp/vleer/vleer-nightly # nightly builds
 ```
 
@@ -96,9 +114,9 @@ brew install --cask vleerapp/vleer/vleer-nightly # nightly builds
 
 Download the installer for [ARM64](https://api.vleer.app/download/v1?os=windows&arch=aarch64&nightly=true) or [x64](https://api.vleer.app/download/v1?os=windows&arch=x86_64&nightly=true).
 
-If Microsoft Defender SmartScreen appears, select **More info**, then **Run anyway**.
-
-# 
+> [!IMPORTANT]
+>
+> If Microsoft Defender SmartScreen appears, select **More info**, then **Run anyway**.
 
 ### Verifying downloads
 
