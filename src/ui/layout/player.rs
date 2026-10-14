@@ -700,6 +700,21 @@ impl Render for Player {
                             .map(|s| s.duration as f32 / 1000.0)
                             .unwrap_or(0.0),
                     )
+                    .on_scrub(|value, window, cx| {
+                        let duration = cx
+                            .global::<Queue>()
+                            .get_current_song(cx)
+                            .map(|s| s.duration as f32 / 1000.0)
+                            .unwrap_or(0.0);
+
+                        if duration > 0.0 {
+                            cx.update_global::<Playback, _>(|playback, cx| {
+                                playback
+                                    .scrub((value * duration).min((duration - 1.0).max(0.0)), cx);
+                            });
+                            window.refresh();
+                        }
+                    })
                     .on_seek(|value, window, cx| {
                         let duration = cx
                             .global::<Queue>()
@@ -711,7 +726,7 @@ impl Render for Player {
                             let seek_time = value * duration;
 
                             cx.update_global::<Playback, _>(|playback, cx| {
-                                if let Err(e) = playback.seek(seek_time, cx) {
+                                if let Err(e) = playback.finish_scrub(seek_time, cx) {
                                     tracing::error!("Failed to seek: {}", e);
                                 }
                             });

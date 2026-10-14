@@ -13,6 +13,7 @@ pub struct ProgressSlider {
     pub(self) current_time: f32,
     pub(self) duration: f32,
     pub(self) on_seek: Option<Rc<RefCell<ChangeHandler>>>,
+    pub(self) on_scrub: Option<Rc<RefCell<ChangeHandler>>>,
     pub(self) hitbox: Option<Hitbox>,
 }
 
@@ -34,6 +35,11 @@ impl ProgressSlider {
 
     pub fn on_seek(mut self, func: impl FnMut(f32, &mut Window, &mut App) + 'static) -> Self {
         self.on_seek = Some(Rc::new(RefCell::new(func)));
+        self
+    }
+
+    pub fn on_scrub(mut self, func: impl FnMut(f32, &mut Window, &mut App) + 'static) -> Self {
+        self.on_scrub = Some(Rc::new(RefCell::new(func)));
         self
     }
 
@@ -329,10 +335,12 @@ impl Element for ProgressSlider {
 
         if let Some(on_seek) = self.on_seek.as_ref() {
             let func = on_seek.clone();
+            let scrub = self.on_scrub.clone();
 
             let bounds_down = bounds;
             let dragging_down = dragging.clone();
             let drag_value_down = drag_value.clone();
+            let scrub_down = scrub.clone();
             let func_down = func.clone();
 
             window.on_mouse_event(move |ev: &MouseDownEvent, _, window, cx| {
@@ -347,20 +355,27 @@ impl Element for ProgressSlider {
                 *dragging_down.borrow_mut() = true;
                 *drag_value_down.borrow_mut() = v;
 
-                func_down.borrow_mut()(v, window, cx);
+                match &scrub_down {
+                    Some(scrub) => scrub.borrow_mut()(v, window, cx),
+                    None => func_down.borrow_mut()(v, window, cx),
+                }
             });
 
             let bounds_move = bounds;
             let dragging_move = dragging.clone();
             let drag_value_move = drag_value.clone();
+            let scrub_move = scrub.clone();
 
-            window.on_mouse_event(move |ev: &MouseMoveEvent, _, window, _cx| {
+            window.on_mouse_event(move |ev: &MouseMoveEvent, _, window, cx| {
                 if !*dragging_move.borrow() {
                     return;
                 }
 
                 let v = compute_value(ev.position, bounds_move);
                 *drag_value_move.borrow_mut() = v;
+                if let Some(scrub) = &scrub_move {
+                    scrub.borrow_mut()(v, window, cx);
+                }
                 window.refresh();
             });
 
@@ -392,6 +407,7 @@ pub fn progress_slider() -> ProgressSlider {
         current_time: 0.0,
         duration: 0.0,
         on_seek: None,
+        on_scrub: None,
         hitbox: None,
     }
 }

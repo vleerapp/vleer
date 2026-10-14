@@ -3,7 +3,7 @@ use tracing::{debug, error, info};
 
 use crate::{
     data::{config::Config, db::Database, scanner::Scanner},
-    media::playback::Playback,
+    media::{playback::Playback, queue::Queue},
     ui::{app::MainWindow, views::AppView},
     updater::{Updater, run_check_in_background},
 };
@@ -13,7 +13,10 @@ actions!(
     [Quit, ReloadConfig, Scan, ForceScan, CheckForUpdates]
 );
 actions!(navigation, [GoBack, GoForward, OpenSettings]);
-actions!(player, [PlayPause, Next, Previous]);
+actions!(
+    player,
+    [PlayPause, Next, Previous, SeekForward, SeekBackward]
+);
 
 pub fn register_actions(cx: &mut App) {
     cx.on_action(quit);
@@ -28,6 +31,8 @@ pub fn register_actions(cx: &mut App) {
     cx.on_action(play_pause);
     cx.on_action(next);
     cx.on_action(previous);
+    cx.on_action(seek_forward);
+    cx.on_action(seek_backward);
 
     cx.bind_keys([KeyBinding::new("secondary-alt-r", ReloadConfig, None)]);
     cx.bind_keys([KeyBinding::new("secondary-w", Quit, None)]);
@@ -36,6 +41,8 @@ pub fn register_actions(cx: &mut App) {
     cx.bind_keys([KeyBinding::new("secondary-shift-r", ForceScan, None)]);
     cx.bind_keys([KeyBinding::new("secondary-u", CheckForUpdates, None)]);
 
+    cx.bind_keys([KeyBinding::new("right", SeekForward, None)]);
+    cx.bind_keys([KeyBinding::new("left", SeekBackward, None)]);
     cx.bind_keys([KeyBinding::new("secondary-alt-right", Next, None)]);
     cx.bind_keys([KeyBinding::new("secondary-alt-left", Previous, None)]);
 
@@ -105,6 +112,32 @@ fn previous(_: &Previous, cx: &mut App) {
     cx.update_global::<Playback, _>(|playback, cx| {
         playback.previous(cx);
     });
+}
+
+const SEEK_STEP_SECS: f32 = 10.0;
+
+fn seek_by(cx: &mut App, delta: f32) {
+    let duration = cx
+        .global::<Queue>()
+        .get_current_song(cx)
+        .map(|song| song.duration as f32 / 1000.0);
+    cx.update_global::<Playback, _>(|playback, cx| {
+        let mut target = (playback.get_position() + delta).max(0.0);
+        if let Some(duration) = duration {
+            target = target.min(duration);
+        }
+        if let Err(e) = playback.seek(target, cx) {
+            error!("Seek failed: {}", e);
+        }
+    });
+}
+
+fn seek_forward(_: &SeekForward, cx: &mut App) {
+    seek_by(cx, SEEK_STEP_SECS);
+}
+
+fn seek_backward(_: &SeekBackward, cx: &mut App) {
+    seek_by(cx, -SEEK_STEP_SECS);
 }
 
 fn next(_: &Next, cx: &mut App) {

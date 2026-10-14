@@ -16,7 +16,7 @@ use unicode_segmentation::*;
 
 use crate::ui::{
     components::{div::flex_row, icons::icon},
-    global_actions::PlayPause,
+    global_actions::{PlayPause, SeekBackward, SeekForward},
     variables::Variables,
 };
 
@@ -77,8 +77,8 @@ pub fn bind_input_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("backspace", Backspace, None),
         KeyBinding::new("delete", Delete, None),
-        KeyBinding::new("left", Left, None),
-        KeyBinding::new("right", Right, None),
+        KeyBinding::new("left", Left, Some("TextInput")),
+        KeyBinding::new("right", Right, Some("TextInput")),
         KeyBinding::new("shift-left", SelectLeft, None),
         KeyBinding::new("shift-right", SelectRight, None),
         KeyBinding::new("home", Home, None),
@@ -230,6 +230,14 @@ impl TextInput {
         } else {
             self.move_to(self.selected_range.end, cx)
         }
+    }
+
+    fn seek_backward(&mut self, _: &SeekBackward, window: &mut Window, cx: &mut Context<Self>) {
+        self.left(&Left, window, cx);
+    }
+
+    fn seek_forward(&mut self, _: &SeekForward, window: &mut Window, cx: &mut Context<Self>) {
+        self.right(&Right, window, cx);
     }
 
     fn select_left(&mut self, _: &SelectLeft, _: &mut Window, cx: &mut Context<Self>) {
@@ -714,6 +722,8 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::delete_to_previous_word))
             .on_action(cx.listener(Self::left))
             .on_action(cx.listener(Self::right))
+            .on_action(cx.listener(Self::seek_backward))
+            .on_action(cx.listener(Self::seek_forward))
             .on_action(cx.listener(Self::select_left))
             .on_action(cx.listener(Self::select_right))
             .on_action(cx.listener(Self::word_left))
