@@ -241,6 +241,17 @@ impl<S: rodio::Source<Item = f32>> rodio::Source for EqualizerSource<S> {
     fn total_duration(&self) -> Option<std::time::Duration> {
         self.inner.total_duration()
     }
+
+    fn try_seek(&mut self, pos: std::time::Duration) -> Result<(), rodio::source::SeekError> {
+        self.inner.try_seek(pos)?;
+        for channel in self.states.iter_mut() {
+            for state in channel.iter_mut() {
+                *state = (0.0, 0.0);
+            }
+        }
+        self.since_flush = 0;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

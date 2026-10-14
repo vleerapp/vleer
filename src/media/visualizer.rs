@@ -275,6 +275,12 @@ where
     fn total_duration(&self) -> Option<std::time::Duration> {
         self.input.total_duration()
     }
+
+    fn try_seek(&mut self, pos: std::time::Duration) -> Result<(), rodio::source::SeekError> {
+        self.input.try_seek(pos)?;
+        self.buffer.clear();
+        Ok(())
+    }
 }
 
 pub struct F32Converter<I> {
@@ -312,5 +318,9 @@ where
 
     fn total_duration(&self) -> Option<std::time::Duration> {
         self.input.total_duration()
+    }
+
+    fn try_seek(&mut self, pos: std::time::Duration) -> Result<(), rodio::source::SeekError> {
+        self.input.try_seek(pos)
     }
 }

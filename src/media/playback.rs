@@ -1,4 +1,5 @@
 use super::equalizer::{Equalizer, EqualizerSource};
+use super::gain::{GainControl, GainSource};
 use super::queue::Queue;
 use crate::data::config::{Config, EqualizerSettings};
 use crate::data::db::Database;
@@ -7,9 +8,9 @@ use crate::media::controller::{MediaController, PlaybackState};
 use crate::media::visualizer::{F32Converter, VisualizerSource, VisualizerState};
 use crate::ui::components::context_menu::{BackgroundUiEvent, BackgroundUiNotifier, QueueChanged};
 use anyhow::{Context, Result};
-use gpui::{App, AsyncApp, BorrowAppContext, Global};
+use gpui::{App, AsyncApp, BackgroundExecutor, BorrowAppContext, Global};
 use parking_lot::Mutex;
-use rodio::decoder::{Decoder, DecoderBuilder};
+use rodio::decoder::DecoderBuilder;
 use rodio::mixer::Mixer;
 use rodio::source::Source;
 use rodio::{DeviceSinkBuilder, MixerDeviceSink, Player as Sink};
@@ -24,6 +25,10 @@ use tokio::sync::mpsc;
 use tracing::{debug, error};
 
 const DEFAULT_TARGET_LUFS: f32 = -14.0;
+const SILENCE_POLL: Duration = Duration::from_millis(5);
+const SILENCE_TIMEOUT: Duration = Duration::from_millis(250);
+const SCRUB_INTERVAL: Duration = Duration::from_millis(40);
+const SCRUB_SNIPPET: Duration = Duration::from_millis(120);
 
 #[derive(Debug, Clone)]
 pub enum PlaybackCommand {
@@ -41,6 +46,7 @@ struct PreparedPlayback {
     _device: Option<MixerDeviceSink>,
     mixer: Mixer,
     sink: Sink,
+    gain: Arc<GainControl>,
     current_file: String,
     lufs: Option<f32>,
     device_lost: Option<Arc<AtomicBool>>,
@@ -50,12 +56,16 @@ pub struct Playback {
     _device: Option<MixerDeviceSink>,
     mixer: Option<Mixer>,
     sink: Option<Sink>,
+    gain: Option<Arc<GainControl>>,
     equalizer: Arc<Mutex<Equalizer>>,
     volume: f32,
     paused: bool,
     current_file: Option<String>,
     current_lufs: Option<f32>,
-    position: f32,
+    pause_token: u64,
+    last_scrub: Option<Instant>,
+    scrubbing: bool,
+    scrub_resume: bool,
     visualizer_state: VisualizerState,
     command_rx: Option<mpsc::UnboundedReceiver<PlaybackCommand>>,
     load_token: u64,
@@ -150,15 +160,17 @@ impl Playback {
         let eq_source = EqualizerSource::new(source, equalizer.clone());
         let gain = Self::compute_normalization_gain_for(lufs);
         let normalized = VisualizerSource::new(eq_source.amplify(gain), visualizer_state);
+        let gain_control = GainControl::new(Self::compute_log_volume(volume), true);
+        let smoothed = GainSource::new(normalized, gain_control.clone());
 
-        sink.append(normalized);
-        sink.set_volume(Self::compute_log_volume(volume));
+        sink.append(smoothed);
         sink.pause();
 
         Ok(PreparedPlayback {
             _device: new_device,
             mixer,
             sink,
+            gain: gain_control,
             current_file: path,
             lufs,
             device_lost: lost,
@@ -177,8 +189,7 @@ impl Playback {
         self.load_token = self.load_token.wrapping_add(1);
         let token = self.load_token;
         self.loading = true;
-        self.position = 0.0;
-        self.sink = None;
+        self.retire_sink(cx);
         let existing_mixer = if self.device_lost() {
             None
         } else {
@@ -251,7 +262,7 @@ impl Playback {
                         }
                     }
                     playback.sink = Some(prepared.sink);
-                    playback.position = 0.0;
+                    playback.gain = Some(prepared.gain);
                     playback.current_file = Some(prepared.current_file);
                     playback.current_lufs = prepared.lufs;
                     playback.paused = true;
@@ -295,13 +306,16 @@ impl Playback {
             _device: None,
             mixer: None,
             sink: None,
+            gain: None,
             equalizer,
             volume: 0.5,
             paused: true,
             current_file: None,
             current_lufs: None,
-
-            position: 0.0,
+            pause_token: 0,
+            last_scrub: None,
+            scrubbing: false,
+            scrub_resume: false,
             visualizer_state: VisualizerState::default(),
             command_rx: None,
             load_token: 0,
@@ -404,6 +418,7 @@ impl Playback {
         if self.resume.is_none() {
             self.resume = Some((self.get_position(), !self.paused));
         }
+        self.gain = None;
         let old = (self._device.take(), self.mixer.take(), self.sink.take());
         let executor = cx.background_executor().clone();
 
@@ -450,11 +465,11 @@ impl Playback {
                             playback._device = prepared._device;
                             playback.mixer = Some(prepared.mixer);
                             playback.sink = Some(prepared.sink);
+                            playback.gain = Some(prepared.gain);
                             if let Some(lost) = prepared.device_lost {
                                 playback.device_lost = lost;
                             }
                             playback.recover_attempt = None;
-                            playback.position = 0.0;
                             playback.paused = true;
                             let (position, was_playing) =
                                 playback.resume.take().unwrap_or((0.0, false));
@@ -472,11 +487,43 @@ impl Playback {
         .detach();
     }
 
+    async fn wait_silent(executor: &BackgroundExecutor, gain: Option<&GainControl>) {
+        let Some(gain) = gain else {
+            return;
+        };
+        let started = Instant::now();
+        while !gain.is_silent() && started.elapsed() < SILENCE_TIMEOUT {
+            executor.timer(SILENCE_POLL).await;
+        }
+    }
+
+    fn retire_sink(&mut self, cx: &App) {
+        let sink = self.sink.take();
+        let gain = self.gain.take();
+        if let Some(gain) = &gain {
+            gain.set_muted(true);
+        }
+        if let Some(sink) = sink {
+            let executor = cx.background_executor().clone();
+            let timer = executor.clone();
+            executor
+                .spawn(async move {
+                    Self::wait_silent(&timer, gain.as_deref()).await;
+                    drop(sink);
+                })
+                .detach();
+        }
+    }
+
     pub fn play(&mut self, cx: &mut App) {
         if self.paused
             && let Some(sink) = &self.sink
         {
+            self.pause_token = self.pause_token.wrapping_add(1);
             sink.play();
+            if let Some(gain) = &self.gain {
+                gain.set_muted(false);
+            }
             self.paused = false;
             debug!("Started playback");
 
@@ -487,11 +534,28 @@ impl Playback {
     }
 
     pub fn pause(&mut self, cx: &mut App) {
-        if !self.paused
-            && let Some(sink) = &self.sink
-        {
-            sink.pause();
+        if !self.paused && self.sink.is_some() {
+            if let Some(gain) = &self.gain {
+                gain.set_muted(true);
+            }
             self.paused = true;
+            self.pause_token = self.pause_token.wrapping_add(1);
+            let token = self.pause_token;
+            let gain = self.gain.clone();
+            cx.spawn(async move |cx| {
+                Self::wait_silent(cx.background_executor(), gain.as_deref()).await;
+                cx.update(|cx| {
+                    cx.update_global::<Playback, _>(|playback, _cx| {
+                        if playback.pause_token == token
+                            && playback.paused
+                            && let Some(sink) = &playback.sink
+                        {
+                            sink.pause();
+                        }
+                    });
+                });
+            })
+            .detach();
             debug!("Paused playback");
 
             if let Some(mc) = cx.try_global::<MediaController>() {
@@ -509,13 +573,9 @@ impl Playback {
         self.load_token = self.load_token.wrapping_add(1);
         self.loading = false;
 
-        if let Some(sink) = &self.sink {
-            sink.stop();
-        }
-        self.sink = None;
+        self.retire_sink(cx);
         self.current_file = None;
         self.current_lufs = None;
-        self.position = 0.0;
         self.paused = true;
         *self.visualizer_state.bands.lock() = [0.0; 4];
 
@@ -558,53 +618,106 @@ impl Playback {
     }
 
     fn seek_raw(&mut self, position: f32) -> Result<bool> {
-        if self.loading {
+        if self.loading || self.device_lost() {
             return Ok(false);
         }
-        if let Some(file_path) = &self.current_file {
-            let was_playing = !self.paused;
-
-            let file = File::open(file_path)?;
-            let file_len = file.metadata()?.len();
-            let mut source: Decoder<BufReader<File>> = DecoderBuilder::new()
-                .with_decoder::<OpusDecoder>()
-                .with_data(BufReader::new(file))
-                .with_byte_len(file_len)
-                .build()?;
-            if source.try_seek(Duration::from_secs_f32(position)).is_err() {
-                return Ok(false);
-            }
-
-            let eq_source = EqualizerSource::new(source, self.equalizer.clone());
-            let gain = Self::compute_normalization_gain_for(self.current_lufs);
-            let normalized =
-                VisualizerSource::new(eq_source.amplify(gain), self.visualizer_state.clone());
-
-            if let Some(sink) = &self.sink {
-                sink.stop();
-                sink.append(normalized);
-                sink.set_volume(Self::compute_log_volume(self.volume));
-
-                if was_playing {
-                    sink.play();
-                    self.paused = false;
-                } else {
-                    sink.pause();
-                    self.paused = true;
-                }
-            }
-            self.position = position;
-            return Ok(true);
+        let Some(sink) = &self.sink else {
+            return Ok(false);
+        };
+        if sink.empty() {
+            return Ok(false);
         }
-        Ok(false)
+        match sink.try_seek(Duration::from_secs_f32(position.max(0.0))) {
+            Ok(()) => Ok(true),
+            Err(e) => {
+                debug!("Seek failed: {}", e);
+                Ok(false)
+            }
+        }
+    }
+
+    pub fn scrub(&mut self, position: f32, cx: &mut App) {
+        if !self.scrubbing {
+            self.scrubbing = true;
+            self.scrub_resume = !self.paused;
+        }
+        if self
+            .last_scrub
+            .is_some_and(|last| last.elapsed() < SCRUB_INTERVAL)
+        {
+            return;
+        }
+        self.last_scrub = Some(Instant::now());
+        if self.seek_raw(position).unwrap_or(false) && self.scrub_resume {
+            self.play_scrub_snippet(cx);
+        }
+    }
+
+    fn play_scrub_snippet(&mut self, cx: &mut App) {
+        let (Some(sink), Some(gain)) = (&self.sink, self.gain.clone()) else {
+            return;
+        };
+        self.pause_token = self.pause_token.wrapping_add(1);
+        let token = self.pause_token;
+        sink.play();
+        gain.set_muted(false);
+
+        cx.spawn(async move |cx| {
+            cx.background_executor().timer(SCRUB_SNIPPET).await;
+            let held = cx.update(|cx| {
+                cx.update_global::<Playback, _>(|playback, _cx| {
+                    let held = playback.pause_token == token && playback.scrubbing;
+                    if held {
+                        gain.set_muted(true);
+                    }
+                    held
+                })
+            });
+            if !held {
+                return;
+            }
+            Self::wait_silent(cx.background_executor(), Some(gain.as_ref())).await;
+            cx.update(|cx| {
+                cx.update_global::<Playback, _>(|playback, _cx| {
+                    if playback.pause_token == token
+                        && playback.scrubbing
+                        && let Some(sink) = &playback.sink
+                    {
+                        sink.pause();
+                    }
+                });
+            });
+        })
+        .detach();
+    }
+
+    pub fn finish_scrub(&mut self, position: f32, cx: &App) -> Result<()> {
+        let resume = self.scrubbing && self.scrub_resume;
+        self.scrubbing = false;
+        self.scrub_resume = false;
+        self.last_scrub = None;
+        self.pause_token = self.pause_token.wrapping_add(1);
+
+        let seeked = self.seek_raw(position)?;
+        if resume && let Some(sink) = &self.sink {
+            sink.play();
+            if let Some(gain) = &self.gain {
+                gain.set_muted(false);
+            }
+        }
+        if seeked {
+            let song_id = cx.global::<Queue>().get_current_song_id();
+            self.log_event(cx, EventType::Seek, song_id);
+        }
+        Ok(())
     }
 
     pub fn set_volume(&mut self, volume: f32, _cx: &mut App) {
         self.volume = volume.clamp(0.0, 1.0);
         let log_volume = Self::compute_log_volume(self.volume);
 
-        if let Some(sink) = &self.sink {
-            sink.set_volume(log_volume);
+        if let Some(gain) = &self.gain {
+            gain.set_volume(log_volume);
         }
 
         debug!("Volume: {:.2} (log: {:.2})", self.volume, log_volume);
@@ -622,13 +735,17 @@ impl Playback {
         !self.paused
     }
 
+    pub fn is_scrubbing(&self) -> bool {
+        self.scrubbing
+    }
+
     pub fn get_loading(&self) -> bool {
         self.loading
     }
 
     pub fn get_position(&self) -> f32 {
         if let Some(sink) = &self.sink {
-            self.position + sink.get_pos().as_secs_f32()
+            sink.get_pos().as_secs_f32()
         } else {
             self.resume.map_or(0.0, |(position, _)| position)
         }
@@ -709,9 +826,7 @@ impl Playback {
         if let Some(song_id) = song_id {
             self.load_song_by_id(cx, song_id);
         } else {
-            if let Some(sink) = &self.sink {
-                sink.stop();
-            }
+            self.retire_sink(cx);
             self.paused = true;
             if let Some(mc) = cx.try_global::<MediaController>() {
                 mc.set_state(PlaybackState::Paused).ok();
@@ -728,9 +843,7 @@ impl Playback {
         if let Some(song_id) = song_id {
             self.load_song_by_id(cx, song_id);
         } else {
-            if let Some(sink) = &self.sink {
-                sink.stop();
-            }
+            self.retire_sink(cx);
             self.paused = true;
             if let Some(mc) = cx.try_global::<MediaController>() {
                 mc.set_state(PlaybackState::Paused).ok();
@@ -747,9 +860,7 @@ impl Playback {
         if let Some(song_id) = song_id {
             self.load_song_by_id(cx, song_id);
         } else {
-            if let Some(sink) = &self.sink {
-                sink.stop();
-            }
+            self.retire_sink(cx);
             self.paused = true;
             if let Some(mc) = cx.try_global::<MediaController>() {
                 mc.set_state(PlaybackState::Paused).ok();
@@ -777,7 +888,11 @@ impl Playback {
                 let should_advance = cx.update(|cx| {
                     cx.try_global::<Playback>()
                         .map(|p| {
-                            p.output_ready() && p.empty() && p.get_playing() && !p.get_loading()
+                            p.output_ready()
+                                && p.empty()
+                                && p.get_playing()
+                                && !p.get_loading()
+                                && !p.is_scrubbing()
                         })
                         .unwrap_or(false)
                 });
