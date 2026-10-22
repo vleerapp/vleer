@@ -266,7 +266,7 @@ fn get_json<T: serde::de::DeserializeOwned>(
             }
             status => {
                 let body = response.body_mut().read_to_string().unwrap_or_default();
-                if status == 504 && body.contains("Match failed") {
+                if matches!(status, 503 | 504) && body.contains("Match failed") {
                     debug!("metadata request: GET {url} {query:?} -> no match");
                     return Ok(None);
                 }
