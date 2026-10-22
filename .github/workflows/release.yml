@@ -1,0 +1,452 @@
+name: Release
+
+permissions:
+  contents: read
+  actions: write
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to release
+        required: true
+      base:
+        description: Previous tag or ref to compare from (defaults to the previous tag)
+        required: false
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  S3_REGION: us-east-1
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      full: ${{ steps.version.outputs.full }}
+      pkg: ${{ steps.version.outputs.pkg }}
+    steps:
+      - name: Compute release version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "tag '$TAG' is not vX.Y.Z or vX.Y.Z-prerelease"
+            exit 1
+          fi
+          FULL="${TAG#v}"
+          PKG="${FULL%%-*}"
+          echo "full=$FULL" >> $GITHUB_OUTPUT
+          echo "pkg=$PKG" >> $GITHUB_OUTPUT
+          echo "building $FULL (installer version $PKG)"
+
+      - name: Check S3 credentials are configured
+        if: ${{ !contains(steps.version.outputs.full, '-') }}
+        env:
+          S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
+          S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+        run: |
+          missing=""
+          for name in S3_ENDPOINT S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY; do
+            eval "value=\${$name:-}"
+            [ -n "$value" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "missing repository secrets:$missing"
+            exit 1
+          fi
+
+          echo "vleer preflight" > preflight.txt
+          if ! body=$(curl --silent --show-error --fail-with-body \
+              --aws-sigv4 "aws:amz:${S3_REGION}:s3" \
+              --user "${S3_ACCESS_KEY_ID}:${S3_SECRET_ACCESS_KEY}" \
+              --upload-file preflight.txt \
+              "${S3_ENDPOINT}/release/.preflight" 2>&1); then
+            echo "S3 preflight upload failed. Server said:"
+            echo "$body"
+            exit 1
+          fi
+
+          curl --silent --show-error --fail-with-body -X DELETE \
+            --aws-sigv4 "aws:amz:${S3_REGION}:s3" \
+            --user "${S3_ACCESS_KEY_ID}:${S3_SECRET_ACCESS_KEY}" \
+            "${S3_ENDPOINT}/release/.preflight" >/dev/null || true
+
+          echo "S3 preflight ok"
+
+  build:
+    needs: version
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            os_name: Linux
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            os_name: Linux
+            arch: aarch64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            os_name: macOS
+            arch: aarch64
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            os_name: macOS
+            arch: x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            os_name: Windows
+            arch: x86_64
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            os_name: Windows
+            arch: aarch64
+
+    runs-on: ${{ matrix.os }}
+
+    env:
+      S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
+      S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+      S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+      LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+      LASTFM_API_SECRET: ${{ secrets.LASTFM_API_SECRET }}
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ env.TAG }}
+
+      - name: Stamp release version into Cargo.toml
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "${{ needs.version.outputs.full }}" "${{ needs.version.outputs.pkg }}" <<'PY'
+          import re, sys
+
+          version, pkg_version = sys.argv[1], sys.argv[2]
+          with open("Cargo.toml", encoding="utf-8") as f:
+              content = f.read()
+
+          content, n = re.subn(
+              r'^version = ".*"$', f'version = "{version}"', content, count=1, flags=re.M
+          )
+          assert n == 1, "could not find the package version"
+
+          content, n = re.subn(
+              r'^\[package\.metadata\.packager\]$',
+              f'[package.metadata.packager]\nversion = "{pkg_version}"',
+              content,
+              count=1,
+              flags=re.M,
+          )
+          assert n == 1, "could not find [package.metadata.packager]"
+
+          with open("Cargo.toml", "w", encoding="utf-8") as f:
+              f.write(content)
+          PY
+          grep -n '^version = ' Cargo.toml
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.0
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}-${{ runner.os }}
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libxkbcommon-x11-dev minisign
+
+      - name: Install WiX Toolset (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $wixPath = Join-Path $env:LOCALAPPDATA '.cargo-packager\WixTools'
+          New-Item -ItemType Directory -Force -Path $wixPath | Out-Null
+
+          $zip = Join-Path $env:RUNNER_TEMP 'wix314-binaries.zip'
+          Invoke-WebRequest -Uri 'https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip' -OutFile $zip
+
+          $expected = '6AC824E1642D6F7277D0ED7EA09411A508F6116BA6FAE0AA5F2C7DAA2FF43D31'
+          $actual = (Get-FileHash -Algorithm SHA256 -Path $zip).Hash
+          if ($actual -ne $expected) {
+            throw "WiX 3.14 checksum mismatch: got $actual, expected $expected"
+          }
+
+          Expand-Archive -Path $zip -DestinationPath $wixPath -Force
+          Remove-Item $zip
+
+          $required = @(
+            'candle.exe', 'candle.exe.config', 'darice.cub', 'light.exe',
+            'light.exe.config', 'wconsole.dll', 'winterop.dll', 'wix.dll',
+            'WixUIExtension.dll', 'WixUtilExtension.dll'
+          )
+          $missing = $required | Where-Object { -Not (Test-Path (Join-Path $wixPath $_)) }
+          if ($missing) {
+            throw "WiX 3.14 is missing required files: $($missing -join ', ')"
+          }
+
+          Write-Host "Seeded WiX 3.14 into $wixPath"
+          & (Join-Path $wixPath 'candle.exe') -? | Select-Object -First 2
+
+      - name: Install cargo-packager
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-packager@0.11.8
+          fallback: cargo-install
+
+      - name: Build and Package
+        shell: bash
+        run: cargo packager --profile dist
+
+      - name: Dump WiX diagnostics (Windows)
+        if: failure() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $wixPath = Join-Path $env:LOCALAPPDATA '.cargo-packager\WixTools'
+          $candle = Join-Path $wixPath 'candle.exe'
+          Write-Host "==== WiX in use ===="
+          if (Test-Path $candle) {
+            (Get-Item $candle).VersionInfo | Format-List ProductVersion, FileVersion
+          } else {
+            Write-Host "no candle.exe at $candle"
+          }
+
+          $wixRoot = "target/dist/bundles/.cargo-packager/wix"
+          if (Test-Path $wixRoot) {
+            Get-ChildItem -Path $wixRoot -Filter *.wxs -Recurse | ForEach-Object {
+              Write-Host "==== $($_.FullName) ===="
+              Get-Content -Path $_.FullName
+              Write-Host "==== candle output for $($_.Name) ===="
+              & $candle -arch $(if ("${{ matrix.arch }}" -eq "aarch64") { "arm64" } else { "x64" }) `
+                $_.FullName -out "$env:RUNNER_TEMP\diag\" 2>&1 | Write-Host
+            }
+          }
+
+      - name: Build tarball (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          NAME="vleer-${{ needs.version.outputs.full }}-${{ matrix.arch }}"
+          ROOT="$RUNNER_TEMP/tarball"
+          TREE="$ROOT/$NAME"
+
+          rm -rf "$ROOT"
+          mkdir -p "$TREE/bin" "$TREE/share/applications" "$TREE/share/vleer"
+
+          install -m 0755 target/dist/vleer "$TREE/bin/vleer"
+
+          for size in 128 256 512; do
+            dir="$TREE/share/icons/hicolor/${size}x${size}/apps"
+            mkdir -p "$dir"
+            install -m 0644 "assets/images/icon-${size}.png" "$dir/vleer.png"
+          done
+
+          cat > "$TREE/share/applications/vleer.desktop" <<'DESKTOP'
+          [Desktop Entry]
+          Type=Application
+          Name=Vleer
+          Comment=Music, but without the subscription.
+          Exec=sh -c "PATH=\\"\\$HOME/.local/bin:\\$PATH\\"; exec vleer \\"\\$@\\"" sh %U
+          Icon=vleer
+          Terminal=false
+          Categories=AudioVideo;Audio;Player;
+          StartupWMClass=vleer
+          DESKTOP
+
+          tar -czf "target/dist/bundles/${NAME}.tar.gz" -C "$ROOT" "$NAME"
+          rm -rf "$ROOT"
+
+      - name: Locate unsigned Windows MSI
+        if: runner.os == 'Windows'
+        id: locate-msi
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem -Path target/dist/bundles -Filter *.msi -File | Select-Object -First 1
+          if (-Not $msi) { throw "No .msi found in target/dist/bundles" }
+          "path=$($msi.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "name=$($msi.Name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Upload unsigned Windows MSI for SignPath
+        if: runner.os == 'Windows'
+        id: upload-unsigned-windows
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.locate-msi.outputs.path }}
+          archive: false
+
+      - name: Submit SignPath signing request (Windows)
+        if: runner.os == 'Windows'
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: "${{ secrets.SIGNPATH_API_TOKEN }}"
+          organization-id: "${{ secrets.SIGNPATH_ORGANIZATION_ID }}"
+          project-slug: "${{ secrets.SIGNPATH_PROJECT_SLUG }}"
+          signing-policy-slug: "${{ secrets.SIGNPATH_SIGNING_POLICY_SLUG }}"
+          github-artifact-id: "${{ steps.upload-unsigned-windows.outputs.artifact-id }}"
+          wait-for-completion: true
+          skip-decompress: true
+          output-artifact-directory: "signpath-signed"
+
+      - name: Replace unsigned MSI with signed (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIGNED=$(find signpath-signed -type f -name '*.msi' | head -n 1)
+          if [ -z "$SIGNED" ]; then
+            echo "No signed .msi found under signpath-signed:"
+            find signpath-signed -type f
+            exit 1
+          fi
+          mv -f "$SIGNED" "${{ steps.locate-msi.outputs.path }}"
+          rm -rf signpath-signed
+
+      - name: Delete unsigned MSI actions artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ART_ID="${{ steps.upload-unsigned-windows.outputs.artifact-id }}"
+          gh api -X DELETE "repos/${{ github.repository }}/actions/artifacts/$ART_ID"
+
+      - name: Install minisign (macOS)
+        if: runner.os == 'macOS'
+        run: brew install minisign
+
+      - name: Install minisign (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zip = Join-Path $env:RUNNER_TEMP 'minisign.zip'
+          Invoke-WebRequest -Uri 'https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-win64.zip' -OutFile $zip
+
+          $expected = '37B600344E20C19314B2E82813DB2BFDCC408B77B876F7727889DBD46D539479'
+          $actual = (Get-FileHash -Algorithm SHA256 -Path $zip).Hash
+          if ($actual -ne $expected) {
+            throw "minisign checksum mismatch: got $actual, expected $expected"
+          }
+
+          $dest = Join-Path $env:RUNNER_TEMP 'minisign'
+          Expand-Archive -Path $zip -DestinationPath $dest -Force
+          $arch = if ("${{ matrix.arch }}" -eq "aarch64") { "aarch64" } else { "x86_64" }
+          $bin = Join-Path $dest "minisign-win64\$arch"
+          "$bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & (Join-Path $bin 'minisign.exe') -v
+
+      - name: Sign binaries
+        shell: bash
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > minisign.key
+          for f in target/dist/bundles/*; do
+            [ -f "$f" ] || continue
+            minisign -SHWm "$f" -s minisign.key
+          done
+          rm -f minisign.key
+
+      - name: Rename artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          PREFIX="Vleer-${{ needs.version.outputs.full }}-${{ matrix.arch }}"
+          cd target/dist/bundles
+          for f in *; do
+            [[ "$f" == *.minisig ]] && continue
+            [[ -f "$f" ]] || continue
+            case "$f" in
+              *.tar.gz) EXT="tar.gz" ;;
+              *.tar.xz) EXT="tar.xz" ;;
+              *.pkg.tar.zst) EXT="pkg.tar.zst" ;;
+              *) EXT="${f##*.}" ;;
+            esac
+            mv "$f" "${PREFIX}.${EXT}"
+            [[ -f "${f}.minisig" ]] && mv "${f}.minisig" "${PREFIX}.${EXT}.minisig"
+          done
+          ls -l
+
+      - name: Upload to S3
+        if: ${{ !contains(needs.version.outputs.full, '-') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in target/dist/bundles/Vleer-*; do
+            [ -f "$f" ] || continue
+            name=$(basename "$f")
+            echo "uploading $name"
+            curl --silent --show-error --fail-with-body \
+              --aws-sigv4 "aws:amz:${S3_REGION}:s3" \
+              --user "${S3_ACCESS_KEY_ID}:${S3_SECRET_ACCESS_KEY}" \
+              --upload-file "$f" \
+              "${S3_ENDPOINT}/release/${name}"
+          done
+
+      - name: Upload release files
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.target }}
+          path: target/dist/bundles/Vleer-*
+          if-no-files-found: error
+
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Changelog
+        id: changelog
+        uses: 0PandaDEV/changelog@main
+        with:
+          head: ${{ env.TAG }}
+          base: ${{ github.event.inputs.base }}
+          step-summary: "true"
+
+      - name: Download release files
+        uses: actions/download-artifact@v6
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          NOTES: ${{ steps.changelog.outputs.markdown }}
+        run: |
+          set -euo pipefail
+          ls -l release
+          flags=()
+          if [[ "$TAG" == *-* ]]; then
+            flags+=(--prerelease)
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes "$NOTES" "${flags[@]}"
+          else
+            gh release create "$TAG" --verify-tag --title "$TAG" --notes "$NOTES" "${flags[@]}"
+          fi
+          gh release upload "$TAG" release/* --clobber
