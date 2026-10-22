@@ -227,7 +227,7 @@ fn compose_tinted_grid(
         }
     }
 
-    for pixel in canvas.chunks_exact_mut(4) {
+    for pixel in canvas.as_chunks_mut::<4>().0.iter_mut() {
         let luma =
             (0.299 * pixel[0] as f32 + 0.587 * pixel[1] as f32 + 0.114 * pixel[2] as f32) / 255.0;
         let factor = 0.3 + 0.85 * luma;
@@ -257,7 +257,7 @@ fn decode_bytes(bytes: &[u8], target: Option<u32>) -> Result<Arc<RenderImage>, I
     };
 
     let mut data = decoded.into_rgba8();
-    for pixel in data.chunks_exact_mut(4) {
+    for pixel in data.as_chunks_mut::<4>().0.iter_mut() {
         pixel.swap(0, 2);
     }
     let frames: Vec<Frame> = vec![Frame::new(data)];
