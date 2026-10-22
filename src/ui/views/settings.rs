@@ -242,7 +242,7 @@ impl RenderOnce for ScanPathsList {
                             .child(
                                 icon(icons::X)
                                     .text_color(variables.text_secondary)
-                                    .hover(|s| s.text_color(variables.text)),
+                                    .hover_style(|s| s.text_color(variables.text)),
                             )
                             .on_click(move |_event, _window, cx| {
                                 remove_scan_path(path.clone(), cx);

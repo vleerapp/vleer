@@ -162,14 +162,7 @@ impl Element for ProgressSlider {
                 },
             };
 
-            window.paint_quad(quad(
-                filled_bounds,
-                Corners::default(),
-                variables.accent,
-                Edges::all(px(0.0)),
-                rgb(0x000000),
-                BorderStyle::Solid,
-            ));
+            window.paint_quad(PaintQuad::new(filled_bounds).background(variables.accent));
         }
 
         let is_dragging = *dragging.borrow();
@@ -193,14 +186,7 @@ impl Element for ProgressSlider {
                 },
             };
 
-            window.paint_quad(quad(
-                thumb_bounds,
-                Corners::default(),
-                variables.text,
-                Edges::all(px(0.0)),
-                rgb(0x000000),
-                BorderStyle::Solid,
-            ));
+            window.paint_quad(PaintQuad::new(thumb_bounds).background(variables.text));
         }
 
         let shown_time = if *dragging.borrow() {

@@ -10,17 +10,17 @@ license = "AGPL-3.0"
 categories = ["multimedia::audio"]
 
 [dependencies]
-gpui-ce = { git = "https://github.com/gpui-ce/gpui-ce", rev = "d9623fc2b6678a4d466f9fe2e9d5f69a4ad58de4", features = ["font-kit", "x11", "wayland"] }
-gpui_ce_platform = { git = "https://github.com/gpui-ce/gpui-ce", rev = "d9623fc2b6678a4d466f9fe2e9d5f69a4ad58de4", features = ["font-kit", "x11", "wayland"] }
+gpui-ce = { git = "https://github.com/gpui-ce/gpui-ce", rev = "42fde4da183245e72c8d1e21709afbc12ee490a5", features = ["font-kit", "x11", "wayland"] }
+gpui_ce_platform = { git = "https://github.com/gpui-ce/gpui-ce", rev = "42fde4da183245e72c8d1e21709afbc12ee490a5", features = ["font-kit", "x11", "wayland"] }
 anyhow = "1.0.104"
 dirs = "7.0.0"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-tokio = { version = "1.53.2", features = ["sync"] }
+tokio = { version = "1.54.1", features = ["sync"] }
 futures = "0.3.34"
 rusqlite = { version = "0.40.2", features = ["bundled", "chrono"] }
 rusqlite_migration = { version = "2.6.0", features = ["from-directory"] }
-parking_lot = "0.12.5"
+parking_lot = "0.13.0"
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.8"
 rodio = { git = "https://github.com/vleerapp/rodio", rev = "8e5961ca2cc88cbff5f1a5686d8253b6e655ad8d", features = [
@@ -41,25 +41,25 @@ xxhash-rust = { version = "0.8.19", features = ["xxh3"] }
 rustc-hash = "2.1.3"
 nucleo-matcher = "0.3.1"
 unicode-segmentation = "1.13.3"
-ureq = { version = "3.4.2", features = ["json"] }
+ureq = { version = "3.5.0", features = ["json"] }
 uuid = { version = "1.28.0", features = ["serde", "v4"] }
 semver = "1.0.28"
-minisign-verify = "0.2.5"
+minisign-verify = "0.3.0"
 spectrum-analyzer = "2.0.0"
 discord-rich-presence = "1.1.0"
 rand = "0.10.3"
 raw-window-handle = "0.6.2"
-interprocess = "2.4.5"
-libc = "0.2.190"
+interprocess = "2.4.6"
+libc = "0.2.191"
 md5 = "0.8.1"
 
 [dev-dependencies]
-serde_json = "1.0.152"
+serde_json = "1.0.154"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-ksni = { version = "0.3.6", default-features = false, features = ["async-io", "blocking"] }
+ksni = { version = "0.3.7", default-features = false, features = ["async-io", "blocking"] }
 mpris-server = "0.10.0"
-zbus = "5.19.0"
+zbus = "6.0.0"
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 tray-icon = "0.26.1"

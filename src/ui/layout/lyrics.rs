@@ -711,7 +711,7 @@ fn synced_rows(
                 .cursor_pointer()
                 .text_color(rgb_to_hsla(variables.text).opacity(opacity))
                 .when(hovered.is_some(), |this| {
-                    this.hover(|s| s.text_color(variables.text))
+                    this.hover_style(|s| s.text_color(variables.text))
                 })
                 .on_hover(cx.listener(move |this, over: &bool, _window, cx| {
                     if *over && this.hovered != Some(i) {

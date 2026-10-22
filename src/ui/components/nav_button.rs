@@ -61,14 +61,14 @@ impl RenderOnce for NavButton {
             .justify_between()
             .cursor_pointer()
             .text_color(default_color)
-            .group_hover(group_name.clone(), |s| s.text_color(hover_color))
+            .group_hover_style(group_name.clone(), |s| s.text_color(hover_color))
             .child(
                 flex_row()
                     .gap(px(variables.padding_8))
                     .child(
                         icon(icon_path)
                             .text_color(default_color)
-                            .group_hover(group_name.clone(), |s| s.text_color(hover_color)),
+                            .group_hover_style(group_name.clone(), |s| s.text_color(hover_color)),
                     )
                     .when_some(label, |this, label_text| this.child(label_text)),
             )

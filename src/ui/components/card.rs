@@ -218,7 +218,7 @@ impl RenderOnce for Card {
                     .justify_end()
                     .p(px(variables.padding_16))
                     .invisible()
-                    .group_hover(image_hover_group, |s| s.visible())
+                    .group_hover_style(image_hover_group, |s| s.visible())
                     .child(
                         div()
                             .id(ElementId::Name(format!("{tile_id}-play-button").into()))
@@ -227,7 +227,7 @@ impl RenderOnce for Card {
                             .items_center()
                             .justify_center()
                             .bg(variables.accent)
-                            .hover(|s| s.bg(variables.accent_hover))
+                            .hover_style(|s| s.bg(variables.accent_hover))
                             .cursor_pointer()
                             .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
                                 cx.stop_propagation();

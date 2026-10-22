@@ -4,7 +4,7 @@ use gpui::{
     GlobalElementId, IntoElement, KeyBinding, LayoutId, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, NavigationDirection, PaintQuad, Pixels, Point, Render, Rgba,
     ShapedLine, ShapedTextLayout, SharedString, Style, Subscription, TextRun, UTF16Selection,
-    Window, actions, fill, point, prelude::*, px, relative, rgb_to_hsla, rgba, size,
+    Window, actions, point, prelude::*, px, relative, rgb_to_hsla, rgba, size,
 };
 use std::cell::RefCell;
 use std::ops::Range;
@@ -899,25 +899,25 @@ impl Element for TextElement {
         let (selection, cursor) = if selected_range.is_empty() {
             (
                 None,
-                Some(fill(
-                    Bounds::new(
+                Some(
+                    PaintQuad::new(Bounds::new(
                         point(bounds.left() + cursor_pos, bounds.top() + y_offset),
                         size(px(1.5), line_height),
-                    ),
-                    variables.text,
-                )),
+                    ))
+                    .background(variables.text),
+                ),
             )
         } else {
             let start_x = x_for_index(&line, selected_range.start) - scroll_offset + x_offset;
             let end_x = x_for_index(&line, selected_range.end) - scroll_offset + x_offset;
             (
-                Some(fill(
-                    Bounds::from_corners(
+                Some(
+                    PaintQuad::new(Bounds::from_corners(
                         point(bounds.left() + start_x, bounds.top() + y_offset),
                         point(bounds.left() + end_x, bounds.bottom() - y_offset),
-                    ),
-                    rgba(0xA058FF4F),
-                )),
+                    ))
+                    .background(rgba(0xA058FF4F)),
+                ),
                 None,
             )
         };

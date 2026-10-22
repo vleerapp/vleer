@@ -211,20 +211,22 @@ impl Bars {
         for i in 0..count {
             let x = i as f32 * step;
             if self.levels[i] > EPSILON {
-                window.paint_quad(fill(rect(x, 0.0, bar_w, self.levels[i] * h), color));
+                window.paint_quad(
+                    PaintQuad::new(rect(x, 0.0, bar_w, self.levels[i] * h)).background(color),
+                );
             }
             if let Some(cap) = cap
                 && self.holds[i] > EPSILON
             {
-                window.paint_quad(fill(
-                    rect(
+                window.paint_quad(
+                    PaintQuad::new(rect(
                         x,
                         (self.holds[i] * h).min(h - CAP_HEIGHT),
                         bar_w,
                         CAP_HEIGHT,
-                    ),
-                    cap,
-                ));
+                    ))
+                    .background(cap),
+                );
             }
         }
     }
@@ -543,8 +545,10 @@ impl Render for Player {
                                 .whitespace_nowrap()
                                 .text_ellipsis()
                                 .when_some(album_id, |title, album_id| {
-                                    title.cursor_pointer().hover(|s| s.underline()).on_click(
-                                        move |_event, window, cx| {
+                                    title
+                                        .cursor_pointer()
+                                        .hover_style(|s| s.underline())
+                                        .on_click(move |_event, window, cx| {
                                             cx.set_global(SelectedAlbum(Some(album_id.clone())));
                                             if let Some(Some(root)) = window.root::<MainWindow>() {
                                                 root.update(cx, |view, cx| {
@@ -555,8 +559,7 @@ impl Render for Player {
                                                     );
                                                 });
                                             }
-                                        },
-                                    )
+                                        })
                                 })
                                 .child(title),
                         )

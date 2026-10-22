@@ -284,7 +284,7 @@ fn render_row(
                 ))
                 .group("queue-item")
                 .bg(variables.element)
-                .hover(|s| s.bg(variables.element_hover))
+                .hover_style(|s| s.bg(variables.element_hover))
                 .gap(px(variables.padding_8))
                 .pr(px(variables.padding_8))
                 .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
@@ -344,7 +344,7 @@ fn render_row(
                                 .p(px(5.0))
                                 .bg(black().opacity(0.5))
                                 .when(!is_current || !visualizer_enabled, |s| s.invisible())
-                                .group_hover("cover-container", |s| s.invisible())
+                                .group_hover_style("cover-container", |s| s.invisible())
                                 .children((0..4).map(move |i| {
                                     let height_pct = (spectrum[i] * 100.0).clamp(10.0, 80.0);
                                     let height_px = ROW_HEIGHT * (height_pct / 100.0);
@@ -360,7 +360,7 @@ fn render_row(
                                 .justify_center()
                                 .bg(black().opacity(0.5))
                                 .invisible()
-                                .group_hover("cover-container", |s| s.visible())
+                                .group_hover_style("cover-container", |s| s.visible())
                                 .child(icon(icons::PLAY).size(px(16.0)).text_color(variables.text)),
                         ),
                 )
@@ -391,12 +391,12 @@ fn render_row(
                 .child(
                     div()
                         .invisible()
-                        .group_hover("queue-item", |s| s.visible())
+                        .group_hover_style("queue-item", |s| s.visible())
                         .flex_shrink_0()
                         .child(
                             div()
                                 .p(px(4.0))
-                                .hover(|s| s.bg(variables.element_hover))
+                                .hover_style(|s| s.bg(variables.element_hover))
                                 .cursor_pointer()
                                 .on_mouse_down(MouseButton::Left, move |_event, _window, cx| {
                                     cx.update_global::<Queue, _>(|q, _| {

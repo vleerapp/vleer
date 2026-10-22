@@ -526,8 +526,11 @@ impl Element for Scrollbar {
                     let margin_end = axis_state.margin_end;
                     window.set_cursor_style(CursorStyle::default(), &axis_state.bar_hitbox);
                     window.paint_layer(hitbox_bounds, |cx| {
-                        cx.paint_quad(fill(bounds, axis_state.track_color));
-                        cx.paint_quad(fill(axis_state.thumb_fill_bounds, axis_state.thumb_color));
+                        cx.paint_quad(PaintQuad::new(bounds).background(axis_state.track_color));
+                        cx.paint_quad(
+                            PaintQuad::new(axis_state.thumb_fill_bounds)
+                                .background(axis_state.thumb_color),
+                        );
                     });
                     window.on_mouse_event({
                         let state = state.clone();

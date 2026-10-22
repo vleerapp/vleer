@@ -132,7 +132,7 @@ impl RenderOnce for Button {
         let icon_element = self.icon.map(|icon_path| {
             icon(icon_path)
                 .text_color(color)
-                .group_hover(group_id.clone(), |s| s.text_color(hover_color))
+                .group_hover_style(group_id.clone(), |s| s.text_color(hover_color))
         });
 
         self.base
@@ -146,7 +146,7 @@ impl RenderOnce for Button {
                     .py(px(8.0))
                     .gap(px(8.0))
                     .bg(bg)
-                    .hover(move |s| s.bg(hover_bg))
+                    .hover_style(move |s| s.bg(hover_bg))
                     .when(self.variant == Some(ButtonVariant::Active), |this| {
                         this.font_weight(FontWeight::MEDIUM)
                     }),
@@ -154,7 +154,7 @@ impl RenderOnce for Button {
                     .p(px(8.0))
                     .when_some(self.bg_color, |this, bg| this.bg(bg)),
             })
-            .group_hover(self.group_id, |s| s.text_color(hover_color))
+            .group_hover_style(self.group_id, |s| s.text_color(hover_color))
             .when_some(self.on_click, |this, on_click| {
                 this.on_click(move |event, window, cx| {
                     on_click(event, window, cx);

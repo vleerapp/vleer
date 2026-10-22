@@ -233,7 +233,7 @@ fn pinned_item(
     flex_row()
         .group("pinned-item")
         .bg(variables.element)
-        .hover(|s| s.bg(variables.element_hover))
+        .hover_style(|s| s.bg(variables.element_hover))
         .gap(px(variables.padding_8))
         .pr(px(variables.padding_8))
         .when(is_artist, |this| {
@@ -294,7 +294,7 @@ fn pinned_item(
                             .justify_center()
                             .bg(black().opacity(0.5))
                             .invisible()
-                            .group_hover("pinned-item", |s| s.visible())
+                            .group_hover_style("pinned-item", |s| s.visible())
                             .child(icon(icons::PLAY).size(px(16.0)).text_color(variables.text))
                             .cursor_pointer()
                             .on_mouse_down(MouseButton::Left, move |_event, _window, cx| {
@@ -406,7 +406,7 @@ impl Render for Library {
                 flex_col()
                     .size_full()
                     .min_h_0()
-                    .group_hover("library", |s| s.border_color(variables.accent))
+                    .group_hover_style("library", |s| s.border_color(variables.accent))
                     .pl(px(variables.padding_16))
                     .pr(px(0.0))
                     .pt(px(variables.padding_16))
@@ -466,14 +466,16 @@ impl Render for Library {
                                     .items_center()
                                     .cursor_pointer()
                                     .text_color(default_color)
-                                    .group_hover("nav_btn_Playlists", |s| s.text_color(hover_color))
+                                    .group_hover_style("nav_btn_Playlists", |s| {
+                                        s.text_color(hover_color)
+                                    })
                                     .child(
                                         flex_row()
                                             .gap(px(variables.padding_8))
                                             .child(
                                                 icon(icons::PLAYLIST)
                                                     .text_color(default_color)
-                                                    .group_hover("nav_btn_Playlists", |s| {
+                                                    .group_hover_style("nav_btn_Playlists", |s| {
                                                         s.text_color(hover_color)
                                                     }),
                                             )
@@ -493,7 +495,7 @@ impl Render for Library {
                                                     .child(
                                                         icon(icons::PLUS)
                                                             .text_color(variables.text_secondary)
-                                                            .hover(|s| {
+                                                            .hover_style(|s| {
                                                                 s.text_color(variables.text)
                                                             }),
                                                     )

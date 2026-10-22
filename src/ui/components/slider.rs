@@ -247,27 +247,23 @@ impl Slider {
                 } else {
                     fill_color
                 };
-                window.paint_quad(quad(
-                    Bounds {
+                window.paint_quad(
+                    PaintQuad::new(Bounds {
                         origin: Point { x, y: line_y },
                         size: Size {
                             width: dash_width,
                             height: line_height,
                         },
-                    },
-                    Corners::default(),
-                    color,
-                    Edges::all(px(0.0)),
-                    rgb(0x000000),
-                    BorderStyle::Solid,
-                ));
+                    })
+                    .background(color),
+                );
             }
 
             x = x + dash_size + gap_size;
         }
 
-        window.paint_quad(quad(
-            Bounds {
+        window.paint_quad(
+            PaintQuad::new(Bounds {
                 origin: Point {
                     x: thumb_x,
                     y: thumb_y,
@@ -276,13 +272,9 @@ impl Slider {
                     width: thumb_width,
                     height: thumb_height,
                 },
-            },
-            Corners::default(),
-            thumb_color,
-            Edges::all(px(0.0)),
-            rgb(0x000000),
-            BorderStyle::Solid,
-        ));
+            })
+            .background(thumb_color),
+        );
     }
 
     fn paint_vertical(
@@ -324,26 +316,22 @@ impl Slider {
                 } else {
                     fill_color
                 };
-                window.paint_quad(quad(
-                    Bounds {
+                window.paint_quad(
+                    PaintQuad::new(Bounds {
                         origin: Point { x: line_x, y },
                         size: Size {
                             width: line_width,
                             height: dash_height,
                         },
-                    },
-                    Corners::default(),
-                    color,
-                    Edges::all(px(0.0)),
-                    rgb(0x000000),
-                    BorderStyle::Solid,
-                ));
+                    })
+                    .background(color),
+                );
             }
             y = y + dash_size + gap_size;
         }
 
-        window.paint_quad(quad(
-            Bounds {
+        window.paint_quad(
+            PaintQuad::new(Bounds {
                 origin: Point {
                     x: thumb_x,
                     y: thumb_y,
@@ -352,13 +340,9 @@ impl Slider {
                     width: thumb_width,
                     height: thumb_height,
                 },
-            },
-            Corners::default(),
-            thumb_color,
-            Edges::all(px(0.0)),
-            rgb(0x000000),
-            BorderStyle::Solid,
-        ));
+            })
+            .background(thumb_color),
+        );
     }
 }
 

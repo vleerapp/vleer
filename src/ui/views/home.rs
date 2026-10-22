@@ -449,7 +449,7 @@ impl Render for HomeView {
                                     } else {
                                         variables.text_muted
                                     })
-                                    .hover(|this| {
+                                    .hover_style(|this| {
                                         if can_scroll_recently_played_left {
                                             this.text_color(variables.text)
                                         } else {
@@ -473,7 +473,7 @@ impl Render for HomeView {
                                     } else {
                                         variables.text_muted
                                     })
-                                    .hover(|this| {
+                                    .hover_style(|this| {
                                         if can_scroll_recently_played_right {
                                             this.text_color(variables.text)
                                         } else {
@@ -533,7 +533,7 @@ impl Render for HomeView {
                                         }),
                                     )
                                     .text_color(left_arrow_color)
-                                    .hover(|this| {
+                                    .hover_style(|this| {
                                         if can_scroll_recently_added_left {
                                             this.text_color(variables.text)
                                         } else {
@@ -553,7 +553,7 @@ impl Render for HomeView {
                                         }),
                                     )
                                     .text_color(right_arrow_color)
-                                    .hover(|this| {
+                                    .hover_style(|this| {
                                         if can_scroll_recently_added_right {
                                             this.text_color(variables.text)
                                         } else {

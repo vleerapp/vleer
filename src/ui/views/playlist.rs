@@ -374,7 +374,7 @@ impl Render for PlaylistView {
                             .justify_center()
                             .bg(black().opacity(0.4))
                             .invisible()
-                            .hover(|s| s.visible())
+                            .hover_style(|s| s.visible())
                             .child(
                                 div()
                                     .text_color(variables.text)
@@ -449,7 +449,7 @@ impl Render for PlaylistView {
                                 .bg_color(variables.accent)
                                 .color(variables.background)
                                 .hover_color(variables.background)
-                                .hover(|s| s.bg(variables.accent_hover))
+                                .hover_style(|s| s.bg(variables.accent_hover))
                                 .on_click(move |_event, _window, cx| {
                                     play_playlist_now(playlist_id_play.clone(), cx);
                                 }),

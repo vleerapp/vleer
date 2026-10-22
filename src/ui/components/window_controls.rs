@@ -106,8 +106,8 @@ fn window_control_button(
         .justify_center()
         .content_center()
         .text_color(variables.text_secondary)
-        .hover(|s| s.bg(hover_bg))
-        .active(|s| s.bg(active_bg))
+        .hover_style(|s| s.bg(hover_bg))
+        .active_style(|s| s.bg(active_bg))
         .child(icon(icon_path));
 
     if use_window_control_area {

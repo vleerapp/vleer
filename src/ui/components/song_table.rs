@@ -427,7 +427,9 @@ impl Render for SongTableItem {
             .when(!row_hover && !is_preview, |div| {
                 div.pb(px(variables.padding_16))
             })
-            .when(row_hover, |div| div.hover(|s| s.bg(variables.element)))
+            .when(row_hover, |div| {
+                div.hover_style(|s| s.bg(variables.element))
+            })
             .when(is_preview, |div| div.bg(variables.element))
             .when_some(on_select, move |div, handler| {
                 let row_data = row_data_for_select.clone();
@@ -607,7 +609,7 @@ impl Render for SongTableItem {
                                         .p(px(5.0))
                                         .bg(black().opacity(0.5))
                                         .when(!is_current || !visualizer_enabled, |s| s.invisible())
-                                        .group_hover("cover-container", |s| s.invisible())
+                                        .group_hover_style("cover-container", |s| s.invisible())
                                         .children((0..4).map(|i| {
                                             let height_pct =
                                                 (spectrum[i] * 100.0).clamp(10.0, 80.0);
@@ -624,7 +626,7 @@ impl Render for SongTableItem {
                                         .justify_center()
                                         .bg(black().opacity(0.5))
                                         .invisible()
-                                        .group_hover("cover-container", |s| s.visible())
+                                        .group_hover_style("cover-container", |s| s.visible())
                                         .child(
                                             icon(icons::PLAY)
                                                 .size(px(16.0))
@@ -670,7 +672,7 @@ impl Render for SongTableItem {
                                     .whitespace_nowrap()
                                     .text_ellipsis()
                                     .font_weight(FontWeight(500.0))
-                                    .hover(|this| this.underline())
+                                    .hover_style(|this| this.underline())
                                     .child(data.title.clone()),
                             )
                             .child(
@@ -730,16 +732,16 @@ impl Render for SongTableItem {
                             .min_w_0()
                             .text_color(variables.text_secondary)
                             .when_some(album_id.clone(), |div, album_id| {
-                                div.cursor_pointer().hover(|s| s.underline()).on_click(
-                                    move |_event, window, cx| {
+                                div.cursor_pointer()
+                                    .hover_style(|s| s.underline())
+                                    .on_click(move |_event, window, cx| {
                                         cx.set_global(SelectedAlbum(Some(album_id.clone())));
                                         if let Some(Some(root)) = window.root::<MainWindow>() {
                                             root.update(cx, |view, cx| {
                                                 view.set_current_view(AppView::Album, window, cx);
                                             });
                                         }
-                                    },
-                                )
+                                    })
                             })
                             .child(
                                 div()
@@ -776,7 +778,7 @@ impl Render for SongTableItem {
                                 div()
                                     .text_color(variables.text_secondary)
                                     .when(is_current && visualizer_enabled, |s| s.invisible())
-                                    .group_hover("number-cell", |s| s.invisible())
+                                    .group_hover_style("number-cell", |s| s.invisible())
                                     .child(number_value),
                             )
                             .child(
@@ -803,7 +805,7 @@ impl Render for SongTableItem {
                                     .justify_center()
                                     .invisible()
                                     .when(!is_playing, |s| {
-                                        s.group_hover("number-cell", |c| c.visible())
+                                        s.group_hover_style("number-cell", |c| c.visible())
                                     })
                                     .child(
                                         icon(icons::PLAY).size(px(16.0)).text_color(variables.text),

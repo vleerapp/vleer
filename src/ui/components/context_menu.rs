@@ -249,7 +249,7 @@ impl Render for ContextMenu {
                     })
                     .when(!is_disabled, |this| {
                         this.cursor_pointer()
-                            .hover(|s| s.bg(variables.element_hover))
+                            .hover_style(|s| s.bg(variables.element_hover))
                             .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
                                 if !has_submenu {
                                     handler(window, cx);
@@ -362,7 +362,7 @@ impl Render for ContextMenu {
                                 .items_center()
                                 .cursor_pointer()
                                 .text_color(variables.text)
-                                .hover(|s| s.bg(variables.element_hover))
+                                .hover_style(|s| s.bg(variables.element_hover))
                                 .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                                     action(pl_id.clone(), cx);
                                     entity_close
@@ -387,7 +387,7 @@ impl Render for ContextMenu {
                             .items_center()
                             .cursor_pointer()
                             .text_color(variables.text)
-                            .hover(|s| s.bg(variables.element_hover))
+                            .hover_style(|s| s.bg(variables.element_hover))
                             .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                                 let new_id = Cuid::new();
                                 let db = cx.global::<Database>().clone();
