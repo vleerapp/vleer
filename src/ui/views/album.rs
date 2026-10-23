@@ -1,5 +1,5 @@
 use crate::ui::components::scroller::SmoothScrollable;
-use gpui::*;
+use gpui::{prelude::FluentBuilder, *};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use crate::{
         models::{Album, Cuid},
     },
     media::{
-        playback::{Playback, play_album_now},
+        playback::{play_album_now, play_song_ids_shuffled},
         queue::Queue,
     },
     ui::{
@@ -20,12 +20,14 @@ use crate::{
             context_menu::{
                 ContextMenu, LibraryDataChanged, QueueChanged, album_context_menu_items,
             },
+            cover::avatar,
             div::{flex_col, flex_row},
             icons,
+            nav::open_artist,
             scrollbar::{Scrollbar, ScrollbarAxis},
             song_table::{
                 GetRowCountHandler, GetRowHandler, QueueHandler, SongEntry, SongSorter, SongTable,
-                SongTableEvent, join_artists,
+                SongTableEvent, join_artists, song_entry_from_song,
             },
         },
         variables::Variables,
@@ -35,7 +37,7 @@ use crate::{
 
 type SongCache = Rc<RefCell<Vec<Arc<SongEntry>>>>;
 
-type ArtistInfo = (String, Option<String>);
+type ArtistInfo = (Option<Cuid>, String, Option<String>);
 
 pub struct AlbumView {
     album_id: Option<Cuid>,
@@ -52,36 +54,6 @@ pub struct AlbumView {
     table: Entity<SongTable>,
     context_menu: Entity<ContextMenu>,
     artists_scroll_handle: ScrollHandle,
-}
-
-fn song_entry_from_song(song: &crate::data::models::Song) -> Arc<SongEntry> {
-    let artists = if song.artists.is_empty() {
-        vec!["Unknown".to_string()]
-    } else {
-        song.artists.clone()
-    };
-    let (artist, artist_ranges) = join_artists(&artists);
-    let total_secs = song.duration / 1000;
-    let minutes = total_secs / 60;
-    let seconds = total_secs % 60;
-    Arc::new(SongEntry {
-        id: song.id.clone(),
-        title: song.title.clone(),
-        artist,
-        artist_ranges,
-        album: String::new(),
-        album_id: song.album_id.clone(),
-        duration: format!("{}:{:02}", minutes, seconds),
-        cover_uri: Some(cover_uri(
-            song.image_id.as_deref(),
-            match &song.album_id {
-                Some(album_id) => ImageRequest::Album(album_id.clone()),
-                None => ImageRequest::Track(song.id.clone()),
-            },
-        )),
-        track_number: song.track_number,
-        genre: String::new(),
-    })
 }
 
 impl AlbumView {
@@ -256,12 +228,12 @@ impl AlbumView {
                         .unwrap_or_default();
                     let mut artists_data: Vec<ArtistInfo> = Vec::new();
                     for name in &artist_names_list {
-                        let img = db
-                            .get_artist_by_name(name)
-                            .ok()
-                            .flatten()
-                            .and_then(|a| a.image_id.clone());
-                        artists_data.push((name.clone(), img));
+                        let artist = db.get_artist_by_name(name).ok().flatten();
+                        artists_data.push((
+                            artist.as_ref().map(|a| a.id.clone()),
+                            name.clone(),
+                            artist.and_then(|a| a.image_id),
+                        ));
                     }
                     let year = songs
                         .iter()
@@ -421,18 +393,7 @@ impl Render for AlbumView {
                                         .iter()
                                         .map(|e| e.id.clone())
                                         .collect();
-                                    if song_ids.is_empty() {
-                                        return;
-                                    }
-                                    cx.update_global::<Queue, _>(|queue, _| {
-                                        queue.clear();
-                                        queue.add_songs(song_ids);
-                                        queue.set_shuffle(true);
-                                    });
-                                    cx.update_global::<Playback, _>(|playback, cx| {
-                                        playback.play_queue(cx);
-                                    });
-                                    cx.set_global(QueueChanged);
+                                    play_song_ids_shuffled(song_ids, cx);
                                 }),
                         )
                         .child(
@@ -455,33 +416,20 @@ impl Render for AlbumView {
                 artists_data
                     .into_iter()
                     .enumerate()
-                    .map(|(i, (name, image_uri))| {
+                    .map(|(i, (artist_id, name, image_id))| {
                         let tile_id = format!("album-artist-{}", i);
                         flex_row()
                             .id(ElementId::Name(tile_id.clone().into()))
                             .gap(px(variables.padding_8))
                             .items_center()
-                            .child(
-                                div()
-                                    .id(ElementId::Name(format!("{}-avatar", tile_id).into()))
-                                    .size(px(36.0))
-                                    .flex_shrink_0()
-                                    .rounded_full()
-                                    .relative()
-                                    .overflow_hidden()
-                                    .child(match image_uri {
-                                        Some(uri) => img(format!("!image://{}?size=36", uri))
-                                            .size_full()
-                                            .rounded_full()
-                                            .object_fit(ObjectFit::Cover)
-                                            .into_any_element(),
-                                        None => div()
-                                            .size_full()
-                                            .rounded_full()
-                                            .bg(variables.border)
-                                            .into_any_element(),
-                                    }),
-                            )
+                            .when_some(artist_id, |this, artist_id| {
+                                this.cursor_pointer()
+                                    .hover_style(|s| s.text_color(variables.text_hover))
+                                    .on_click(move |_event, window, cx| {
+                                        open_artist(artist_id.clone(), window, cx);
+                                    })
+                            })
+                            .child(avatar(image_id.as_deref(), 36.0, &variables))
                             .child(
                                 div()
                                     .id(ElementId::Name(format!("{}-name", tile_id).into()))

@@ -18,7 +18,7 @@ use crate::{
             div::flex_col,
             song_table::{
                 GetRowCountHandler, GetRowHandler, QueueHandler, SongColumn, SongEntry, SongTable,
-                SongTableEvent, TableSort, format_artist_line,
+                SongTableEvent, TableSort, format_artist_line, format_duration,
             },
         },
         layout::library::Search,
@@ -54,9 +54,6 @@ fn map_sort(sort: Option<TableSort>) -> (SongSort, bool) {
 fn song_entry_from_list_item(item: SongListItem) -> Arc<SongEntry> {
     let (artist, artist_ranges) = format_artist_line(&item.artist_name);
     let album = item.album_title.unwrap_or_else(|| "Unknown".to_string());
-    let total_secs = item.duration / 1000;
-    let minutes = total_secs / 60;
-    let seconds = total_secs % 60;
 
     let cover = cover_uri(
         item.image_id.as_deref(),
@@ -73,7 +70,7 @@ fn song_entry_from_list_item(item: SongListItem) -> Arc<SongEntry> {
         artist_ranges,
         album,
         album_id: item.album_id,
-        duration: format!("{}:{:02}", minutes, seconds),
+        duration: format_duration(item.duration),
         cover_uri: Some(cover),
         track_number: None,
         genre: item.genres.unwrap_or_default(),

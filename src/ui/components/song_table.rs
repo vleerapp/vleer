@@ -1,19 +1,21 @@
 use crate::data::config::Config;
 use crate::data::images::priority;
-use crate::data::models::Cuid;
+use crate::data::models::{Cuid, Song};
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
-use crate::ui::app::MainWindow;
 use crate::ui::assets::image_cache::view_image_cache;
+use crate::ui::assets::{ImageRequest, cover_uri};
+
 use crate::ui::components::context_menu::{
     ContextMenu, QueueChanged, song_context_menu_items, song_in_playlist_context_menu_items,
 };
 use crate::ui::components::div::{flex_col, flex_row};
 use crate::ui::components::icons::{self, icon};
+use crate::ui::components::nav::{ArtistLine, open_album};
 use crate::ui::components::scrollbar::{Scrollbar, ScrollbarAxis, ScrollbarHandle};
 use crate::ui::components::scroller::{ShiftAnimator, SmoothScrollable, drive_shift};
 use crate::ui::variables::Variables;
-use crate::ui::views::{AppView, SelectedAlbum};
+use crate::ui::views::AppView;
 use gpui::{prelude::*, *};
 use rustc_hash::FxHashMap;
 use std::ops::Range;
@@ -181,6 +183,52 @@ impl SongSorter {
         }
         f(&memo.as_ref().unwrap().rows)
     }
+}
+
+pub fn format_duration(millis: i32) -> String {
+    let total_secs = millis / 1000;
+    format!("{}:{:02}", total_secs / 60, total_secs % 60)
+}
+
+pub fn song_entry_from_song(song: &Song) -> Arc<SongEntry> {
+    let artists = if song.artists.is_empty() {
+        vec!["Unknown".to_string()]
+    } else {
+        song.artists.clone()
+    };
+    let (artist, artist_ranges) = join_artists(&artists);
+    Arc::new(SongEntry {
+        id: song.id.clone(),
+        title: song.title.clone(),
+        artist,
+        artist_ranges,
+        album: String::new(),
+        album_id: song.album_id.clone(),
+        duration: format_duration(song.duration),
+        cover_uri: Some(cover_uri(
+            song.image_id.as_deref(),
+            match &song.album_id {
+                Some(album_id) => ImageRequest::Album(album_id.clone()),
+                None => ImageRequest::Track(song.id.clone()),
+            },
+        )),
+        track_number: song.track_number,
+        genre: String::new(),
+    })
+}
+
+pub fn queue_after_handler(rows: Rc<Vec<Arc<SongEntry>>>) -> QueueHandler {
+    Rc::new(move |cx, current_id, index, _sort| {
+        if rows.get(index).map(|e| &e.id) != Some(&current_id) {
+            return;
+        }
+        let rest: Vec<Cuid> = rows.iter().skip(index + 1).map(|e| e.id.clone()).collect();
+        if rest.is_empty() {
+            return;
+        }
+        cx.update_global::<Queue, _>(|q, _| q.add_songs(rest));
+        cx.set_global(QueueChanged);
+    })
 }
 
 pub fn join_artists(artists: &[String]) -> (String, Vec<Range<usize>>) {
@@ -363,7 +411,6 @@ pub struct SongTableItem {
     show_genre: bool,
     row_index: usize,
     is_animating: bool,
-    hovered_artist: Option<usize>,
     context_menu: Entity<ContextMenu>,
     playlist: Option<PlaylistContext>,
     reorder: Option<ReorderContext>,
@@ -390,7 +437,6 @@ impl SongTableItem {
             show_genre: layout.show_genre,
             row_index,
             is_animating: false,
-            hovered_artist: None,
             context_menu: cx.new(|_| ContextMenu::new()),
             playlist: handlers.playlist,
             reorder: handlers.reorder,
@@ -684,42 +730,11 @@ impl Render for SongTableItem {
                                     .text_color(variables.text_secondary)
                                     .whitespace_nowrap()
                                     .text_ellipsis()
-                                    .on_hover({
-                                        let weak = cx.weak_entity();
-                                        move |hovered, _window, cx| {
-                                            if !hovered {
-                                                let _ = weak.update(cx, |this, cx| {
-                                                    if this.hovered_artist.is_some() {
-                                                        this.hovered_artist = None;
-                                                        cx.notify();
-                                                    }
-                                                });
-                                            }
-                                        }
-                                    })
-                                    .child({
-                                        let styled = StyledText::new(data.artist.clone());
-                                        let weak = cx.weak_entity();
-                                        let ranges = data.artist_ranges.clone();
-                                        InteractiveText::new(
-                                            ElementId::Name(
-                                                format!("song-{}-artist", self.row_index).into(),
-                                            ),
-                                            styled,
-                                        )
-                                        .on_hover(move |hovered_ix, _event, _window, cx| {
-                                            let new_hovered = hovered_ix.and_then(|ix| {
-                                                ranges.iter().position(|r| r.contains(&ix))
-                                            });
-                                            let _ = weak.update(cx, |this, cx| {
-                                                if this.hovered_artist != new_hovered {
-                                                    this.hovered_artist = new_hovered;
-                                                    cx.notify();
-                                                }
-                                            });
-                                        })
-                                        .into_any_element()
-                                    }),
+                                    .child(ArtistLine::new(
+                                        format!("song-{}-artist", self.row_index),
+                                        data.artist.clone(),
+                                        data.artist_ranges.clone(),
+                                    )),
                             ),
                     );
                 } else if matches!(column, SongColumn::Album) {
@@ -735,12 +750,7 @@ impl Render for SongTableItem {
                                 div.cursor_pointer()
                                     .hover_style(|s| s.underline())
                                     .on_click(move |_event, window, cx| {
-                                        cx.set_global(SelectedAlbum(Some(album_id.clone())));
-                                        if let Some(Some(root)) = window.root::<MainWindow>() {
-                                            root.update(cx, |view, cx| {
-                                                view.set_current_view(AppView::Album, window, cx);
-                                            });
-                                        }
+                                        open_album(album_id.clone(), window, cx);
                                     })
                             })
                             .child(
@@ -914,7 +924,7 @@ pub struct SongTable {
 
 impl EventEmitter<SongTableEvent> for SongTable {}
 
-fn calculate_column_widths(item_count: usize) -> (f32, f32) {
+pub fn calculate_column_widths(item_count: usize) -> (f32, f32) {
     const CHAR_WIDTH: f32 = 8.5;
     let digit_count = if item_count == 0 {
         1

@@ -11,7 +11,7 @@ use crate::{
         models::{Cuid, Playlist, PlaylistTrack},
     },
     media::{
-        playback::{Playback, play_playlist_now},
+        playback::{play_playlist_now, play_song_ids_shuffled},
         queue::Queue,
     },
     ui::{
@@ -25,7 +25,7 @@ use crate::{
             input::{InputEvent, TextInput},
             song_table::{
                 GetRowCountHandler, GetRowHandler, PlaylistContext, QueueHandler, ReorderHandler,
-                SongEntry, SongSorter, SongTable, SongTableEvent, join_artists,
+                SongEntry, SongSorter, SongTable, SongTableEvent, format_duration, join_artists,
             },
         },
         variables::Variables,
@@ -56,9 +56,6 @@ fn song_entry_from_track(track: &PlaylistTrack) -> Arc<SongEntry> {
         song.artists.clone()
     };
     let (artist, artist_ranges) = join_artists(&artists);
-    let total_secs = song.duration / 1000;
-    let minutes = total_secs / 60;
-    let seconds = total_secs % 60;
     Arc::new(SongEntry {
         id: song.id.clone(),
         title: song.title.clone(),
@@ -66,7 +63,7 @@ fn song_entry_from_track(track: &PlaylistTrack) -> Arc<SongEntry> {
         artist_ranges,
         album: track.album_title.clone().unwrap_or_default(),
         album_id: song.album_id.clone(),
-        duration: format!("{}:{:02}", minutes, seconds),
+        duration: format_duration(song.duration),
         cover_uri: Some(cover_uri(
             song.image_id.as_deref(),
             match &song.album_id {
@@ -465,18 +462,7 @@ impl Render for PlaylistView {
                                         .iter()
                                         .map(|e| e.id.clone())
                                         .collect();
-                                    if song_ids.is_empty() {
-                                        return;
-                                    }
-                                    cx.update_global::<Queue, _>(|queue, _| {
-                                        queue.clear();
-                                        queue.add_songs(song_ids);
-                                        queue.set_shuffle(true);
-                                    });
-                                    cx.update_global::<Playback, _>(|playback, cx| {
-                                        playback.play_queue(cx);
-                                    });
-                                    cx.set_global(QueueChanged);
+                                    play_song_ids_shuffled(song_ids, cx);
                                 }),
                         )
                         .child(

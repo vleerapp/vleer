@@ -1,9 +1,11 @@
 pub mod button;
 pub mod card;
 pub mod context_menu;
+pub mod cover;
 pub mod div;
 pub mod icons;
 pub mod input;
+pub mod nav;
 pub mod nav_button;
 pub mod pane;
 pub mod progress_bar;

@@ -15,13 +15,15 @@ use crate::ui::components::scrollbar::ScrollableElement;
 use crate::ui::{
     app::MainWindow,
     components::{
+        cover::cover,
         div::flex_col,
         icons,
         input::{InputEvent, TextInput},
+        nav::{open_album, open_artist},
         nav_button::NavButton,
     },
     variables::Variables,
-    views::{AppView, SelectedAlbum, SelectedPlaylist},
+    views::{AppView, SelectedPlaylist},
 };
 use gpui::prelude::FluentBuilder;
 use gpui::*;
@@ -211,27 +213,7 @@ fn pinned_item(
         (None, _) => None,
     };
 
-    let cover_element = {
-        let image = uri.map(|uri| {
-            let element = img(format!("{uri}?size=36"))
-                .size_full()
-                .object_fit(ObjectFit::Cover);
-            if is_artist {
-                element.rounded_full().into_any_element()
-            } else {
-                element.into_any_element()
-            }
-        });
-        let container = div().size_full().bg(variables.border).children(image);
-        if is_artist {
-            container.rounded_full().into_any_element()
-        } else {
-            container.into_any_element()
-        }
-    };
-
     flex_row()
-        .group("pinned-item")
         .bg(variables.element)
         .hover_style(|s| s.bg(variables.element_hover))
         .gap(px(variables.padding_8))
@@ -239,16 +221,18 @@ fn pinned_item(
         .when(is_artist, |this| {
             this.rounded_tl(px(18.0)).rounded_bl(px(18.0))
         })
+        .when(is_artist, |div| {
+            let artist_id = id.clone();
+            div.cursor_pointer()
+                .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
+                    open_artist(artist_id.clone(), window, cx);
+                })
+        })
         .when(is_album, |div| {
             let album_id = id.clone();
             div.cursor_pointer()
                 .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
-                    cx.set_global(SelectedAlbum(Some(album_id.clone())));
-                    if let Some(Some(root)) = window.root::<MainWindow>() {
-                        root.update(cx, |view, cx| {
-                            view.set_current_view(AppView::Album, window, cx);
-                        });
-                    }
+                    open_album(album_id.clone(), window, cx);
                 })
         })
         .when(is_playlist, |div| {
@@ -278,78 +262,58 @@ fn pinned_item(
                 menu.show(event.position, items, cx);
             });
         })
-        .child(
-            div()
-                .size(px(36.0))
-                .flex_shrink_0()
-                .relative()
-                .child(cover_element)
-                .when(!is_artist, |this| {
-                    this.child(
-                        div()
-                            .absolute()
-                            .inset_0()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .bg(black().opacity(0.5))
-                            .invisible()
-                            .group_hover_style("pinned-item", |s| s.visible())
-                            .child(icon(icons::PLAY).size(px(16.0)).text_color(variables.text))
-                            .cursor_pointer()
-                            .on_mouse_down(MouseButton::Left, move |_event, _window, cx| {
-                                cx.stop_propagation();
-                                let item_type = item_type_clone.clone();
-                                let id = id_clone.clone();
-                                let db = cx.global::<Database>().clone();
-                                let bg = cx.background_executor().clone();
+        .child(cover(
+            36.0,
+            uri,
+            is_artist,
+            variables,
+            (!is_artist).then_some(move |_window: &mut Window, cx: &mut App| {
+                let item_type = item_type_clone.clone();
+                let id = id_clone.clone();
+                let db = cx.global::<Database>().clone();
+                let bg = cx.background_executor().clone();
 
-                                cx.spawn(async move |cx: &mut AsyncApp| {
-                                    let song_ids = bg
-                                        .spawn(async move {
-                                            match item_type.as_str() {
-                                                "Album" => Ok::<Vec<Cuid>, anyhow::Error>(
-                                                    db.get_album_songs(&id)?
-                                                        .into_iter()
-                                                        .map(|s| s.id)
-                                                        .collect(),
-                                                ),
-                                                "Playlist" => Ok::<Vec<Cuid>, anyhow::Error>(
-                                                    db.get_playlist_songs(&id)?
-                                                        .into_iter()
-                                                        .map(|pt| pt.song.id)
-                                                        .collect(),
-                                                ),
-                                                "Song" => Ok::<Vec<Cuid>, anyhow::Error>(vec![id]),
-                                                _ => Ok::<Vec<Cuid>, anyhow::Error>(Vec::new()),
-                                            }
-                                        })
-                                        .await
-                                        .unwrap_or_else(|e| {
-                                            error!("pinned item songs query failed: {}", e);
-                                            Vec::new()
-                                        });
+                cx.spawn(async move |cx: &mut AsyncApp| {
+                    let song_ids = bg
+                        .spawn(async move {
+                            match item_type.as_str() {
+                                "Album" => Ok::<Vec<Cuid>, anyhow::Error>(
+                                    db.get_album_songs(&id)?.into_iter().map(|s| s.id).collect(),
+                                ),
+                                "Playlist" => Ok::<Vec<Cuid>, anyhow::Error>(
+                                    db.get_playlist_songs(&id)?
+                                        .into_iter()
+                                        .map(|pt| pt.song.id)
+                                        .collect(),
+                                ),
+                                "Song" => Ok::<Vec<Cuid>, anyhow::Error>(vec![id]),
+                                _ => Ok::<Vec<Cuid>, anyhow::Error>(Vec::new()),
+                            }
+                        })
+                        .await
+                        .unwrap_or_else(|e| {
+                            error!("pinned item songs query failed: {}", e);
+                            Vec::new()
+                        });
 
-                                    if !song_ids.is_empty() {
-                                        cx.update(|cx| {
-                                            cx.update_global::<Queue, _>(|queue, _| {
-                                                queue.clear();
-                                                queue.add_songs(song_ids);
-                                            });
+                    if !song_ids.is_empty() {
+                        cx.update(|cx| {
+                            cx.update_global::<Queue, _>(|queue, _| {
+                                queue.clear();
+                                queue.add_songs(song_ids);
+                            });
 
-                                            cx.update_global::<Playback, _>(|playback, cx| {
-                                                playback.play_queue(cx);
-                                            });
+                            cx.update_global::<Playback, _>(|playback, cx| {
+                                playback.play_queue(cx);
+                            });
 
-                                            cx.set_global(QueueChanged);
-                                        })
-                                    }
-                                })
-                                .detach();
-                            }),
-                    )
-                }),
-        )
+                            cx.set_global(QueueChanged);
+                        })
+                    }
+                })
+                .detach();
+            }),
+        ))
         .child(
             div()
                 .min_w_0()

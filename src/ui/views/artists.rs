@@ -7,14 +7,15 @@ use crate::{
     ui::{
         components::{
             card::{
-                CARD_GRID_GAP, Card, CardImageShape, ViewportWidth, card_columns, card_row_height,
-                card_spacer,
+                CARD_GRID_GAP, Card, CardImageShape, card_columns, card_row_height, card_spacer,
+                content_width,
             },
             context_menu::{ContextMenu, LibraryDataChanged, artist_context_menu_items},
             div::{flex_col, flex_row},
+            nav::open_artist,
             scrollbar::{Scrollbar, ScrollbarAxis, ScrollbarHandle},
         },
-        layout::{SidePanel, library::Search},
+        layout::library::Search,
         variables::Variables,
         views::{ActiveView, AppView},
     },
@@ -281,6 +282,7 @@ fn artist_tile(
     context_menu: Entity<ContextMenu>,
 ) -> impl IntoElement {
     let artist_id = artist.id.clone();
+    let nav_artist_id = artist_id.clone();
 
     Card::new(format!("artist-item-{}", idx), artist.name.clone())
         .image_uri(
@@ -290,6 +292,9 @@ fn artist_tile(
                 .map(|id| format!("!image://{id}")),
         )
         .image_shape(CardImageShape::Circle)
+        .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
+            open_artist(nav_artist_id.clone(), window, cx);
+        })
         .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
             let items = artist_context_menu_items(artist_id.clone(), cx);
             context_menu.update(cx, |menu, cx| {
@@ -301,19 +306,8 @@ fn artist_tile(
 impl Render for ArtistsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
-        let side_panel = cx.global::<SidePanel>();
 
-        let bounds = window.bounds();
-        let window_width: f32 = bounds.size.width.into();
-        let mut estimated_width = window_width - 300.0 - 98.0;
-        if side_panel.is_open() {
-            estimated_width -= 316.0;
-        }
-        if let Some(width) = cx.global::<ViewportWidth>().get() {
-            self.container_width = Some((width - variables.padding_24 * 2.0).max(1.0));
-        } else if estimated_width > 0.0 {
-            self.container_width = Some(estimated_width);
-        }
+        self.container_width = Some(content_width(window, cx));
 
         let items_per_row = self.calculate_layout();
         let items_per_row = items_per_row.max(1);

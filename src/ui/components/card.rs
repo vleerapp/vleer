@@ -3,15 +3,20 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use crate::ui::{
+    assets::{ImageRequest, cover_uri},
     components::{
+        context_menu::{ContextMenu, album_context_menu_items},
         div::flex_col,
         icons::{self, icon},
+        nav::{ArtistLine, open_album},
+        song_table::format_artist_line,
     },
+    layout::SidePanel,
     variables::Variables,
 };
+use crate::{data::models::AlbumListItem, media::playback::play_album_now};
 
 pub type PlayHandler = Rc<dyn Fn(&mut Window, &mut App)>;
-pub type ArtistHoverHandler = Rc<dyn Fn(Option<usize>, &mut Window, &mut App)>;
 
 pub const CARD_MIN_IMAGE_SIZE: f32 = 180.0;
 pub const CARD_MAX_IMAGE_SIZE: f32 = 400.0;
@@ -54,6 +59,19 @@ impl ViewportWidth {
     }
 }
 
+pub fn content_width(window: &Window, cx: &App) -> f32 {
+    let variables = cx.global::<Variables>();
+    if let Some(width) = cx.global::<ViewportWidth>().get() {
+        return (width - variables.padding_24 * 2.0).max(1.0);
+    }
+    let mut estimated: f32 = window.bounds().size.width.into();
+    estimated -= 300.0 + 98.0;
+    if cx.global::<SidePanel>().is_open() {
+        estimated -= 316.0;
+    }
+    estimated.max(1.0)
+}
+
 pub const CARD_TEXT_HEIGHT: f32 = 14.0;
 const CARD_BODY_GAP: f32 = 8.0;
 const CARD_INFO_GAP: f32 = 4.0;
@@ -89,8 +107,6 @@ pub struct Card {
     title: SharedString,
     subtitle: Option<SharedString>,
     subtitle_artist_ranges: Option<Vec<Range<usize>>>,
-    hovered_artist_idx: Option<usize>,
-    on_artist_hover: Option<ArtistHoverHandler>,
     image_uri: Option<String>,
     image_shape: CardImageShape,
     on_play: Option<PlayHandler>,
@@ -106,8 +122,6 @@ impl Card {
             title: title.into(),
             subtitle: None,
             subtitle_artist_ranges: None,
-            hovered_artist_idx: None,
-            on_artist_hover: None,
             image_uri: None,
             image_shape: CardImageShape::Square,
             on_play: None,
@@ -119,15 +133,8 @@ impl Card {
         self
     }
 
-    pub fn subtitle_artist_ranges(
-        mut self,
-        ranges: Vec<Range<usize>>,
-        hovered_idx: Option<usize>,
-        on_hover: ArtistHoverHandler,
-    ) -> Self {
+    pub fn subtitle_artist_ranges(mut self, ranges: Vec<Range<usize>>) -> Self {
         self.subtitle_artist_ranges = Some(ranges);
-        self.hovered_artist_idx = hovered_idx;
-        self.on_artist_hover = Some(on_hover);
         self
     }
 
@@ -167,13 +174,11 @@ impl RenderOnce for Card {
             title,
             subtitle,
             subtitle_artist_ranges,
-            hovered_artist_idx: _,
-            on_artist_hover,
             image_uri,
             image_shape,
             on_play,
         } = self;
-        let variables = cx.global::<Variables>();
+        let variables = *cx.global::<Variables>();
         let tile_id = id.to_string();
         let image_hover_group: SharedString = format!("{tile_id}-image-hover").into();
 
@@ -267,10 +272,6 @@ impl RenderOnce for Card {
                     )
                     .when_some(subtitle, |this, subtitle| {
                         if let Some(ranges) = subtitle_artist_ranges {
-                            let styled = StyledText::new(subtitle.clone());
-                            let on_hover = on_artist_hover.clone();
-                            let on_leave = on_artist_hover.clone();
-                            let ranges_for_cb = ranges.clone();
                             this.child(
                                 div()
                                     .id(ElementId::Name(format!("{tile_id}-subtitle").into()))
@@ -281,28 +282,11 @@ impl RenderOnce for Card {
                                     .w_full()
                                     .min_w_0()
                                     .text_color(variables.text_secondary)
-                                    .on_hover(move |hovered, window, cx| {
-                                        if !hovered && let Some(on_leave) = on_leave.as_ref() {
-                                            on_leave(None, window, cx);
-                                        }
-                                    })
-                                    .child(
-                                        InteractiveText::new(
-                                            ElementId::Name(
-                                                format!("{tile_id}-artist-line").into(),
-                                            ),
-                                            styled,
-                                        )
-                                        .on_hover(move |hovered_ix, _event, window, cx| {
-                                            let new_hovered = hovered_ix.and_then(|ix| {
-                                                ranges_for_cb.iter().position(|r| r.contains(&ix))
-                                            });
-                                            if let Some(on_hover) = on_hover.as_ref() {
-                                                on_hover(new_hovered, window, cx);
-                                            }
-                                        })
-                                        .into_any_element(),
-                                    ),
+                                    .child(ArtistLine::new(
+                                        format!("{tile_id}-artist-line"),
+                                        subtitle,
+                                        ranges,
+                                    )),
                             )
                         } else {
                             this.child(
@@ -321,4 +305,44 @@ impl RenderOnce for Card {
                     }),
             )
     }
+}
+
+pub fn album_card(id: String, album: &AlbumListItem, context_menu: Entity<ContextMenu>) -> Card {
+    let (artist_str, artist_ranges) = format_artist_line(&album.artist_name);
+    let (subtitle, subtitle_ranges) = if let Some(year) = &album.year {
+        let prefix = format!("{} \u{00B7} ", year);
+        let prefix_len = prefix.len();
+        let subtitle = format!("{}{}", prefix, artist_str);
+        let ranges: Vec<std::ops::Range<usize>> = artist_ranges
+            .into_iter()
+            .map(|r| (r.start + prefix_len)..(r.end + prefix_len))
+            .collect();
+        (subtitle, ranges)
+    } else {
+        (artist_str, artist_ranges)
+    };
+
+    let album_id = album.id.clone();
+    let play_album_id = album_id.clone();
+    let nav_album_id = album_id.clone();
+
+    Card::new(id, album.title.clone())
+        .subtitle(subtitle)
+        .subtitle_artist_ranges(subtitle_ranges)
+        .image_uri(Some(cover_uri(
+            album.image_id.as_deref(),
+            ImageRequest::Album(album.id.clone()),
+        )))
+        .on_play(move |_window, cx| {
+            play_album_now(play_album_id.clone(), cx);
+        })
+        .on_mouse_down(MouseButton::Left, move |_event, window, cx| {
+            open_album(nav_album_id.clone(), window, cx);
+        })
+        .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
+            let items = album_context_menu_items(album_id.clone(), cx);
+            context_menu.update(cx, |menu, cx| {
+                menu.show(event.position, items, cx);
+            });
+        })
 }

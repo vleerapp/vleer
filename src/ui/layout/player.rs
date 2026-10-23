@@ -1,5 +1,5 @@
-use crate::ui::app::MainWindow;
 use crate::ui::assets::{ImageRequest, cover_uri};
+use crate::ui::components::nav::{ArtistLine, open_album};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use spectrum_analyzer::scaling::divide_by_N;
@@ -31,7 +31,6 @@ use crate::{
         },
         layout::SidePanel,
         variables::Variables,
-        views::{AppView, SelectedAlbum},
     },
 };
 
@@ -244,7 +243,6 @@ struct CachedSong {
 pub struct Player {
     cached_song_data: Option<CachedSong>,
     context_menu: Entity<ContextMenu>,
-    hovered_artist: Option<usize>,
     bars: Rc<RefCell<Bars>>,
 }
 
@@ -300,7 +298,6 @@ impl Player {
         Self {
             cached_song_data: None,
             context_menu: cx.new(|_| ContextMenu::new()),
-            hovered_artist: None,
             bars: Rc::new(RefCell::new(Bars::new())),
         }
     }
@@ -311,14 +308,6 @@ impl Render for Player {
         let variables = cx.global::<Variables>();
 
         let current_song = if let Some(song) = cx.global::<Queue>().get_current_song(cx) {
-            let song_changed = match &self.cached_song_data {
-                Some(c) => c.id != song.id,
-                None => true,
-            };
-            if song_changed {
-                self.hovered_artist = None;
-            }
-
             let title = song.title.clone();
 
             let cover = Some(cover_uri(
@@ -486,123 +475,89 @@ impl Render for Player {
             .child(next_button)
             .child(repeat_button);
 
-        let track_info = if let Some((title, artist, cover_uri, album_id, artist_ranges)) =
-            current_song
-        {
-            let ctx_menu = self.context_menu.clone();
-            let song_id = cx.global::<Queue>().get_current_song_id();
+        let track_info =
+            if let Some((title, artist, cover_uri, album_id, artist_ranges)) = current_song {
+                let ctx_menu = self.context_menu.clone();
+                let song_id = cx.global::<Queue>().get_current_song_id();
 
-            let styled = StyledText::new(artist.clone());
-
-            let weak = cx.weak_entity();
-            let ranges = artist_ranges.clone();
-            let artist_line = InteractiveText::new("artist-line", styled)
-                .on_hover(move |hovered_ix, _event, _window, cx| {
-                    let new_hovered =
-                        hovered_ix.and_then(|ix| ranges.iter().position(|r| r.contains(&ix)));
-                    let _ = weak.update(cx, |this, cx| {
-                        if this.hovered_artist != new_hovered {
-                            this.hovered_artist = new_hovered;
-                            cx.notify();
+                flex_row()
+                    .gap(px(variables.padding_8))
+                    .items_center()
+                    .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
+                        if let Some(id) = &song_id {
+                            let items = song_context_menu_items(id.clone(), cx);
+                            ctx_menu.update(cx, |menu, cx| {
+                                menu.show(event.position, items, cx);
+                            });
                         }
-                    });
-                })
-                .into_any_element();
-
-            let weak_for_leave = cx.weak_entity();
-            flex_row()
-                .gap(px(variables.padding_8))
-                .items_center()
-                .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
-                    if let Some(id) = &song_id {
-                        let items = song_context_menu_items(id.clone(), cx);
-                        ctx_menu.update(cx, |menu, cx| {
-                            menu.show(event.position, items, cx);
-                        });
-                    }
-                })
-                .child(
-                    div()
-                        .size(px(36.0))
-                        .flex_shrink_0()
-                        .bg(variables.border)
-                        .children(cover_uri.map(|uri| {
-                            img(format!("{}?size=50", uri))
-                                .size(px(36.0))
-                                .object_fit(ObjectFit::Cover)
-                        })),
-                )
-                .child(
-                    flex_col()
-                        .gap(px(2.0))
-                        .min_w_0()
-                        .child(
-                            div()
-                                .id("player-title")
-                                .self_start()
-                                .max_w_full()
-                                .font_weight(FontWeight(500.0))
-                                .whitespace_nowrap()
-                                .text_ellipsis()
-                                .when_some(album_id, |title, album_id| {
-                                    title
-                                        .cursor_pointer()
-                                        .hover_style(|s| s.underline())
-                                        .on_click(move |_event, window, cx| {
-                                            cx.set_global(SelectedAlbum(Some(album_id.clone())));
-                                            if let Some(Some(root)) = window.root::<MainWindow>() {
-                                                root.update(cx, |view, cx| {
-                                                    view.set_current_view(
-                                                        AppView::Album,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                });
-                                            }
-                                        })
-                                })
-                                .child(title),
-                        )
-                        .child(
-                            div()
-                                .id("player-artist-line")
-                                .w_full()
-                                .whitespace_nowrap()
-                                .text_ellipsis()
-                                .text_color(variables.text_secondary)
-                                .on_hover(move |hovered, _window, cx| {
-                                    if !hovered {
-                                        let _ = weak_for_leave.update(cx, |this, cx| {
-                                            if this.hovered_artist.is_some() {
-                                                this.hovered_artist = None;
-                                                cx.notify();
-                                            }
-                                        });
-                                    }
-                                })
-                                .child(artist_line),
-                        ),
-                )
-                .into_any_element()
-        } else {
-            flex_row()
-                .gap(px(variables.padding_8))
-                .items_center()
-                .child(div().size(px(36.0)).bg(variables.border).into_any_element())
-                .child(
-                    flex_col()
-                        .gap(px(2.0))
-                        .min_w_0()
-                        .child(
-                            div()
-                                .font_weight(FontWeight(500.0))
-                                .text_color(variables.text_secondary)
-                                .child("No Song Playing"),
-                        )
-                        .child(div().text_color(variables.text_muted).child("")),
-                )
-                .into_any_element()
-        };
+                    })
+                    .child(
+                        div()
+                            .size(px(36.0))
+                            .flex_shrink_0()
+                            .bg(variables.border)
+                            .children(cover_uri.map(|uri| {
+                                img(format!("{}?size=50", uri))
+                                    .size(px(36.0))
+                                    .object_fit(ObjectFit::Cover)
+                            })),
+                    )
+                    .child(
+                        flex_col()
+                            .gap(px(2.0))
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .id("player-title")
+                                    .self_start()
+                                    .max_w_full()
+                                    .font_weight(FontWeight(500.0))
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .when_some(album_id, |title, album_id| {
+                                        title
+                                            .cursor_pointer()
+                                            .hover_style(|s| s.underline())
+                                            .on_click(move |_event, window, cx| {
+                                                open_album(album_id.clone(), window, cx);
+                                            })
+                                    })
+                                    .child(title),
+                            )
+                            .child(
+                                div()
+                                    .id("player-artist-line")
+                                    .w_full()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .text_color(variables.text_secondary)
+                                    .child(ArtistLine::new(
+                                        "player-artist-line-text",
+                                        artist,
+                                        artist_ranges,
+                                    )),
+                            ),
+                    )
+                    .into_any_element()
+            } else {
+                flex_row()
+                    .gap(px(variables.padding_8))
+                    .items_center()
+                    .child(div().size(px(36.0)).bg(variables.border).into_any_element())
+                    .child(
+                        flex_col()
+                            .gap(px(2.0))
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .font_weight(FontWeight(500.0))
+                                    .text_color(variables.text_secondary)
+                                    .child("No Song Playing"),
+                            )
+                            .child(div().text_color(variables.text_muted).child("")),
+                    )
+                    .into_any_element()
+            };
 
         let volume_icon = match volume {
             0.0 => icons::VOLUME_MUTE,

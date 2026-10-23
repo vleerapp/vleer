@@ -44,8 +44,8 @@ use crate::{
         },
         variables::Variables,
         views::{
-            ActiveView, AppView, NavEntry, NavHistory, SelectedAlbum, SelectedPlaylist,
-            ViewRegistry,
+            ActiveView, AppView, NavEntry, NavHistory, SelectedAlbum, SelectedArtist,
+            SelectedPlaylist, ViewRegistry,
         },
     },
     updater::Updater,
@@ -121,6 +121,7 @@ impl Render for MainWindow {
             self.current_view,
             AppView::Home
                 | AppView::Albums
+                | AppView::Artist
                 | AppView::Artists
                 | AppView::Genres
                 | AppView::Playlists
@@ -431,6 +432,7 @@ pub async fn run() -> Result<()> {
             cx.set_global(Search::default());
             cx.set_global(ActiveView::default());
             cx.set_global(SelectedAlbum::default());
+            cx.set_global(SelectedArtist::default());
             cx.set_global(SelectedPlaylist::default());
             cx.set_global(BackgroundUiNotifier::new(background_ui_tx));
             cx.set_global(PinnedItemsChanged);

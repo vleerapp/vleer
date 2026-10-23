@@ -3,27 +3,22 @@ use crate::ui::assets::ImageRequest;
 use crate::{
     data::{db::Database, models::RecentItem},
     ui::{
-        app::MainWindow,
         components::{
-            card::{
-                ArtistHoverHandler, CARD_GRID_GAP, Card, ViewportWidth, card_columns, card_spacer,
-            },
+            card::{CARD_GRID_GAP, Card, card_columns, card_spacer, content_width},
             context_menu::{
                 ContextMenu, HomeDataChanged, LibraryDataChanged, album_context_menu_items,
                 song_context_menu_items,
             },
             div::{flex_col, flex_row},
             icons::{self, icon},
+            nav::open_album,
             scrollbar::ScrollableElement,
             song_table::format_artist_line,
         },
-        layout::SidePanel,
         variables::Variables,
-        views::{AppView, SelectedAlbum},
     },
 };
 use gpui::{prelude::FluentBuilder, *};
-use std::rc::Rc;
 
 pub struct HomeView {
     recently_played: Vec<RecentItem>,
@@ -32,7 +27,6 @@ pub struct HomeView {
     recently_added_offset: usize,
     container_width: Option<f32>,
     context_menu: Entity<ContextMenu>,
-    hovered_artist: Option<(String, usize)>,
     wheel_accum: f32,
 }
 
@@ -54,7 +48,6 @@ impl HomeView {
             recently_added_offset: 0,
             container_width: None,
             context_menu: cx.new(|_| ContextMenu::new()),
-            hovered_artist: None,
             wheel_accum: 0.0,
         };
 
@@ -219,8 +212,6 @@ fn recent_item_tile(
     idx: usize,
     item: RecentItem,
     context_menu: Entity<ContextMenu>,
-    hovered_artist_idx: Option<usize>,
-    on_artist_hover: ArtistHoverHandler,
 ) -> impl IntoElement {
     let (item_id, title, subtitle, subtitle_ranges, cover_uri, is_song) = match item.clone() {
         RecentItem::Song {
@@ -271,7 +262,7 @@ fn recent_item_tile(
 
     Card::new(format!("{id_prefix}-item-{idx}"), title)
         .subtitle(subtitle)
-        .subtitle_artist_ranges(subtitle_ranges, hovered_artist_idx, on_artist_hover)
+        .subtitle_artist_ranges(subtitle_ranges)
         .image_uri(Some(crate::ui::assets::cover_uri(
             cover_uri.as_deref(),
             fallback,
@@ -285,12 +276,7 @@ fn recent_item_tile(
         })
         .when_some(nav_album_id, |card, album_id| {
             card.on_mouse_down(MouseButton::Left, move |_event, window, cx| {
-                cx.set_global(SelectedAlbum(Some(album_id.clone())));
-                if let Some(Some(root)) = window.root::<MainWindow>() {
-                    root.update(cx, |view, cx| {
-                        view.set_current_view(AppView::Album, window, cx);
-                    });
-                }
+                open_album(album_id.clone(), window, cx);
             })
         })
         .on_mouse_down(MouseButton::Right, move |event, _window, cx| {
@@ -313,8 +299,6 @@ fn recent_items_content(
     items_per_page: usize,
     variables: &Variables,
     context_menu: Entity<ContextMenu>,
-    hovered_artist: &Option<(String, usize)>,
-    view_weak: WeakEntity<HomeView>,
 ) -> AnyElement {
     if items.is_empty() {
         return flex_row()
@@ -338,25 +322,7 @@ fn recent_items_content(
         .w_full()
         .gap(px(CARD_GRID_GAP))
         .children(visible_items.into_iter().map(move |(idx, item)| {
-            let card_id = format!("{}-item-{}", section_id, offset + idx);
-            let hovered_artist_idx = hovered_artist
-                .as_ref()
-                .and_then(|(id, idx)| if id == &card_id { Some(*idx) } else { None });
-            let weak = view_weak.clone();
-            let on_artist_hover: ArtistHoverHandler = Rc::new(move |hovered_idx, _window, cx| {
-                let _ = weak.update(cx, |this, cx| {
-                    this.hovered_artist = hovered_idx.map(|idx| (card_id.clone(), idx));
-                    cx.notify();
-                });
-            });
-            recent_item_tile(
-                section_id,
-                offset + idx,
-                item.clone(),
-                context_menu.clone(),
-                hovered_artist_idx,
-                on_artist_hover,
-            )
+            recent_item_tile(section_id, offset + idx, item.clone(), context_menu.clone())
         }))
         .children((0..spacer_count).map(|_| card_spacer()))
         .into_any_element()
@@ -365,20 +331,9 @@ fn recent_items_content(
 impl Render for HomeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
-        let side_panel = cx.global::<SidePanel>();
         let context_menu = self.context_menu.clone();
 
-        let bounds = window.bounds();
-        let window_width: f32 = bounds.size.width.into();
-        let mut estimated_width = window_width - 300.0 - 98.0;
-        if side_panel.is_open() {
-            estimated_width -= 316.0;
-        }
-        if let Some(width) = cx.global::<ViewportWidth>().get() {
-            self.container_width = Some((width - variables.padding_24 * 2.0).max(1.0));
-        } else if estimated_width > 0.0 {
-            self.container_width = Some(estimated_width);
-        }
+        self.container_width = Some(content_width(window, cx));
 
         let items_per_page = self.calculate_layout();
 
@@ -389,7 +344,6 @@ impl Render for HomeView {
         let can_scroll_recently_added_right =
             self.recently_added_offset + items_per_page < self.recently_added.len();
 
-        let view_weak = cx.weak_entity();
         let recently_played_content = recent_items_content(
             "recently-played",
             &self.recently_played,
@@ -397,8 +351,6 @@ impl Render for HomeView {
             items_per_page,
             variables,
             context_menu.clone(),
-            &self.hovered_artist,
-            view_weak.clone(),
         );
         let recently_added_content = recent_items_content(
             "recently-added",
@@ -407,8 +359,6 @@ impl Render for HomeView {
             items_per_page,
             variables,
             context_menu.clone(),
-            &self.hovered_artist,
-            view_weak.clone(),
         );
 
         let recently_played = flex_col()

@@ -8,9 +8,10 @@ use crate::ui::app::MainWindow;
 use crate::ui::assets::image_cache::vleer_cache;
 use crate::ui::components::div::{flex_col, flex_row};
 use crate::ui::components::icons::{self, icon};
+use crate::ui::components::nav::{open_album, open_artist_named};
 use crate::ui::components::scroller::SmoothScrollable;
 use crate::ui::variables::Variables;
-use crate::ui::views::{AppView, SelectedAlbum, SelectedPlaylist};
+use crate::ui::views::{AppView, SelectedPlaylist};
 use futures::channel::mpsc;
 use gpui::{prelude::*, *};
 use std::rc::Rc;
@@ -514,6 +515,7 @@ fn write_and_notify_pinned(cx: &mut App, write: impl FnOnce(&Database)) {
 pub fn song_context_menu_items(song_id: Cuid, cx: &App) -> Vec<ContextMenuItem> {
     let db = cx.global::<Database>().clone();
     let song = db.get_song(&song_id).ok().flatten();
+    let artist_name = song.as_ref().and_then(|s| s.artists.first().cloned());
     let (favorite, pinned, album_id) = song
         .map(|s| (s.favorite, s.pinned, s.album_id))
         .unwrap_or((false, false, None));
@@ -583,17 +585,19 @@ pub fn song_context_menu_items(song_id: Cuid, cx: &App) -> Vec<ContextMenuItem> 
             }
         }),
         ContextMenuItem::separator(),
-        ContextMenuItem::entry("Go to artist", icons::ARTIST, move |_, _| {}),
+        ContextMenuItem::entry("Go to artist", icons::ARTIST, {
+            let name = artist_name.clone();
+            move |window, cx| {
+                if let Some(name) = &name {
+                    open_artist_named(name, window, cx);
+                }
+            }
+        }),
         ContextMenuItem::entry("Go to album", icons::ALBUM, {
             let id = album_id.clone();
             move |window, cx| {
                 if let Some(album_id) = &id {
-                    cx.set_global(SelectedAlbum(Some(album_id.clone())));
-                    if let Some(Some(root)) = window.root::<MainWindow>() {
-                        root.update(cx, |view, cx| {
-                            view.set_current_view(AppView::Album, window, cx);
-                        });
-                    }
+                    open_album(album_id.clone(), window, cx);
                 }
             }
         }),
@@ -638,6 +642,7 @@ pub fn song_in_playlist_context_menu_items(
 pub fn album_context_menu_items(album_id: Cuid, cx: &App) -> Vec<ContextMenuItem> {
     let db = cx.global::<Database>().clone();
     let album = db.get_album(&album_id).ok().flatten();
+    let artist_name = album.as_ref().and_then(|a| a.artists.first().cloned());
     let (favorite, pinned) = album
         .map(|a| (a.favorite, a.pinned))
         .unwrap_or((false, false));
@@ -701,7 +706,14 @@ pub fn album_context_menu_items(album_id: Cuid, cx: &App) -> Vec<ContextMenuItem
             }
         }),
         ContextMenuItem::separator(),
-        ContextMenuItem::entry("Go to artist", icons::ARTIST, move |_, _| {}),
+        ContextMenuItem::entry("Go to artist", icons::ARTIST, {
+            let name = artist_name.clone();
+            move |window, cx| {
+                if let Some(name) = &name {
+                    open_artist_named(name, window, cx);
+                }
+            }
+        }),
         // to be implemented
         // ContextMenuItem::entry("Properties", icons::PROPERTIES, move |_, _| {}),
         ContextMenuItem::separator(),
