@@ -71,6 +71,7 @@ impl Asset for VleerImageLoader {
             let (request, target) = parse_image_request(normalized).ok_or_else(|| {
                 ImageCacheError::Asset(format!("invalid image uri: {}", path).into())
             })?;
+            let blur = parse_blur(normalized);
 
             executor
                 .spawn(async move {
@@ -103,7 +104,7 @@ impl Asset for VleerImageLoader {
                         bytes.ok_or_else(|| ImageCacheError::Asset("image not found".into()))?;
 
                     let _permit = decode_limit().acquire().await;
-                    decode_bytes(&bytes, target)
+                    decode_bytes(&bytes, target, blur)
                 })
                 .await
         }
@@ -240,7 +241,11 @@ fn compose_tinted_grid(
     Ok(Arc::new(RenderImage::new(vec![Frame::new(canvas)])))
 }
 
-fn decode_bytes(bytes: &[u8], target: Option<u32>) -> Result<Arc<RenderImage>, ImageCacheError> {
+fn decode_bytes(
+    bytes: &[u8],
+    target: Option<u32>,
+    blur: Option<f32>,
+) -> Result<Arc<RenderImage>, ImageCacheError> {
     let format = image::guess_format(bytes).map_err(image_err)?;
     let decoded = image::load_from_memory_with_format(bytes, format).map_err(image_err)?;
 
@@ -253,6 +258,10 @@ fn decode_bytes(bytes: &[u8], target: Option<u32>) -> Result<Arc<RenderImage>, I
                 decoded
             }
         }
+        None => decoded,
+    };
+    let decoded = match blur {
+        Some(sigma) => decoded.blur(sigma),
         None => decoded,
     };
 
@@ -303,6 +312,15 @@ fn parse_image_request(path: &str) -> Option<(ImageRequest, Option<u32>)> {
     });
 
     Some((request, size))
+}
+
+fn parse_blur(path: &str) -> Option<f32> {
+    let query = path.split_once('?')?.1;
+    query.split('&').find_map(|pair| {
+        pair.strip_prefix("blur=")
+            .and_then(|value| value.parse::<f32>().ok())
+            .filter(|value| *value > 0.0)
+    })
 }
 
 pub struct VleerAssetSource;
@@ -415,7 +433,7 @@ mod tests {
     #[test]
     fn decode_downscales_to_requested_size() {
         let bytes = jpeg(1024, 1024);
-        let image = decode_bytes(&bytes, Some(36)).unwrap();
+        let image = decode_bytes(&bytes, Some(36), None).unwrap();
         let size = image.size(0);
         assert_eq!(
             (size.width.0 as u32, size.height.0 as u32),
@@ -427,7 +445,7 @@ mod tests {
     #[test]
     fn decode_never_upscales() {
         let bytes = jpeg(64, 64);
-        let image = decode_bytes(&bytes, Some(512)).unwrap();
+        let image = decode_bytes(&bytes, Some(512), None).unwrap();
         let size = image.size(0);
         assert_eq!((size.width.0 as u32, size.height.0 as u32), (64, 64));
     }
@@ -435,7 +453,7 @@ mod tests {
     #[test]
     fn decode_without_size_keeps_original() {
         let bytes = jpeg(200, 200);
-        let image = decode_bytes(&bytes, None).unwrap();
+        let image = decode_bytes(&bytes, None, None).unwrap();
         let size = image.size(0);
         assert_eq!((size.width.0 as u32, size.height.0 as u32), (200, 200));
     }
