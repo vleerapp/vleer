@@ -990,6 +990,21 @@ pub fn play_song_ids_now(song_ids: Vec<Cuid>, cx: &mut App) {
     cx.set_global(QueueChanged);
 }
 
+pub fn play_song_ids_shuffled(song_ids: Vec<Cuid>, cx: &mut App) {
+    if song_ids.is_empty() {
+        return;
+    }
+    cx.update_global::<Queue, _>(|queue, _| {
+        queue.clear();
+        queue.add_songs(song_ids);
+        queue.set_shuffle(true);
+    });
+    cx.update_global::<Playback, _>(|playback, cx| {
+        playback.play_queue(cx);
+    });
+    cx.set_global(QueueChanged);
+}
+
 pub fn play_song_now(song_id: Cuid, cx: &mut App) {
     play_song_ids_now(vec![song_id], cx);
 }
