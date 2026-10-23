@@ -43,8 +43,14 @@ pub fn register_actions(cx: &mut App) {
 
     cx.bind_keys([KeyBinding::new("right", SeekForward, None)]);
     cx.bind_keys([KeyBinding::new("left", SeekBackward, None)]);
-    cx.bind_keys([KeyBinding::new("secondary-alt-right", Next, None)]);
-    cx.bind_keys([KeyBinding::new("secondary-alt-left", Previous, None)]);
+
+    let (previous_key, next_key) = if cfg!(target_os = "macos") {
+        ("secondary-alt-left", "secondary-alt-right")
+    } else {
+        ("ctrl-left", "ctrl-right")
+    };
+    cx.bind_keys([KeyBinding::new(next_key, Next, None)]);
+    cx.bind_keys([KeyBinding::new(previous_key, Previous, None)]);
 
     let (back_key, forward_key) = if cfg!(target_os = "macos") {
         ("cmd-left", "cmd-right")
