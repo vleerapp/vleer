@@ -152,6 +152,7 @@ impl ArtistView {
             let new_id = cx.global::<SelectedArtist>().0.clone();
             if new_id != this.artist_id || this.data.is_none() {
                 this.artist_id = new_id;
+                this.data = None;
                 this.expanded.clear();
                 this.tracks.clear();
                 this.reload(cx);

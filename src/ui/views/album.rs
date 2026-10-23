@@ -307,7 +307,12 @@ impl Render for AlbumView {
         let variables = *cx.global::<Variables>();
         let context_menu = self.context_menu.clone();
 
-        let body = if let Some(album) = self.album.clone() {
+        let current_album = self
+            .album
+            .clone()
+            .filter(|album| Some(&album.id) == self.album_id.as_ref());
+
+        let body = if let Some(album) = current_album {
             let cover_size = 220.0_f32;
             let image: AnyElement = div()
                 .id("album-cover")

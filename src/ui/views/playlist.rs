@@ -343,7 +343,12 @@ impl Render for PlaylistView {
             window.focus(&handle, cx);
         }
 
-        let body = if let Some(playlist) = self.playlist.clone() {
+        let current_playlist = self
+            .playlist
+            .clone()
+            .filter(|playlist| Some(&playlist.id) == self.playlist_id.as_ref());
+
+        let body = if let Some(playlist) = current_playlist {
             let cover_size = 220.0_f32;
 
             let playlist_id_for_cover = playlist.id.clone();
