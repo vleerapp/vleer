@@ -1761,9 +1761,47 @@ impl Database {
              JOIN songs_artists sa ON sa.song_id = s.id
              LEFT JOIN albums al ON al.id = s.album_id
              WHERE sa.artist_id = ?1
-             ORDER BY al.title COLLATE NOCASE, s.track_number, s.title COLLATE NOCASE",
+             ORDER BY
+                CASE
+                    WHEN s.album_id IS NULL THEN 1
+                    WHEN EXISTS (SELECT 1 FROM albums_artists aa
+                                 WHERE aa.album_id = s.album_id AND aa.artist_id = ?1) THEN 0
+                    ELSE 2
+                END,
+                (SELECT MIN(s2.date) FROM songs s2 WHERE s2.album_id = s.album_id) DESC,
+                al.title COLLATE NOCASE, s.track_number, s.title COLLATE NOCASE",
             params![artist_id],
             |row| row.get(0),
+        )
+    }
+
+    pub fn get_artist_albums(
+        &self,
+        artist_id: &Cuid,
+        appears_on: bool,
+    ) -> Result<Vec<AlbumListItem>> {
+        let membership = if appears_on {
+            "al.id IN (SELECT s.album_id FROM songs s JOIN songs_artists sa ON sa.song_id = s.id
+                       WHERE sa.artist_id = ?1 AND s.album_id IS NOT NULL)
+             AND al.id NOT IN (SELECT album_id FROM albums_artists WHERE artist_id = ?1)"
+        } else {
+            "al.id IN (SELECT album_id FROM albums_artists WHERE artist_id = ?1)"
+        };
+        let conn = self.conn.lock();
+        collect_mapped::<AlbumListItem, _>(
+            &conn,
+            &format!(
+                "SELECT al.id, al.title,
+                        (SELECT GROUP_CONCAT(name, ', ')
+                         FROM (SELECT ar.name FROM albums_artists aa JOIN artists ar ON aa.artist_id = ar.id WHERE aa.album_id = al.id ORDER BY aa.position)) AS artist_name,
+                        al.image_id,
+                        (SELECT MIN(s.date) FROM songs s WHERE s.album_id = al.id) AS year
+                 FROM albums al
+                 WHERE {membership}
+                 ORDER BY year DESC, al.title COLLATE NOCASE"
+            ),
+            params![artist_id],
+            AlbumListItem::from_row,
         )
     }
 
