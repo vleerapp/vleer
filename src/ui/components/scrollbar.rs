@@ -1,5 +1,6 @@
 use gpui::prelude::FluentBuilder;
 use gpui::*;
+use parking_lot::Mutex;
 use std::{
     cell::Cell,
     ops::Deref,
@@ -16,9 +17,7 @@ const THUMB_WIDTH: Pixels = px(4.);
 const MIN_THUMB_SIZE: f32 = 48.;
 const FADE_OUT_DURATION: f32 = 3.0;
 
-thread_local! {
-    static VERTICAL_PIN: Cell<Option<Bounds<Pixels>>> = const { Cell::new(None) };
-}
+static VERTICAL_PIN: Mutex<Option<Bounds<Pixels>>> = Mutex::new(None);
 
 const RESIZE_VISIBLE: Duration = Duration::from_millis(300);
 
@@ -29,14 +28,16 @@ struct ResizeTracker {
     height_changed: Option<Instant>,
 }
 
-thread_local! {
-    static RESIZE: Cell<ResizeTracker> = Cell::new(ResizeTracker::default());
-}
+static RESIZE: Mutex<ResizeTracker> = Mutex::new(ResizeTracker {
+    size: None,
+    width_changed: None,
+    height_changed: None,
+});
 
 fn resizing_axes(window: &Window) -> (bool, bool) {
     let now = Instant::now();
     let size = window.viewport_size();
-    let mut tracker = RESIZE.with(|t| t.get());
+    let mut tracker = *RESIZE.lock();
     if let Some(last) = tracker.size {
         if last.width != size.width {
             tracker.width_changed = Some(now);
@@ -46,7 +47,7 @@ fn resizing_axes(window: &Window) -> (bool, bool) {
         }
     }
     tracker.size = Some(size);
-    RESIZE.with(|t| t.set(tracker));
+    *RESIZE.lock() = tracker;
     let recent = |t: Option<Instant>| t.is_some_and(|t| now.duration_since(t) < RESIZE_VISIBLE);
     (
         recent(tracker.width_changed),
@@ -55,7 +56,7 @@ fn resizing_axes(window: &Window) -> (bool, bool) {
 }
 
 pub fn set_vertical_pin(viewport: Option<Bounds<Pixels>>) {
-    VERTICAL_PIN.with(|pin| pin.set(viewport));
+    *VERTICAL_PIN.lock() = viewport;
 }
 
 pub trait AxisExt {
@@ -411,7 +412,7 @@ impl Element for Scrollbar {
             let thumb_end = (thumb_start + thumb_length).min(container_size - margin_end);
             let bounds = Bounds {
                 origin: if is_vertical {
-                    let right = match VERTICAL_PIN.with(|pin| pin.get()) {
+                    let right = match *VERTICAL_PIN.lock() {
                         Some(viewport) => viewport.right().min(hitbox.right()),
                         None => hitbox.right(),
                     };
