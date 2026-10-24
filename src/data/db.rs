@@ -13,7 +13,6 @@ use anyhow::Result;
 use gpui::Global;
 use parking_lot::Mutex;
 use rusqlite::{Connection, OptionalExtension, ToSql, params, params_from_iter};
-use rusqlite_migration::Migrations;
 use rust_embed::RustEmbed;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -47,12 +46,21 @@ fn run_migrations(conn: &mut Connection) -> Result<()> {
         .collect();
     files.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let migrations: Vec<rusqlite_migration::M> = files
-        .iter()
-        .map(|(_, sql)| rusqlite_migration::M::up(sql))
-        .collect();
+    let current: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if current as usize > files.len() {
+        anyhow::bail!(
+            "database schema version {current} is newer than known migrations ({})",
+            files.len()
+        );
+    }
 
-    Migrations::new(migrations).to_latest(conn)?;
+    let tx = conn.transaction()?;
+    for (i, (name, sql)) in files.iter().enumerate().skip(current as usize) {
+        tx.execute_batch(sql)
+            .map_err(|e| anyhow::anyhow!("migration {name} failed: {e}"))?;
+        tx.pragma_update(None, "user_version", (i + 1) as i64)?;
+    }
+    tx.commit()?;
     Ok(())
 }
 
