@@ -527,6 +527,8 @@ pub async fn run() -> Result<()> {
 pub fn open_main_window(cx: &mut App) {
     cx.set_quit_mode(QuitMode::Default);
 
+    let throttle_inactive = cx.global::<Config>().get().appearance.throttle_inactive;
+
     cx.open_window(
         WindowOptions {
             titlebar: Some(TitlebarOptions {
@@ -537,6 +539,11 @@ pub fn open_main_window(cx: &mut App) {
             app_id: Some("vleer".to_string()),
             kind: WindowKind::Normal,
             window_min_size: Some(Size::new(px(754.0), px(443.0))),
+            inactive_frame_interval: if throttle_inactive {
+                Some(std::time::Duration::from_micros(33_333))
+            } else {
+                None
+            },
             ..Default::default()
         },
         |window, cx| {

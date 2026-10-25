@@ -834,6 +834,18 @@ impl SettingsView {
                             ))
                     }),
             )
+            .child(group(variables, "Performance").child(setting(
+                variables,
+                "Limit frame rate in background",
+                "Render at 30 fps while the window is unfocused. Applies after restart",
+                Switch::new("throttle-inactive-switch", appearance.throttle_inactive).on_change(
+                    move |value, _window, cx| {
+                        cx.update_global::<Config, _>(|config, _cx| {
+                            config.set(|s| s.appearance.throttle_inactive = value);
+                        });
+                    },
+                ),
+            )))
     }
 
     fn playback(&self, variables: &Variables, cx: &App) -> Div {

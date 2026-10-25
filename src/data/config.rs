@@ -174,6 +174,8 @@ pub struct AppearanceSettings {
     pub visualizer: bool,
     #[serde(default)]
     pub spectrum: SpectrumSettings,
+    #[serde(default = "defaults::throttle_inactive")]
+    pub throttle_inactive: bool,
 }
 
 impl Default for AppearanceSettings {
@@ -181,6 +183,7 @@ impl Default for AppearanceSettings {
         Self {
             visualizer: defaults::visualizer(),
             spectrum: SpectrumSettings::default(),
+            throttle_inactive: defaults::throttle_inactive(),
         }
     }
 }
@@ -288,6 +291,9 @@ mod defaults {
     pub fn visualizer() -> bool {
         true
     }
+    pub fn throttle_inactive() -> bool {
+        true
+    }
     pub fn spectrum() -> bool {
         true
     }
@@ -370,6 +376,7 @@ impl From<LegacyConfig> for SettingsConfig {
                     enabled: legacy.audio.spectrum,
                     ..SpectrumSettings::default()
                 },
+                throttle_inactive: defaults::throttle_inactive(),
             },
             playback: PlaybackSettings {
                 volume: legacy.audio.volume,
