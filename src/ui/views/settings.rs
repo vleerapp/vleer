@@ -811,6 +811,18 @@ impl SettingsView {
                             ))
                             .child(setting(
                                 variables,
+                                "Emphasize beats",
+                                "Only react to sudden jumps in volume instead of following it smoothly",
+                                Switch::new("spectrum-emphasize-beats-switch", spectrum.emphasize_beats).on_change(
+                                    move |value, _window, cx| {
+                                        cx.update_global::<Config, _>(|config, _cx| {
+                                            config.set(|s| s.appearance.spectrum.emphasize_beats = value);
+                                        });
+                                    },
+                                ),
+                            ))
+                            .child(setting(
+                                variables,
                                 "Spectrum detail",
                                 "FFT size. Larger shows more bass detail but reacts slower",
                                 flex_row().gap(px(variables.padding_8)).children(

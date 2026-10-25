@@ -156,6 +156,8 @@ pub struct SpectrumSettings {
     pub peak_caps: bool,
     #[serde(default)]
     pub fft_size: FftSize,
+    #[serde(default)]
+    pub emphasize_beats: bool,
 }
 
 impl Default for SpectrumSettings {
@@ -164,6 +166,7 @@ impl Default for SpectrumSettings {
             enabled: defaults::spectrum(),
             peak_caps: false,
             fft_size: FftSize::default(),
+            emphasize_beats: false,
         }
     }
 }

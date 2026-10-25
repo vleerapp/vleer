@@ -50,6 +50,11 @@ const SILENT_AFTER: f32 = 0.15;
 const WINDOW_GAIN: f32 = 4.0;
 const CAP_ALPHA: f32 = 0.6;
 const CAP_HEIGHT: f32 = 2.0;
+const BEAT_AVG_TAU: f32 = 0.4;
+const BEAT_AVG_WEIGHT: f32 = 0.9;
+const BEAT_GATE: f32 = 0.08;
+const BEAT_GAIN: f32 = 2.5;
+const BEAT_SUSTAIN_POWER: i32 = 4;
 
 fn with_alpha(mut color: gpui::Rgba, alpha: f32) -> gpui::Rgba {
     color.alpha = alpha;
@@ -64,6 +69,8 @@ struct Bars {
     bands: Vec<(usize, usize)>,
     samples: Vec<f32>,
     targets: Vec<f32>,
+    averages: Vec<f32>,
+    averages_seeded: bool,
     levels: Vec<f32>,
     holds: Vec<f32>,
     hold_vel: Vec<f32>,
@@ -80,6 +87,8 @@ impl Bars {
             bands: Vec::new(),
             samples: Vec::with_capacity(TAP_SIZE),
             targets: Vec::new(),
+            averages: Vec::new(),
+            averages_seeded: false,
             levels: Vec::new(),
             holds: Vec::new(),
             hold_vel: Vec::new(),
@@ -87,7 +96,14 @@ impl Bars {
         }
     }
 
-    fn analyze(&mut self, state: &VisualizerState, count: usize, fft: usize) {
+    fn analyze(
+        &mut self,
+        state: &VisualizerState,
+        count: usize,
+        fft: usize,
+        emphasize_beats: bool,
+        fresh_dt: f32,
+    ) {
         let rate = state.snapshot(&mut self.samples);
         if self.samples.len() != TAP_SIZE || fft > TAP_SIZE || rate == 0 {
             return;
@@ -117,17 +133,31 @@ impl Bars {
             self.band_key = (count, rate, fft);
         }
 
+        let avg_alpha = 1.0 - (-fresh_dt / BEAT_AVG_TAU).exp();
         for (i, &(lo, hi)) in self.bands.iter().enumerate() {
             let peak = data[lo..hi]
                 .iter()
                 .map(|(_, v)| v.val() * WINDOW_GAIN)
                 .fold(0.0f32, f32::max);
             let db = 20.0 * (peak + 1e-9).log10();
-            self.targets[i] = ((db - FLOOR_DB) / (MAX_DB - FLOOR_DB)).clamp(0.0, 1.0);
+            let level = ((db - FLOOR_DB) / (MAX_DB - FLOOR_DB)).clamp(0.0, 1.0);
+            self.targets[i] = if emphasize_beats {
+                if !self.averages_seeded {
+                    self.averages[i] = level;
+                }
+                let avg = self.averages[i];
+                self.averages[i] += (level - avg) * avg_alpha;
+                let beat =
+                    ((level - avg * BEAT_AVG_WEIGHT - BEAT_GATE) * BEAT_GAIN).clamp(0.0, 1.0);
+                beat.max(level.powi(BEAT_SUSTAIN_POWER))
+            } else {
+                self.averages[i] = level;
+                level
+            };
         }
     }
 
-    fn step(&mut self, state: &VisualizerState, width: f32, fft: usize) {
+    fn step(&mut self, state: &VisualizerState, width: f32, fft: usize, emphasize_beats: bool) {
         let now = Instant::now();
         let dt = self
             .last_tick
@@ -138,6 +168,8 @@ impl Bars {
         let count = ((width / (BAR_WIDTH + BAR_GAP)) as usize).clamp(MIN_BARS, MAX_BARS);
         if self.levels.len() != count {
             self.targets = vec![0.0; count];
+            self.averages = vec![0.0; count];
+            self.averages_seeded = false;
             self.levels = vec![0.0; count];
             self.holds = vec![0.0; count];
             self.hold_vel = vec![0.0; count];
@@ -147,6 +179,10 @@ impl Bars {
         let written = state.written();
         let fresh = written != self.last_written;
         self.last_written = written;
+        let fresh_dt = self
+            .last_fresh
+            .map(|t| (now - t).as_secs_f32().min(0.1))
+            .unwrap_or(1.0 / 60.0);
         if fresh {
             self.last_fresh = Some(now);
         }
@@ -155,7 +191,8 @@ impl Bars {
             .is_none_or(|t| (now - t).as_secs_f32() > SILENT_AFTER);
 
         if fresh {
-            self.analyze(state, count, fft);
+            self.analyze(state, count, fft, emphasize_beats, fresh_dt);
+            self.averages_seeded = true;
         } else if stopped {
             self.targets.fill(0.0);
         }
@@ -376,12 +413,13 @@ impl Render for Player {
                 .peak_caps
                 .then(|| with_alpha(variables.text_muted, CAP_ALPHA));
             let fft = spectrum.fft_size.samples();
+            let emphasize_beats = spectrum.emphasize_beats;
             div().absolute().inset_0().child(
                 canvas(
                     move |_, _, _| {},
                     move |bounds, _, window, _| {
                         let mut bars = bars.borrow_mut();
-                        bars.step(&state, f32::from(bounds.size.width), fft);
+                        bars.step(&state, f32::from(bounds.size.width), fft, emphasize_beats);
                         bars.paint(bounds, window, color, cap);
                     },
                 )
