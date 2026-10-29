@@ -1213,6 +1213,41 @@ impl Database {
         Ok(updated > 0)
     }
 
+    pub fn has_stale_omm_ids(&self) -> Result<bool> {
+        let conn = self.image_write_conn.lock();
+        let stale = |table: &str, kind: &str| {
+            let skip = kind.len() + 6;
+            format!(
+                "SELECT 1 FROM {table}
+                 WHERE NULLIF(omm_id, '') IS NOT NULL
+                   AND NOT (omm_id GLOB 'omm:{kind}:[1-9]*'
+                            AND substr(omm_id, {skip}) NOT GLOB '*[^0-9]*'
+                            AND length(omm_id) <= {})",
+                skip + 17
+            )
+        };
+        let sql = format!(
+            "SELECT EXISTS({}) OR EXISTS({}) OR EXISTS({})",
+            stale("songs", "song"),
+            stale("albums", "album"),
+            stale("artists", "artist")
+        );
+        Ok(conn.query_row(&sql, [], |row| row.get(0))?)
+    }
+
+    pub fn reset_omm_ids(&self) -> Result<()> {
+        let mut conn = self.image_write_conn.lock();
+        let tx = conn.transaction()?;
+        for table in ["songs", "albums", "artists"] {
+            tx.execute(
+                &format!("UPDATE {table} SET omm_id = NULL WHERE omm_id IS NOT NULL"),
+                [],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn mark_artist_metadata_missing(&self, artist_id: &Cuid) -> Result<()> {
         let conn = self.image_write_conn.lock();
         conn.prepare_cached("UPDATE artists SET omm_id = '' WHERE id = ?1 AND omm_id IS NULL")?
@@ -3409,6 +3444,41 @@ mod tests {
     }
 
     #[test]
+    fn stale_omm_ids_are_detected_and_reset() {
+        let (db, path) = named_db("stale_omm_ids");
+        db.upsert_tracks_batch(&[track("/music/1.flac", false)], &mut ScanCache::default())
+            .unwrap();
+        let check = |value: Option<&str>| {
+            db.image_write_conn
+                .lock()
+                .execute("UPDATE songs SET omm_id = ?1", params![value])
+                .unwrap();
+            db.has_stale_omm_ids().unwrap()
+        };
+        assert!(!check(None));
+        assert!(!check(Some("")));
+        assert!(!check(Some("omm:song:1234567890")));
+        assert!(!check(Some("omm:song:123456789012345678")));
+        assert!(check(Some("omm:song:0a1b2c3d4e5f6g7h")));
+        assert!(check(Some("omm:song:1234567890123456789")));
+        assert!(check(Some("omm:song:0123456789")));
+        assert!(check(Some("0a1b2c3d4e5f6g7h")));
+        assert!(check(Some("omm:album:1234567890")));
+
+        db.reset_omm_ids().unwrap();
+        assert!(!db.has_stale_omm_ids().unwrap());
+        let nulls: i64 = db
+            .image_write_conn
+            .lock()
+            .query_row("SELECT COUNT(*) FROM songs WHERE omm_id IS NULL", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(nulls, 1);
+        cleanup(&path);
+    }
+
+    #[test]
     fn identified_artists_take_the_canonical_name_and_keep_matching_tags() {
         let (db, path) = named_db("artist_metadata");
         let mut cache = ScanCache::default();
@@ -3431,7 +3501,7 @@ mod tests {
         let plain = by_name("Beyonce");
         let accented = by_name("Beyoncé");
         let metadata = ArtistMetadata {
-            omm_id: "omm:artist:0a1b2c3d4e5f6g7h",
+            omm_id: "omm:artist:3456789012",
             name: "Beyoncé",
             image: Some(("img", Some(b"jpeg"))),
         };
@@ -3505,7 +3575,7 @@ mod tests {
         db.store_artist_metadata(
             &lead,
             &ArtistMetadata {
-                omm_id: "omm:artist:0a1b2c3d4e5f6g7h",
+                omm_id: "omm:artist:3456789012",
                 name: "Lead",
                 image: Some(("omm", Some(b"omm"))),
             },

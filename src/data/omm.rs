@@ -1220,9 +1220,24 @@ pub async fn warm_metadata(
     db: Database,
     cancel: Arc<AtomicBool>,
     progress: Progress,
+    reset: bool,
     on_idle: impl Fn(&MetadataCounts) + Send + Sync,
 ) {
     let _pass = pass_lock().lock().await;
+    if cancel.load(Ordering::Acquire) {
+        return;
+    }
+    let stale = reset
+        || db.has_stale_omm_ids().unwrap_or_else(|e| {
+            warn!("could not check omm id format: {e}");
+            false
+        });
+    if stale {
+        match db.reset_omm_ids() {
+            Ok(()) => debug!("omm ids reset, refetching all metadata"),
+            Err(e) => warn!("could not reset omm ids: {e}"),
+        }
+    }
     let pass = Pass {
         db,
         cancel,
@@ -1248,15 +1263,15 @@ mod tests {
 
     #[test]
     fn parses_a_song_with_nested_albums() {
-        let body = r#"{"data":[{"id":"omm:song:0a1b2c3d4e5f6g7h","type":"song",
+        let body = r#"{"data":[{"id":"omm:song:1234567890","type":"song",
             "attributes":{"name":"Song","albumName":"Album","artistNames":["Artist"],"isrc":"USRC17607839",
                 "durationMs":180000,"genres":["Pop"],"releaseDate":"2020-01-02","trackNumber":3},
-            "relationships":{"albums":{"data":[{"id":"omm:album:1a2b3c4d5e6f7g8h","type":"album",
+            "relationships":{"albums":{"data":[{"id":"omm:album:2345678901","type":"album",
                 "attributes":{"name":"Album","trackCount":10,"artistNames":["Artist"],"upc":"602455878540",
                     "artworkUrl":"https://x/{w}x{h}bb.jpg"}}]},
-                "artists":{"data":[{"id":"omm:artist:2a3b4c5d6e7f8g9h","type":"artist",
+                "artists":{"data":[{"id":"omm:artist:3456789012","type":"artist",
                     "attributes":{"name":"Artist","genres":["Pop"]}}]}}},
-            {"id":"omm:artist:2a3b4c5d6e7f8g9h","type":"artist","attributes":{"name":"Artist"}}]}"#;
+            {"id":"omm:artist:3456789012","type":"artist","attributes":{"name":"Artist"}}]}"#;
         let many: Many = serde_json::from_str(body).unwrap();
         assert_eq!(many.data.len(), 2);
         let song = many.data[0].clone().into_song().unwrap();

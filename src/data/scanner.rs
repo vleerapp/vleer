@@ -767,7 +767,7 @@ impl Scanner {
         }
         if result.is_ok() && !self.is_cancelled() {
             self.spawn_image_warm_pass(db);
-            self.spawn_metadata_warm_pass(db);
+            self.spawn_metadata_warm_pass(db, false);
         }
         result
     }
@@ -819,7 +819,13 @@ impl Scanner {
             .detach();
     }
 
-    fn spawn_metadata_warm_pass(&self, db: &Database) {
+    pub fn refetch_metadata(&self, db: &Database) {
+        self.cancel_warm_passes();
+        self.spawn_image_warm_pass(db);
+        self.spawn_metadata_warm_pass(db, true);
+    }
+
+    fn spawn_metadata_warm_pass(&self, db: &Database, reset: bool) {
         let db = db.clone();
         let cancel = self.warm_flag().clone();
         let background_ui = self.background_ui.clone();
@@ -829,7 +835,7 @@ impl Scanner {
             .spawn(async move {
                 debug!("metadata warm pass started");
                 let index_db = db.clone();
-                crate::data::omm::warm_metadata(db, cancel, progress, move |counts| {
+                crate::data::omm::warm_metadata(db, cancel, progress, reset, move |counts| {
                     info!(
                         "Resolved metadata for {} artist(s), {} song(s) and {} album(s)",
                         counts.artists, counts.songs, counts.albums
