@@ -84,7 +84,7 @@ fn setting(
                 .child(
                     div()
                         .text_sm()
-                        .line_height(px(16.0))
+                        .line_height(px(18.0))
                         .text_color(variables.text_secondary)
                         .child(description.into()),
                 ),
@@ -742,20 +742,34 @@ impl SettingsView {
                     }),
             )
             .child(
-                group(variables, "Library").child(
-                    related(variables)
-                        .child(setting(
-                            variables,
-                            "Add music folder",
-                            "Vleer scans these folders for songs",
-                            Button::new("add-scan-path")
-                                .variant(ButtonVariant::Default)
-                                .icon(icons::PLUS)
-                                .child("Add folder")
-                                .on_click(|_event, window, cx| add_scan_path(window, cx)),
-                        ))
-                        .child(ScanPathsList),
-                ),
+                group(variables, "Library")
+                    .child(
+                        related(variables)
+                            .child(setting(
+                                variables,
+                                "Add music folder",
+                                "Vleer scans these folders for songs",
+                                Button::new("add-scan-path")
+                                    .variant(ButtonVariant::Default)
+                                    .icon(icons::PLUS)
+                                    .child("Add folder")
+                                    .on_click(|_event, window, cx| add_scan_path(window, cx)),
+                            ))
+                            .child(ScanPathsList),
+                    )
+                    .child(setting(
+                        variables,
+                        "Refetch metadata",
+                        "Downloads song, album and artist info, genres and artwork from OpenMusicMetadata again for your whole library. Runs in the background and can take a while",
+                        Button::new("refetch-metadata")
+                            .variant(ButtonVariant::Default)
+                            .child("Refetch")
+                            .on_click(|_event, _window, cx| {
+                                let db = cx.global::<Database>().clone();
+                                let scanner = cx.global::<Scanner>().clone();
+                                scanner.refetch_metadata(&db);
+                            }),
+                    )),
             )
     }
 
