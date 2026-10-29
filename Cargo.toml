@@ -10,15 +10,15 @@ license = "AGPL-3.0"
 categories = ["multimedia::audio"]
 
 [dependencies]
-gpui-ce = { git = "https://github.com/gpui-ce/gpui-ce", rev = "42fde4da183245e72c8d1e21709afbc12ee490a5", features = ["font-kit", "x11", "wayland", "hot-patching"] }
-gpui_ce_platform = { git = "https://github.com/gpui-ce/gpui-ce", rev = "42fde4da183245e72c8d1e21709afbc12ee490a5", features = ["font-kit", "x11", "wayland"] }
+gpui-ce = { git = "https://github.com/gpui-ce/gpui-ce", rev = "5cac1478fea0a5f6f28ae4bc7df4b552dff8854b", features = ["font-kit", "x11", "wayland", "hot-patching"] }
+gpui_ce_platform = { git = "https://github.com/gpui-ce/gpui-ce", rev = "5cac1478fea0a5f6f28ae4bc7df4b552dff8854b", features = ["font-kit", "x11", "wayland"] }
 anyhow = "1.0.104"
 dirs = "7.0.0"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tokio = { version = "1.54.1", features = ["sync"] }
 futures = "0.3.34"
-rusqlite = { version = "0.41.0", features = ["bundled", "chrono"] }
+rusqlite = { version = "0.41.1", features = ["bundled", "chrono"] }
 parking_lot = "0.13.0"
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.8"
@@ -30,10 +30,10 @@ symphonia-adapter-libopus = "0.3.0"
 cuid2 = "0.1.6"
 url = "2.5.8"
 rust-embed = { version = "8.13.0", features = ["include-exclude"] }
-lofty = "0.25.4"
+lofty = "0.25.5"
 rayon = "1.12.0"
 walkdir = "2.5.0"
-notify = "8.2.0"
+notify = "8.2.1"
 notify-debouncer-full = "0.7.0"
 image = "0.25.10"
 xxhash-rust = { version = "0.8.19", features = ["xxh3"] }
@@ -57,7 +57,7 @@ serde_json = "1.0.154"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = { version = "0.3.7", default-features = false, features = ["async-io", "blocking"] }
-mpris-server = "0.10.0"
+mpris-server = "0.11.0"
 zbus = "6.1.0"
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]

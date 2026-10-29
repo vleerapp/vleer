@@ -94,9 +94,9 @@ dependencies = [
 
 [[package]]
 name = "addr2line"
-version = "0.25.1"
+version = "0.27.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b5d307320b3181d6d7954e663bd7c774a838b8220fe0593c86d9fb09f498b4b"
+checksum = "e567177890eb1617b1f774005b66b26b2377afd138a2ca37aae7d8f0c81429d4"
 dependencies = [
  "gimli",
 ]
@@ -355,7 +355,7 @@ dependencies = [
  "futures-lite",
  "parking",
  "polling",
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "slab",
  "windows-sys 0.61.2",
 ]
@@ -397,7 +397,7 @@ dependencies = [
  "cfg-if",
  "event-listener",
  "futures-lite",
- "rustix 1.1.5",
+ "rustix 1.1.6",
 ]
 
 [[package]]
@@ -423,7 +423,7 @@ dependencies = [
  "cfg-if",
  "futures-core",
  "futures-io",
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "signal-hook-registry",
  "slab",
  "windows-sys 0.61.2",
@@ -606,14 +606,14 @@ dependencies = [
 
 [[package]]
 name = "backtrace"
-version = "0.3.76"
+version = "0.3.77"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb531853791a215d7c62a30daf0dde835f381ab5de4589cfe7c649d2cbe92bd6"
+checksum = "42f4220217f3288537b83684130f42fad43320b1c3b805f1910d683d52ded24f"
 dependencies = [
  "addr2line",
  "cfg-if",
  "libc",
- "miniz_oxide 0.8.9",
+ "miniz_oxide 0.9.1",
  "object",
  "rustc-demangle",
  "windows-link 0.2.1",
@@ -869,7 +869,7 @@ checksum = "43b32313e937c8721c9d17ee9bf60699a6402b4b7c2cb6ac1bee0ffcaa4b4e5e"
 dependencies = [
  "bitflags",
  "polling",
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "tracing",
 ]
 
@@ -880,7 +880,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "138efcf0940a02ebf0cc8d1eff41a1682a46b431630f4c52450d6265876021fa"
 dependencies = [
  "calloop",
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "wayland-backend",
  "wayland-client",
 ]
@@ -1020,7 +1020,7 @@ checksum = "af491d569909a7e4dee0ad7db7f5341fef5c614d5b8ec8cf765732aba3cff681"
 dependencies = [
  "serde",
  "termcolor",
- "unicode-width 0.2.2",
+ "unicode-width 0.2.3",
 ]
 
 [[package]]
@@ -1245,7 +1245,7 @@ dependencies = [
 [[package]]
 name = "cpal"
 version = "0.19.0"
-source = "git+https://github.com/RustAudio/cpal#68f6f752b2941ab101e2d7d67fe3f1caa67d9eaf"
+source = "git+https://github.com/RustAudio/cpal#4bedd4e98e9e58693a9d23505b2a4de9b726c321"
 dependencies = [
  "alsa",
  "block2 0.6.2",
@@ -1850,9 +1850,9 @@ checksum = "00d174d5400e5e8fd687ad1049e2f578285fa914201b1af7e8b112a4546bd826"
 
 [[package]]
 name = "erased-serde"
-version = "0.4.10"
+version = "0.4.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2add8a07dd6a8d93ff627029c51de145e12686fbc36ecb298ac22e74cf02dec"
+checksum = "1e59b668157f32d3459d4bd634861a06ffa2503a461ca5f0916b9f0252605e66"
 dependencies = [
  "serde",
  "serde_core",
@@ -2175,15 +2175,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fsevent-sys"
-version = "4.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76ee7a02da4d231650c7cea31349b889be2f45ddb3ef3032d2ec8185f6313fd2"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "futures"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2381,7 +2372,7 @@ version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1bd49230192a3797a9a4d6abe9b3eed6f7fa4c8a8a4947977c6f80025f92cbd8"
 dependencies = [
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "windows-link 0.2.1",
 ]
 
@@ -2438,9 +2429,9 @@ dependencies = [
 
 [[package]]
 name = "gimli"
-version = "0.32.3"
+version = "0.34.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7"
+checksum = "1033caf0b349c518623b5396bfb2cf0bddf44f0306d543a250e5743297aafd10"
 
 [[package]]
 name = "gio"
@@ -2546,9 +2537,9 @@ checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 
 [[package]]
 name = "globset"
-version = "0.4.20"
+version = "0.4.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07c34a9410465b45bd9787443bc7370f37735bad04b0f0cd57ff1a3186c98988"
+checksum = "f98b0d85522dc0a824cfebbc9594ff4a9b289c568bea0370319dfbdf20ccdd2d"
 dependencies = [
  "aho-corasick",
  "bstr",
@@ -2626,7 +2617,7 @@ dependencies = [
 [[package]]
 name = "gpui-ce"
 version = "0.2.2"
-source = "git+https://github.com/gpui-ce/gpui-ce?rev=42fde4da183245e72c8d1e21709afbc12ee490a5#42fde4da183245e72c8d1e21709afbc12ee490a5"
+source = "git+https://github.com/gpui-ce/gpui-ce?rev=5cac1478fea0a5f6f28ae4bc7df4b552dff8854b#5cac1478fea0a5f6f28ae4bc7df4b552dff8854b"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -2702,7 +2693,7 @@ dependencies = [
 [[package]]
 name = "gpui_ce_apple"
 version = "0.1.0"
-source = "git+https://github.com/gpui-ce/gpui-ce?rev=42fde4da183245e72c8d1e21709afbc12ee490a5#42fde4da183245e72c8d1e21709afbc12ee490a5"
+source = "git+https://github.com/gpui-ce/gpui-ce?rev=5cac1478fea0a5f6f28ae4bc7df4b552dff8854b#5cac1478fea0a5f6f28ae4bc7df4b552dff8854b"
 dependencies = [
  "anyhow",
  "block",
@@ -2728,7 +2719,7 @@ dependencies = [
 [[package]]
 name = "gpui_ce_collections"
 version = "0.2.2"
-source = "git+https://github.com/gpui-ce/gpui-ce?rev=42fde4da183245e72c8d1e21709afbc12ee490a5#42fde4da183245e72c8d1e21709afbc12ee490a5"
+source = "git+https://github.com/gpui-ce/gpui-ce?rev=5cac1478fea0a5f6f28ae4bc7df4b552dff8854b#5cac1478fea0a5f6f28ae4bc7df4b552dff8854b"
 dependencies = [
  "gpui_ce_util",
  "indexmap",
@@ -2738,7 +2729,7 @@ dependencies = [
 [[package]]
 name = "gpui_ce_derive_refineable"
 version = "0.2.2"
-source = "git+https://github.com/gpui-ce/gpui-ce?rev=42fde4da183245e72c8d1e21709afbc12ee490a5#42fde4da183245e72c8d1e21709afbc12ee490a5"
+source = "git+https://github.com/gpui-ce/gpui-ce?rev=5cac1478fea0a5f6f28ae4bc7df4b552dff8854b#5cac1478fea0a5f6f28ae4bc7df4b552dff8854b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2748,7 +2739,7 @@ dependencies = [
 [[package]]
 name = "gpui_ce_linux"
 version = "0.1.0"
-source = "git+https://github.com/gpui-ce/gpui-ce?rev=42fde4da183245e72c8d1e21709afbc12ee490a5#42fde4da183245e72c8d1e21709afbc12ee490a5"
+source = "git+https://github.com/gpui-ce/gpui-ce?rev=5cac1478fea0a5f6f28ae4bc7df4b552dff8854b#5cac1478fea0a5f6f28ae4bc7df4b552dff8854b"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -2796,7 +2787,7 @@ dependencies = [
 [[package]]
 name = "gpui_ce_macos"
 version = "0.1.0"
-source = "git+https://github.com/gpui-ce/gpui-ce?rev=42fde4da183245e72c8d1e21709afbc12ee490a5#42fde4da183245e72c8d1e21709afbc12ee490a5"
+source = "git+https://github.com/gpui-ce/gpui-ce?rev=5cac1478fea0a5f6f28ae4bc7df4b552dff8854b#5cac1478fea0a5f6f28ae4bc7df4b552dff8854b"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -2847,7 +2838,7 @@ dependencies = [
 [[package]]
 name = "gpui_ce_macros"
 version = "0.1.0"
-source = "git+https://github.com/gpui-ce/gpui-ce?rev=42fde4da183245e72c8d1e21709afbc12ee490a5#42fde4da183245e72c8d1e21709afbc12ee490a5"
+source = "git+https://github.com/gpui-ce/gpui-ce?rev=5cac1478fea0a5f6f28ae4bc7df4b552dff8854b#5cac1478fea0a5f6f28ae4bc7df4b552dff8854b"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -2858,7 +2849,7 @@ dependencies = [
 [[package]]
 name = "gpui_ce_media"
 version = "0.2.2"
-source = "git+https://github.com/gpui-ce/gpui-ce?rev=42fde4da183245e72c8d1e21709afbc12ee490a5#42fde4da183245e72c8d1e21709afbc12ee490a5"
+source = "git+https://github.com/gpui-ce/gpui-ce?rev=5cac1478fea0a5f6f28ae4bc7df4b552dff8854b#5cac1478fea0a5f6f28ae4bc7df4b552dff8854b"
 dependencies = [
  "anyhow",
  "bindgen",
@@ -2872,7 +2863,7 @@ dependencies = [
 [[package]]
 name = "gpui_ce_parley"
 version = "0.1.0"
-source = "git+https://github.com/gpui-ce/gpui-ce?rev=42fde4da183245e72c8d1e21709afbc12ee490a5#42fde4da183245e72c8d1e21709afbc12ee490a5"
+source = "git+https://github.com/gpui-ce/gpui-ce?rev=5cac1478fea0a5f6f28ae4bc7df4b552dff8854b#5cac1478fea0a5f6f28ae4bc7df4b552dff8854b"
 dependencies = [
  "anyhow",
  "fontique",
@@ -2887,7 +2878,7 @@ dependencies = [
 [[package]]
 name = "gpui_ce_platform"
 version = "0.1.0"
-source = "git+https://github.com/gpui-ce/gpui-ce?rev=42fde4da183245e72c8d1e21709afbc12ee490a5#42fde4da183245e72c8d1e21709afbc12ee490a5"
+source = "git+https://github.com/gpui-ce/gpui-ce?rev=5cac1478fea0a5f6f28ae4bc7df4b552dff8854b#5cac1478fea0a5f6f28ae4bc7df4b552dff8854b"
 dependencies = [
  "console_error_panic_hook",
  "gpui-ce",
@@ -2901,7 +2892,7 @@ dependencies = [
 [[package]]
 name = "gpui_ce_refineable"
 version = "0.2.2"
-source = "git+https://github.com/gpui-ce/gpui-ce?rev=42fde4da183245e72c8d1e21709afbc12ee490a5#42fde4da183245e72c8d1e21709afbc12ee490a5"
+source = "git+https://github.com/gpui-ce/gpui-ce?rev=5cac1478fea0a5f6f28ae4bc7df4b552dff8854b#5cac1478fea0a5f6f28ae4bc7df4b552dff8854b"
 dependencies = [
  "gpui_ce_derive_refineable",
 ]
@@ -2909,7 +2900,7 @@ dependencies = [
 [[package]]
 name = "gpui_ce_render"
 version = "0.1.0"
-source = "git+https://github.com/gpui-ce/gpui-ce?rev=42fde4da183245e72c8d1e21709afbc12ee490a5#42fde4da183245e72c8d1e21709afbc12ee490a5"
+source = "git+https://github.com/gpui-ce/gpui-ce?rev=5cac1478fea0a5f6f28ae4bc7df4b552dff8854b#5cac1478fea0a5f6f28ae4bc7df4b552dff8854b"
 dependencies = [
  "gpui-ce",
  "naga 24.0.0",
@@ -2922,7 +2913,7 @@ dependencies = [
 [[package]]
 name = "gpui_ce_scheduler"
 version = "0.2.2"
-source = "git+https://github.com/gpui-ce/gpui-ce?rev=42fde4da183245e72c8d1e21709afbc12ee490a5#42fde4da183245e72c8d1e21709afbc12ee490a5"
+source = "git+https://github.com/gpui-ce/gpui-ce?rev=5cac1478fea0a5f6f28ae4bc7df4b552dff8854b#5cac1478fea0a5f6f28ae4bc7df4b552dff8854b"
 dependencies = [
  "async-task",
  "backtrace",
@@ -2937,7 +2928,7 @@ dependencies = [
 [[package]]
 name = "gpui_ce_shared_string"
 version = "0.1.0"
-source = "git+https://github.com/gpui-ce/gpui-ce?rev=42fde4da183245e72c8d1e21709afbc12ee490a5#42fde4da183245e72c8d1e21709afbc12ee490a5"
+source = "git+https://github.com/gpui-ce/gpui-ce?rev=5cac1478fea0a5f6f28ae4bc7df4b552dff8854b#5cac1478fea0a5f6f28ae4bc7df4b552dff8854b"
 dependencies = [
  "schemars",
  "serde",
@@ -2947,7 +2938,7 @@ dependencies = [
 [[package]]
 name = "gpui_ce_sum_tree"
 version = "0.2.2"
-source = "git+https://github.com/gpui-ce/gpui-ce?rev=42fde4da183245e72c8d1e21709afbc12ee490a5#42fde4da183245e72c8d1e21709afbc12ee490a5"
+source = "git+https://github.com/gpui-ce/gpui-ce?rev=5cac1478fea0a5f6f28ae4bc7df4b552dff8854b#5cac1478fea0a5f6f28ae4bc7df4b552dff8854b"
 dependencies = [
  "heapless",
  "log",
@@ -2958,7 +2949,7 @@ dependencies = [
 [[package]]
 name = "gpui_ce_util"
 version = "0.2.6"
-source = "git+https://github.com/gpui-ce/gpui-ce?rev=42fde4da183245e72c8d1e21709afbc12ee490a5#42fde4da183245e72c8d1e21709afbc12ee490a5"
+source = "git+https://github.com/gpui-ce/gpui-ce?rev=5cac1478fea0a5f6f28ae4bc7df4b552dff8854b#5cac1478fea0a5f6f28ae4bc7df4b552dff8854b"
 dependencies = [
  "anyhow",
  "log",
@@ -2968,7 +2959,7 @@ dependencies = [
 [[package]]
 name = "gpui_ce_web"
 version = "0.1.0"
-source = "git+https://github.com/gpui-ce/gpui-ce?rev=42fde4da183245e72c8d1e21709afbc12ee490a5#42fde4da183245e72c8d1e21709afbc12ee490a5"
+source = "git+https://github.com/gpui-ce/gpui-ce?rev=5cac1478fea0a5f6f28ae4bc7df4b552dff8854b#5cac1478fea0a5f6f28ae4bc7df4b552dff8854b"
 dependencies = [
  "anyhow",
  "console_error_panic_hook",
@@ -2992,7 +2983,7 @@ dependencies = [
 [[package]]
 name = "gpui_ce_wgpu"
 version = "0.1.0"
-source = "git+https://github.com/gpui-ce/gpui-ce?rev=42fde4da183245e72c8d1e21709afbc12ee490a5#42fde4da183245e72c8d1e21709afbc12ee490a5"
+source = "git+https://github.com/gpui-ce/gpui-ce?rev=5cac1478fea0a5f6f28ae4bc7df4b552dff8854b#5cac1478fea0a5f6f28ae4bc7df4b552dff8854b"
 dependencies = [
  "anyhow",
  "core-foundation",
@@ -3024,7 +3015,7 @@ dependencies = [
 [[package]]
 name = "gpui_ce_windows"
 version = "0.1.0"
-source = "git+https://github.com/gpui-ce/gpui-ce?rev=42fde4da183245e72c8d1e21709afbc12ee490a5#42fde4da183245e72c8d1e21709afbc12ee490a5"
+source = "git+https://github.com/gpui-ce/gpui-ce?rev=5cac1478fea0a5f6f28ae4bc7df4b552dff8854b#5cac1478fea0a5f6f28ae4bc7df4b552dff8854b"
 dependencies = [
  "accesskit",
  "accesskit_windows",
@@ -3917,9 +3908,9 @@ dependencies = [
 
 [[package]]
 name = "libsqlite3-sys"
-version = "0.39.0"
+version = "0.39.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0e7f1cd558a82cc3af091ed13f0f03846f89851c60a10713ce5cfd484195494"
+checksum = "14a5f01b87b92705d07b433c06f96cbc764637d81a0bffb5734ce17cf0f9a2b3"
 dependencies = [
  "cc",
  "pkg-config",
@@ -3988,9 +3979,9 @@ dependencies = [
 
 [[package]]
 name = "lofty"
-version = "0.25.4"
+version = "0.25.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb21dd79145b0781f2423fda92dd807fcd3911e44b66044d86db3b11ec7accf9"
+checksum = "35d45c446382e04663705aa8e786157f64ef1fa85755d410121ffbf08f54b0db"
 dependencies = [
  "byteorder",
  "data-encoding",
@@ -4174,7 +4165,7 @@ version = "0.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57804b2c9b69967f1536a56f86297e367a33b19e98852ed624b84551cdbc0d90"
 dependencies = [
- "rustix 1.1.5",
+ "rustix 1.1.6",
 ]
 
 [[package]]
@@ -4293,15 +4284,15 @@ dependencies = [
 
 [[package]]
 name = "mpris-server"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70cf358e9a9516cc35ed40eebd56cbe80f5190a7a2b3cd0c2d358c86b879132b"
+checksum = "0b8bd72df87f89d5c791fa8a8155fce408596ae20c34fefce84c17168c5d304a"
 dependencies = [
  "async-channel",
  "futures-channel",
  "serde",
  "trait-variant",
- "zbus 5.19.0",
+ "zbus 6.1.0",
 ]
 
 [[package]]
@@ -4457,20 +4448,21 @@ checksum = "0676bb32a98c1a483ce53e500a81ad9c3d5b3f7c920c28c24e9cb0980d0b5bc8"
 
 [[package]]
 name = "notify"
-version = "8.2.0"
+version = "8.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d3d07927151ff8575b7087f245456e549fea62edf0ec4e565a5ee50c8402bc3"
+checksum = "82f812702fbc75d35416d3f884e04925be7e9498f4eceea2e24ba34559284674"
 dependencies = [
  "bitflags",
- "fsevent-sys",
  "inotify",
  "kqueue",
  "libc",
  "log",
  "mio",
  "notify-types",
+ "objc2-core-foundation",
+ "objc2-core-services",
  "walkdir",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4502,9 +4494,9 @@ dependencies = [
 
 [[package]]
 name = "notify-types"
-version = "2.1.0"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42b8cfee0e339a0337359f3c88165702ac6e600dc01c0cc9579a92d62b08477a"
+checksum = "0a437a9308232ce794b1e7fdf540d38ea37efc3c73492640c13b4c8568b8f108"
 dependencies = [
  "bitflags",
 ]
@@ -4907,6 +4899,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-core-services"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "583300ad934cba24ff5292aee751ecc070f7ca6b39a574cc21b7b5e588e06a0b"
+dependencies = [
+ "libc",
+ "objc2-core-foundation",
+]
+
+[[package]]
 name = "objc2-core-text"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5070,18 +5072,18 @@ dependencies = [
 
 [[package]]
 name = "object"
-version = "0.37.3"
+version = "0.40.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff76201f031d8863c38aa7f905eca4f53abbfa15f609db4277d44cd8938f33fe"
+checksum = "dd229a0361b9d0d4396176e02d65897f487eebeab7caa6d443855ee152ca0b9c"
 dependencies = [
  "memchr",
 ]
 
 [[package]]
 name = "ogg_pager"
-version = "0.7.2"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d36b1d6964c3ac92b7aea701057e02b6b91143d70d83b20abf75a231a3c0216"
+checksum = "166611b491f939446e64c6be930843a31eb8e6798204ec3e9f57e084c18e7446"
 dependencies = [
  "byteorder",
 ]
@@ -5145,18 +5147,18 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
 name = "opusic-sys"
-version = "0.7.5"
+version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9d1ecdf206421bc74343ab3bb2f30ad2abbfee41fa341f7181fecbaf957769a"
+checksum = "8534a2ed5b65350f90c63b3e160a8edd8b812fcf3182a88fd7fcee3b6fca673a"
 dependencies = [
  "cmake",
 ]
 
 [[package]]
 name = "ordered-float"
-version = "5.5.0"
+version = "5.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c7c9e0d9b23589f26070720bac724174bfec1083e82f7854cdd0267518343c0"
+checksum = "7f59006ce1e204c30956638535b74d317bca99477b9356dfaec54c37f6f600ab"
 dependencies = [
  "num-traits",
 ]
@@ -5479,7 +5481,7 @@ dependencies = [
  "concurrent-queue",
  "hermit-abi",
  "pin-project-lite",
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "windows-sys 0.61.2",
 ]
 
@@ -6111,9 +6113,9 @@ dependencies = [
 
 [[package]]
 name = "rtrb"
-version = "0.3.5"
+version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fae8ee26b0371a29a77d2b2d6b3ae13aa81def6f9bf1b1b92a32d279a5e709b7"
+checksum = "342e1478a6e1c839e7405033eabfdc954d4d5dabd39f34e83420a43a95acfb04"
 
 [[package]]
 name = "rubato"
@@ -6131,9 +6133,9 @@ dependencies = [
 
 [[package]]
 name = "rusqlite"
-version = "0.41.0"
+version = "0.41.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c026b4444579e8d754556c6c75d040d69c4a44283cdb648ab8a8d5965c2cfa8"
+checksum = "da9bba6f3506135e120a6586df05be18b48d18896600646a4bec8f993d91a594"
 dependencies = [
  "bitflags",
  "chrono",
@@ -6237,9 +6239,9 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "1.1.5"
+version = "1.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "891efababe418670775f199f0d233d84843c227a0949a883ce15b37c78d6629d"
+checksum = "e5e76742e5294153d4dde1207dbec5bdd81eef6fabdc0d2118babadabfd858aa"
 dependencies = [
  "bitflags",
  "errno",
@@ -7255,7 +7257,7 @@ dependencies = [
  "fastrand",
  "getrandom 0.4.3",
  "once_cell",
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "windows-sys 0.61.2",
 ]
 
@@ -7713,9 +7715,9 @@ checksum = "7dd6e30e90baa6f72411720665d41d89b9a3d039dc45b8faea1ddd07f617f6af"
 
 [[package]]
 name = "unicode-width"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
+checksum = "ca718471876992059f251e33aafc334346ada08042b7661dd1fe313a9bced557"
 
 [[package]]
 name = "unicode-xid"
@@ -8119,7 +8121,7 @@ dependencies = [
  "cc",
  "downcast-rs",
  "log",
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "scoped-tls",
  "smallvec",
  "wayland-sys",
@@ -8132,7 +8134,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3c36a0f861ad76d0901f2800b46321410d9f73f2ea88aac0650d86c32688073"
 dependencies = [
  "bitflags",
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "wayland-backend",
  "wayland-scanner",
 ]
@@ -8143,7 +8145,7 @@ version = "0.31.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a52d18780be9b1314328a3de5f930b73d2200112e3849ca6cb11822793fb34d"
 dependencies = [
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "wayland-client",
  "xcursor",
 ]
@@ -9046,7 +9048,7 @@ dependencies = [
  "as-raw-xcb-connection",
  "gethostname",
  "libc",
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "x11rb-protocol",
  "xcursor",
 ]
@@ -9185,7 +9187,7 @@ dependencies = [
  "hex",
  "libc",
  "ordered-stream",
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "serde",
  "serde_repr",
  "tracing",
@@ -9211,7 +9213,7 @@ dependencies = [
  "hex",
  "libc",
  "ordered-stream",
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "serde",
  "serde_repr",
  "socket2",
@@ -9484,7 +9486,7 @@ checksum = "dfc035df602243402949ddf3dcc5bcfad7edeb732dd49ec6e605431c4eca54ce"
 dependencies = [
  "futures-core",
  "futures-io",
- "rustix 1.1.5",
+ "rustix 1.1.6",
  "socket2",
  "tracing",
  "windows-sys 0.61.2",
