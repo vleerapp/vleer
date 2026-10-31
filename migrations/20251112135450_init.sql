@@ -367,3 +367,18 @@ WHERE id = OLD.image_id
         WHERE image_id = OLD.image_id
     );
 END;
+CREATE TRIGGER IF NOT EXISTS songs_date_updated
+AFTER UPDATE ON songs
+WHEN NEW.date_updated IS OLD.date_updated BEGIN
+UPDATE songs SET date_updated = DATETIME('now') WHERE id = NEW.id;
+END;
+CREATE TRIGGER IF NOT EXISTS playlists_date_updated
+AFTER UPDATE ON playlists
+WHEN NEW.date_updated IS OLD.date_updated BEGIN
+UPDATE playlists SET date_updated = DATETIME('now') WHERE id = NEW.id;
+END;
+CREATE TRIGGER IF NOT EXISTS images_date_updated
+AFTER UPDATE ON images
+WHEN NEW.date_updated IS OLD.date_updated BEGIN
+UPDATE images SET date_updated = DATETIME('now') WHERE id = NEW.id;
+END;
