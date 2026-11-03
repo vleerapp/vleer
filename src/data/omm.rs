@@ -24,6 +24,7 @@ const BASE_URL: &str = "https://api.vleer.app/metadata/v1";
 const WARM_BATCH: i64 = 64;
 const MAX_NAME_CHARS: usize = 256;
 const MAX_LOOKUP_VALUES: usize = 100;
+const MAX_ISRC_VALUES: usize = 20;
 const MAX_LOOKUP_CHARS: usize = 10_000;
 const ARTWORK_SIZE: &str = "512";
 const REQUEST_INTERVAL: Duration = Duration::from_millis(50);
@@ -98,6 +99,7 @@ struct SongResource {
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SongAttributes {
+    name: String,
     album_name: Option<String>,
     artwork_url: Option<String>,
     isrc: Option<String>,
@@ -286,7 +288,75 @@ fn clip(value: &str) -> &str {
     }
 }
 
-fn lookup_chunks(values: &[String]) -> Vec<String> {
+fn normalize(value: &str) -> String {
+    value
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn similar(a: &str, b: &str) -> bool {
+    let (na, nb) = (normalize(a), normalize(b));
+    if na.is_empty() || nb.is_empty() {
+        return false;
+    }
+    if na == nb {
+        return true;
+    }
+    let (short, long) = if na.len() <= nb.len() {
+        (&na, &nb)
+    } else {
+        (&nb, &na)
+    };
+    if short.len() >= 5 && long.contains(short.as_str()) {
+        return true;
+    }
+    let tokens = |s: &str| -> HashSet<String> {
+        s.split(|c: char| !c.is_alphanumeric())
+            .filter(|t| !t.is_empty())
+            .map(str::to_lowercase)
+            .collect()
+    };
+    let (ta, tb) = (tokens(a), tokens(b));
+    let inter = ta.intersection(&tb).count() as f64;
+    let union = ta.union(&tb).count() as f64;
+    union > 0.0 && inter / union >= 0.75
+}
+
+fn valid_id(id: &str, kind: &str) -> bool {
+    id.strip_prefix("omm:")
+        .and_then(|rest| rest.strip_prefix(kind))
+        .and_then(|rest| rest.strip_prefix(':'))
+        .is_some_and(|tail| {
+            (1..=18).contains(&tail.len())
+                && !tail.starts_with('0')
+                && tail.bytes().all(|b| b.is_ascii_digit())
+        })
+}
+
+fn known_id<'a>(id: &'a Option<String>, kind: &str) -> Option<&'a str> {
+    id.as_deref().filter(|id| valid_id(id, kind))
+}
+
+#[derive(Clone, Copy, Default)]
+struct Scope<'a> {
+    artist_id: Option<&'a str>,
+    album_id: Option<&'a str>,
+}
+
+impl<'a> Scope<'a> {
+    fn push(&self, query: &mut Vec<(&'static str, &'a str)>) {
+        if let Some(id) = self.artist_id {
+            query.push(("artist_id", id));
+        }
+        if let Some(id) = self.album_id {
+            query.push(("album_id", id));
+        }
+    }
+}
+
+fn lookup_chunks(values: &[String], max_values: usize) -> Vec<String> {
     let mut chunks = Vec::new();
     let mut current = String::new();
     let mut count = 0usize;
@@ -299,7 +369,7 @@ fn lookup_chunks(values: &[String]) -> Vec<String> {
         } else {
             value.len() + 1
         };
-        if count >= MAX_LOOKUP_VALUES || current.len() + extra > MAX_LOOKUP_CHARS {
+        if count >= max_values || current.len() + extra > MAX_LOOKUP_CHARS {
             chunks.push(std::mem::take(&mut current));
             count = 0;
         }
@@ -317,7 +387,12 @@ fn lookup_chunks(values: &[String]) -> Vec<String> {
 
 fn catalog(param: &str, values: &[String], cancel: &AtomicBool) -> Result<Vec<Resource>> {
     let mut found = Vec::new();
-    for joined in lookup_chunks(values) {
+    let max_values = if param == "isrc" {
+        MAX_ISRC_VALUES
+    } else {
+        MAX_LOOKUP_VALUES
+    };
+    for joined in lookup_chunks(values, max_values) {
         if let Some(many) = get_json::<Many>("/catalog", &[(param, joined.as_str())], cancel)? {
             found.extend(many.data);
         }
@@ -329,7 +404,11 @@ fn identify(kind: &str, query: &[(&str, &str)], cancel: &AtomicBool) -> Result<O
     Ok(get_json::<Single>(&format!("/identify/{kind}"), query, cancel)?.map(|r| r.data))
 }
 
-fn identify_song(song: &SongLookup, cancel: &AtomicBool) -> Result<Option<SongResource>> {
+fn identify_song(
+    song: &SongLookup,
+    scope: Scope,
+    cancel: &AtomicBool,
+) -> Result<Option<SongResource>> {
     let duration = song.duration.to_string();
     let mut query = vec![("name", clip(song.title.trim()))];
     if !song.artist.trim().is_empty() {
@@ -346,15 +425,60 @@ fn identify_song(song: &SongLookup, cancel: &AtomicBool) -> Result<Option<SongRe
     if song.duration > 0 {
         query.push(("duration", &duration));
     }
+    scope.push(&mut query);
     Ok(identify("song", &query, cancel)?.and_then(Resource::into_song))
 }
 
-fn identify_album(album: &AlbumLookup, cancel: &AtomicBool) -> Result<Option<AlbumResource>> {
+fn identify_song_scoped(song: &SongLookup, cancel: &AtomicBool) -> Result<Option<SongResource>> {
+    let scopes = [
+        known_id(&song.album_omm, "album").map(|id| Scope {
+            album_id: Some(id),
+            artist_id: None,
+        }),
+        known_id(&song.artist_omm, "artist").map(|id| Scope {
+            artist_id: Some(id),
+            album_id: None,
+        }),
+    ];
+    for scope in scopes.into_iter().flatten() {
+        let found = identify_song(song, scope, cancel)?
+            .filter(|matched| similar(&matched.attributes.name, &song.title));
+        if found.is_some() {
+            return Ok(found);
+        }
+    }
+    identify_song(song, Scope::default(), cancel)
+}
+
+fn identify_album(
+    album: &AlbumLookup,
+    scope: Scope,
+    cancel: &AtomicBool,
+) -> Result<Option<AlbumResource>> {
     let mut query = vec![("name", clip(album.title.trim()))];
     if !album.artist.trim().is_empty() {
         query.push(("artist", clip(album.artist.trim())));
     }
+    scope.push(&mut query);
     Ok(identify("album", &query, cancel)?.and_then(Resource::into_album))
+}
+
+fn identify_album_scoped(
+    album: &AlbumLookup,
+    cancel: &AtomicBool,
+) -> Result<Option<AlbumResource>> {
+    if let Some(id) = known_id(&album.artist_omm, "artist") {
+        let scope = Scope {
+            artist_id: Some(id),
+            album_id: None,
+        };
+        let found = identify_album(album, scope, cancel)?
+            .filter(|matched| similar(&matched.attributes.name, &album.title));
+        if found.is_some() {
+            return Ok(found);
+        }
+    }
+    identify_album(album, Scope::default(), cancel)
 }
 
 fn identify_artist(name: &str, cancel: &AtomicBool) -> Result<Option<ArtistResource>> {
@@ -441,14 +565,17 @@ fn pick_album(candidates: Vec<AlbumResource>, album: &AlbumLookup) -> Option<Alb
 fn related_album<'a>(
     song: &'a SongResource,
     local_album: Option<&str>,
+    known_album: Option<&str>,
 ) -> Option<&'a AlbumResource> {
     let albums = &song.relationships.as_ref()?.albums.as_ref()?.data;
-    local_album
-        .map(str::to_lowercase)
-        .and_then(|local| {
-            albums
-                .iter()
-                .find(|album| album.attributes.name.to_lowercase() == local)
+    known_album
+        .and_then(|id| albums.iter().find(|album| album.id == id))
+        .or_else(|| {
+            local_album.map(str::to_lowercase).and_then(|local| {
+                albums
+                    .iter()
+                    .find(|album| album.attributes.name.to_lowercase() == local)
+            })
         })
         .or_else(|| (albums.len() == 1).then(|| &albums[0]))
 }
@@ -726,24 +853,36 @@ fn priority_work(db: &Database, skip: &Skip) -> Option<(Tier, Work)> {
             .find(|(id, _)| !skip.contains(id))
     };
 
+    let song_album = |ids: &[Cuid]| {
+        db.song_albums_needing_metadata(ids)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|album| !skip.contains(&album.id))
+    };
+
+    if let Some((id, name)) = artist(&playing) {
+        return Some((Tier::Playing, Work::Artist(id, name)));
+    }
+    if let Some(found) = song_album(&playing) {
+        return Some((Tier::Playing, Work::Album(found, Vec::new())));
+    }
     if let Some(found) = song(&playing) {
         return Some((Tier::Playing, Work::Song(found, Vec::new())));
     }
-    if let Some((id, name)) = artist(&playing) {
-        return Some((Tier::Playing, Work::Artist(id, name)));
+    if let Some((id, name)) = artist(&snapshot.songs) {
+        return Some((Tier::Visible, Work::Artist(id, name)));
+    }
+    if let Some(found) = song_album(&snapshot.songs) {
+        return Some((Tier::Visible, Work::Album(found, Vec::new())));
     }
     if let Some(found) = song(&snapshot.songs) {
         return Some((Tier::Visible, Work::Song(found, Vec::new())));
     }
-    if let Some(found) = db
-        .albums_needing_metadata_among(&snapshot.albums)
+    db.albums_needing_metadata_among(&snapshot.albums)
         .unwrap_or_default()
         .into_iter()
         .find(|album| !skip.contains(&album.id))
-    {
-        return Some((Tier::Visible, Work::Album(found, Vec::new())));
-    }
-    artist(&snapshot.songs).map(|(id, name)| (Tier::Visible, Work::Artist(id, name)))
+        .map(|found| (Tier::Visible, Work::Album(found, Vec::new())))
 }
 
 async fn resolve_artist_metadata(pass: &Pass, artist_id: Cuid, name: String) -> Result<Outcome> {
@@ -755,9 +894,12 @@ async fn resolve_artist_metadata(pass: &Pass, artist_id: Cuid, name: String) -> 
         return Ok(Outcome::Unresolved);
     }
 
-    let identified = blocking(move || identify_artist(&trimmed, &cancel))
-        .await
-        .map_err(|_| anyhow!("artist lookup cancelled"))??;
+    let identified = blocking(move || {
+        identify_artist(&trimmed, &cancel)
+            .map(|found| found.filter(|artist| similar(&artist.attributes.name, &trimmed)))
+    })
+    .await
+    .map_err(|_| anyhow!("artist lookup cancelled"))??;
 
     let Some(artist) = identified else {
         write_with_retry(move || db.mark_artist_metadata_missing(&artist_id)).await?;
@@ -822,11 +964,12 @@ async fn resolve_song_metadata(
         .is_ok();
 
     let local_album = song.album.clone();
+    let scoped_album = known_id(&song.album_omm, "album").map(str::to_string);
     let identified = blocking(move || {
         if let Some(matched) = pick_song(candidates, &song) {
             return Ok(Some(matched));
         }
-        identify_song(&song, &cancel)
+        identify_song_scoped(&song, &cancel)
     })
     .await
     .map_err(|_| anyhow!("song lookup cancelled"))??;
@@ -849,7 +992,7 @@ async fn resolve_song_metadata(
         _ => None,
     };
 
-    let related = related_album(&matched, local_album.as_deref());
+    let related = related_album(&matched, local_album.as_deref(), scoped_album.as_deref());
     let upc = related
         .and_then(|album| album.attributes.upc.as_deref())
         .and_then(normalize_upc);
@@ -917,7 +1060,7 @@ async fn resolve_album_metadata(
         if let Some(matched) = pick_album(candidates, &album) {
             return Ok(Some(matched));
         }
-        identify_album(&album, &cancel)
+        identify_album_scoped(&album, &cancel)
     })
     .await
     .map_err(|_| anyhow!("album lookup cancelled"))??;
@@ -1098,19 +1241,6 @@ async fn next_bulk(pass: &Pass) -> Bulk {
     let limit = WARM_BATCH + pass.skip.lock().active() as i64;
     let file_busy = priority::file_busy();
 
-    match pass.db.songs_needing_metadata(limit, file_busy) {
-        Ok(batch) => {
-            let batch = unskipped(batch, pass, |song| &song.id);
-            if !batch.is_empty() {
-                return Bulk::Works(song_works(pass, batch).await);
-            }
-        }
-        Err(e) => {
-            warn!("metadata pass could not list songs: {e}");
-            return Bulk::Done;
-        }
-    }
-
     match pass.db.artists_needing_metadata(limit) {
         Ok(batch) => {
             let batch = unskipped(batch, pass, |(id, _)| id);
@@ -1138,6 +1268,19 @@ async fn next_bulk(pass: &Pass) -> Bulk {
         }
         Err(e) => {
             warn!("metadata pass could not list albums: {e}");
+            return Bulk::Done;
+        }
+    }
+
+    match pass.db.songs_needing_metadata(limit, file_busy) {
+        Ok(batch) => {
+            let batch = unskipped(batch, pass, |song| &song.id);
+            if !batch.is_empty() {
+                return Bulk::Works(song_works(pass, batch).await);
+            }
+        }
+        Err(e) => {
+            warn!("metadata pass could not list songs: {e}");
             return Bulk::Done;
         }
     }
@@ -1276,7 +1419,7 @@ mod tests {
         assert_eq!(many.data.len(), 2);
         let song = many.data[0].clone().into_song().unwrap();
         assert_eq!(song.attributes.duration_ms, Some(180_000));
-        let album = related_album(&song, Some("album")).unwrap();
+        let album = related_album(&song, Some("album"), None).unwrap();
         assert_eq!(album.attributes.upc.as_deref(), Some("602455878540"));
         assert!(many.data[1].clone().into_artist().is_some());
     }
@@ -1284,7 +1427,7 @@ mod tests {
     #[test]
     fn chunks_lookup_values_by_count_and_size() {
         let values: Vec<String> = (0..250).map(|i| format!("v{i}")).collect();
-        let chunks = lookup_chunks(&values);
+        let chunks = lookup_chunks(&values, MAX_LOOKUP_VALUES);
         assert_eq!(chunks.len(), 3);
         assert!(
             chunks
@@ -1293,7 +1436,7 @@ mod tests {
         );
         let wide: Vec<String> = (0..50).map(|_| "x".repeat(400)).collect();
         assert!(
-            lookup_chunks(&wide)
+            lookup_chunks(&wide, MAX_LOOKUP_VALUES)
                 .iter()
                 .all(|c| c.len() <= MAX_LOOKUP_CHARS)
         );
@@ -1382,6 +1525,17 @@ mod tests {
         let seen = signal.seen();
         signal.fire();
         futures::executor::block_on(signal.changed(seen));
+    }
+
+    #[test]
+    fn validates_ids_and_names() {
+        assert!(valid_id("omm:artist:1005712044", "artist"));
+        assert!(!valid_id("omm:artist:1005712044", "album"));
+        assert!(!valid_id("omm:artist:0123", "artist"));
+        assert!(!valid_id("", "artist"));
+        assert!(known_id(&Some(String::new()), "album").is_none());
+        assert!(similar("Hello (Remastered)", "hello remastered"));
+        assert!(!similar("Hello", "Goodbye"));
     }
 
     #[test]

@@ -419,6 +419,7 @@ pub struct AlbumLookup {
     pub id: Cuid,
     pub title: String,
     pub artist: String,
+    pub artist_omm: Option<String>,
     pub upc: Option<String>,
 }
 
@@ -435,6 +436,8 @@ pub struct SongLookup {
     pub album: Option<String>,
     pub duration: i32,
     pub isrc: Option<String>,
+    pub album_omm: Option<String>,
+    pub artist_omm: Option<String>,
 }
 
 pub struct ArtistMetadata<'a> {
@@ -450,7 +453,11 @@ const SONG_LOOKUP_SELECT: &str = "SELECT s.id, s.title, s.duration,
                             JOIN artists a ON a.id = sa.artist_id
                             WHERE sa.song_id = s.id ORDER BY sa.position LIMIT 1
                         ), ''),
-                        s.isrc
+                        s.isrc,
+                        (SELECT omm_id FROM albums WHERE id = s.album_id),
+                        (SELECT ar.omm_id FROM songs_artists sa
+                            JOIN artists ar ON ar.id = sa.artist_id
+                            WHERE sa.song_id = s.id ORDER BY sa.position LIMIT 1)
                  FROM songs s";
 
 const ALBUM_LOOKUP_SELECT: &str = "SELECT al.id, al.title, al.upc,
@@ -458,7 +465,10 @@ const ALBUM_LOOKUP_SELECT: &str = "SELECT al.id, al.title, al.upc,
                             SELECT a.name FROM albums_artists aa
                             JOIN artists a ON a.id = aa.artist_id
                             WHERE aa.album_id = al.id ORDER BY aa.position LIMIT 1
-                        ), '')
+                        ), ''),
+                        (SELECT ar.omm_id FROM albums_artists aa
+                            JOIN artists ar ON ar.id = aa.artist_id
+                            WHERE aa.album_id = al.id ORDER BY aa.position LIMIT 1)
                  FROM albums al";
 
 fn placeholders(count: usize) -> String {
@@ -473,6 +483,8 @@ fn song_lookup_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SongLookup>
         album: row.get(3)?,
         artist: row.get(4)?,
         isrc: row.get(5)?,
+        album_omm: row.get(6)?,
+        artist_omm: row.get(7)?,
     })
 }
 
@@ -482,6 +494,7 @@ fn album_lookup_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AlbumLooku
         title: row.get(1)?,
         upc: row.get(2)?,
         artist: row.get(3)?,
+        artist_omm: row.get(4)?,
     })
 }
 
@@ -1065,6 +1078,23 @@ impl Database {
             .query_map(params_from_iter(song_ids), |row| {
                 Ok((row.get(0)?, row.get(1)?))
             })?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    pub fn song_albums_needing_metadata(&self, song_ids: &[Cuid]) -> Result<Vec<AlbumLookup>> {
+        if song_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.image_write_conn.lock();
+        let sql = format!(
+            "{ALBUM_LOOKUP_SELECT} WHERE al.omm_id IS NULL AND al.id IN (
+                SELECT album_id FROM songs WHERE id IN ({}) AND album_id IS NOT NULL)",
+            placeholders(song_ids.len())
+        );
+        let rows = conn
+            .prepare(&sql)?
+            .query_map(params_from_iter(song_ids), album_lookup_from_row)?
             .collect::<rusqlite::Result<_>>()?;
         Ok(rows)
     }
