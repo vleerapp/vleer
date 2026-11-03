@@ -429,7 +429,7 @@ impl Render for AlbumView {
                             .items_center()
                             .when_some(artist_id, |this, artist_id| {
                                 this.cursor_pointer()
-                                    .hover_style(|s| s.text_color(variables.text_hover))
+                                    .hover_style(|s| s.text_color(variables.text_hover).underline())
                                     .on_click(move |_event, window, cx| {
                                         open_artist(artist_id.clone(), window, cx);
                                     })
