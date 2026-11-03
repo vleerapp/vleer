@@ -14,4 +14,5 @@ pub mod scroller;
 pub mod slider;
 pub mod song_table;
 pub mod switch;
+pub mod titlebar;
 pub mod window_controls;

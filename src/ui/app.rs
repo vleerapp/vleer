@@ -30,7 +30,7 @@ use crate::{
             pane::pane,
             scrollbar::{Scrollbar, ScrollbarAxis, set_vertical_pin},
             scroller::modifier_wheel_horizontal,
-            window_controls::WindowControls,
+            titlebar::{Titlebar, content_top_padding, titlebar_visible},
         },
         discord_presence::DiscordPresence,
         global_actions::register_actions,
@@ -62,7 +62,7 @@ pub(crate) struct MainWindow {
     view_scroll: ScrollHandle,
     current_view: AppView,
     history: NavHistory,
-    titlebar_should_move: bool,
+    titlebar: Entity<Titlebar>,
 }
 
 impl MainWindow {
@@ -127,12 +127,6 @@ impl Render for MainWindow {
                 | AppView::Playlists
         );
 
-        let show_linux_controls = cfg!(target_os = "linux")
-            && matches!(window.window_decorations(), Decorations::Client { .. });
-        let show_titlebar = cfg!(target_os = "windows") || show_linux_controls;
-        let is_macos = cfg!(target_os = "macos");
-        let titlebar_height = px(32.0);
-
         let mut element = flex_col()
             .size_full()
             .min_h_0()
@@ -147,53 +141,13 @@ impl Render for MainWindow {
                 cx.listener(|this, _ev, window, cx| this.go_forward(window, cx)),
             );
 
-        if show_titlebar {
-            let mut titlebar = flex_row()
-                .id("window-titlebar")
-                .w_full()
-                .h(titlebar_height)
-                .justify_between()
-                .bg(variables.background)
-                .window_control_area(WindowControlArea::Drag)
-                .child(div().flex_1().pl(px(variables.padding_16)))
-                .child(WindowControls::new(titlebar_height).into_any_element());
-
-            if show_linux_controls {
-                titlebar = titlebar
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _ev, _window, _cx| {
-                            this.titlebar_should_move = true;
-                        }),
-                    )
-                    .on_mouse_up(
-                        MouseButton::Left,
-                        cx.listener(|this, _ev, _window, _cx| {
-                            this.titlebar_should_move = false;
-                        }),
-                    )
-                    .on_mouse_move(cx.listener(|this, _ev, window, _cx| {
-                        if this.titlebar_should_move {
-                            this.titlebar_should_move = false;
-                            window.start_window_move();
-                        }
-                    }));
-            }
-
-            element = element.child(titlebar);
+        if titlebar_visible(window) {
+            element = element.child(self.titlebar.clone());
         }
-
-        let content_pt = if show_titlebar {
-            px(0.0)
-        } else if is_macos {
-            px(variables.padding_16 * 2.0)
-        } else {
-            px(variables.padding_16)
-        };
 
         element = element.child(
             flex_col()
-                .pt(content_pt)
+                .pt(content_top_padding(window, variables))
                 .pr(px(variables.padding_16))
                 .pb(px(variables.padding_16))
                 .pl(px(variables.padding_16))
@@ -584,7 +538,7 @@ pub fn open_main_window(cx: &mut App) {
                     view_scroll: ScrollHandle::new(),
                     current_view: AppView::Home,
                     history: NavHistory::new(AppView::Home),
-                    titlebar_should_move: false,
+                    titlebar: cx.new(|_| Titlebar::new()),
                 }
             })
         },
