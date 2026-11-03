@@ -1103,7 +1103,12 @@ fn walk_dir_fast(root: &Path, cancel_flag: &AtomicBool) -> Vec<PathBuf> {
         let mut maybe_dirs = Vec::new();
         for entry in entries {
             let path = entry.path();
-            if Scanner::is_audio_file(&path) {
+            let is_file = match entry.file_type() {
+                Ok(file_type) if file_type.is_symlink() => path.is_file(),
+                Ok(file_type) => file_type.is_file(),
+                Err(_) => path.is_file(),
+            };
+            if is_file && Scanner::is_audio_file(&path) {
                 files.push(path);
             } else {
                 maybe_dirs.push(path);
