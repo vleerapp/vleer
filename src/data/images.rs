@@ -1,4 +1,8 @@
 use anyhow::{Result, anyhow};
+use image::imageops::FilterType;
+use rand::SeedableRng;
+use rand::rngs::StdRng;
+use rand::seq::SliceRandom;
 use std::collections::{HashSet, VecDeque};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -7,7 +11,7 @@ use tokio::sync::Semaphore;
 use tracing::{debug, warn};
 
 use crate::data::db::{AlbumImageTarget, Database};
-use crate::data::metadata::{encode_cover, image_id_for, read_tag_images};
+use crate::data::metadata::{convert_to_jpeg, encode_cover, image_id_for, read_tag_images};
 use crate::data::models::Cuid;
 use priority::{Progress, Tier};
 
@@ -506,4 +510,219 @@ pub async fn resolve_album_image(db: Database, album_id: Cuid) -> Result<String>
     }
 
     Err(anyhow!(NO_IMAGE))
+}
+
+const GENRE_COVER_SIZE: u32 = 512;
+const GENRE_COVER_TILES: usize = 4;
+
+const GENRE_TINTS: [[f32; 3]; 10] = [
+    [0.0, 190.0, 110.0],
+    [240.0, 100.0, 50.0],
+    [255.0, 0.0, 60.0],
+    [230.0, 180.0, 0.0],
+    [240.0, 90.0, 140.0],
+    [90.0, 130.0, 240.0],
+    [140.0, 70.0, 200.0],
+    [0.0, 150.0, 160.0],
+    [190.0, 200.0, 0.0],
+    [255.0, 120.0, 0.0],
+];
+
+struct GenreCoverPlan {
+    image_ids: Vec<String>,
+    image_id: String,
+    tint: [f32; 3],
+}
+
+fn plan_genre_cover(db: &Database, genre_id: &Cuid) -> Result<Option<GenreCoverPlan>> {
+    let mut image_ids = db.genre_cover_image_ids(genre_id)?;
+    if image_ids.is_empty() {
+        return Ok(None);
+    }
+    let seed = xxhash_rust::xxh3::xxh3_64(genre_id.to_string().as_bytes());
+    image_ids.sort();
+    image_ids.shuffle(&mut StdRng::seed_from_u64(seed));
+    image_ids.truncate(GENRE_COVER_TILES);
+    let image_id = image_id_for(format!("{genre_id}:{}", image_ids.join(",")).as_bytes());
+    let tint = GENRE_TINTS[(seed >> 32) as usize % GENRE_TINTS.len()];
+    Ok(Some(GenreCoverPlan {
+        image_ids,
+        image_id,
+        tint,
+    }))
+}
+
+fn compose_tinted_grid(blobs: &[Vec<u8>], size: u32, tint: [f32; 3]) -> Result<Vec<u8>> {
+    let tiles = blobs
+        .iter()
+        .map(|bytes| image::load_from_memory(bytes).map_err(anyhow::Error::from))
+        .collect::<Result<Vec<_>>>()?;
+
+    let mut canvas = image::RgbaImage::new(size, size);
+    if tiles.len() == 1 {
+        let tile = tiles[0].resize_to_fill(size, size, FilterType::Triangle);
+        image::imageops::replace(&mut canvas, &tile.into_rgba8(), 0, 0);
+    } else {
+        let half = size / 2;
+        for slot in 0..4u32 {
+            let tile = tiles[slot as usize % tiles.len()]
+                .resize_to_fill(half, half, FilterType::Triangle)
+                .into_rgba8();
+            image::imageops::replace(
+                &mut canvas,
+                &tile,
+                i64::from((slot % 2) * half),
+                i64::from((slot / 2) * half),
+            );
+        }
+    }
+
+    for pixel in canvas.as_chunks_mut::<4>().0.iter_mut() {
+        let luma =
+            (0.299 * pixel[0] as f32 + 0.587 * pixel[1] as f32 + 0.114 * pixel[2] as f32) / 255.0;
+        let factor = 0.3 + 0.85 * luma;
+        pixel[0] = (tint[0] * factor).min(255.0) as u8;
+        pixel[1] = (tint[1] * factor).min(255.0) as u8;
+        pixel[2] = (tint[2] * factor).min(255.0) as u8;
+        pixel[3] = 255;
+    }
+
+    convert_to_jpeg(image::DynamicImage::ImageRgb8(
+        image::DynamicImage::ImageRgba8(canvas).into_rgb8(),
+    ))
+}
+
+async fn build_genre_cover(db: &Database, genre_id: &Cuid, plan: GenreCoverPlan) -> Result<String> {
+    let blobs = db.image_blobs(&plan.image_ids)?;
+    if blobs.is_empty() {
+        return Err(anyhow!(NO_IMAGE));
+    }
+    let bytes = {
+        let _permit = decode_limit().acquire().await;
+        compose_tinted_grid(&blobs, GENRE_COVER_SIZE, plan.tint)?
+    };
+    let db = db.clone();
+    let genre_id = genre_id.clone();
+    let image_id = plan.image_id.clone();
+    write_with_retry(move || db.store_genre_cover(&genre_id, &image_id, &bytes)).await?;
+    Ok(plan.image_id)
+}
+
+pub async fn resolve_genre_cover(db: Database, genre_id: Cuid) -> Result<String> {
+    if let Some(image_id) = db.genre_image_id(&genre_id)? {
+        return Ok(image_id);
+    }
+    match plan_genre_cover(&db, &genre_id)? {
+        Some(plan) => build_genre_cover(&db, &genre_id, plan).await,
+        None => Err(anyhow!(NO_IMAGE)),
+    }
+}
+
+fn genre_pass_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+pub async fn warm_genre_covers(db: Database, cancel: Arc<AtomicBool>) -> usize {
+    let _pass = genre_pass_lock().lock().await;
+    let genres = match db.genre_cover_ids() {
+        Ok(genres) => genres,
+        Err(e) => {
+            warn!("genre cover pass could not list genres: {e}");
+            return 0;
+        }
+    };
+
+    let mut built = 0;
+    for (genre_id, stored_id) in genres {
+        if cancel.load(Ordering::Acquire) {
+            break;
+        }
+        let plan = match plan_genre_cover(&db, &genre_id) {
+            Ok(Some(plan)) if stored_id.as_deref() != Some(plan.image_id.as_str()) => plan,
+            Ok(_) => continue,
+            Err(e) => {
+                warn!("genre cover {genre_id} skipped: {e}");
+                continue;
+            }
+        };
+        match build_genre_cover(&db, &genre_id, plan).await {
+            Ok(_) => built += 1,
+            Err(e) => warn!("genre cover {genre_id} skipped: {e}"),
+        }
+    }
+    built
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::db::{BatchTrack, ScanCache};
+
+    fn jpeg_of(shade: u8) -> Vec<u8> {
+        convert_to_jpeg(image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            8,
+            8,
+            image::Rgb([shade, shade, shade]),
+        )))
+        .unwrap()
+    }
+
+    #[test]
+    fn genre_covers_are_stored_and_rebuilt_when_artwork_changes() {
+        let path =
+            std::path::PathBuf::from(format!("/tmp/vleer_genre_covers_{}.db", std::process::id()));
+        let db = Database::new(&path).unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let warm = || futures::executor::block_on(warm_genre_covers(db.clone(), cancel.clone()));
+        let add = |file: &str, shade: u8| {
+            db.upsert_tracks_batch(
+                &[BatchTrack {
+                    title: "Title",
+                    artists: &[],
+                    genres: &["Pop"],
+                    album: None,
+                    album_artist: None,
+                    file_path: file,
+                    audio_hash: file,
+                    duration: 180_000,
+                    track_number: None,
+                    year: None,
+                    recheck_image: false,
+                    file_size: 1_000,
+                    file_modified: 42,
+                    lufs: None,
+                    isrc: None,
+                    upc: None,
+                    omm_song_id: None,
+                    omm_album_id: None,
+                    omm_artist_id: None,
+                }],
+                &mut ScanCache::default(),
+            )
+            .unwrap();
+            let bytes = jpeg_of(shade);
+            let image_id = image_id_for(&bytes);
+            let song_id = db.get_song_by_path(file).unwrap().unwrap().id;
+            db.store_song_image(&song_id, &image_id, Some(&bytes))
+                .unwrap();
+        };
+        let genre = Cuid::for_genre("Pop");
+
+        assert_eq!(warm(), 0);
+        assert_eq!(db.genre_image_id(&genre).unwrap(), None);
+
+        add("/music/1.flac", 40);
+        assert_eq!(warm(), 1);
+        let first = db.genre_image_id(&genre).unwrap().expect("cover stored");
+        assert_eq!(warm(), 0);
+
+        add("/music/2.flac", 200);
+        assert_eq!(warm(), 1);
+        assert_ne!(db.genre_image_id(&genre).unwrap().unwrap(), first);
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(format!("{}-wal", path.display()));
+        let _ = std::fs::remove_file(format!("{}-shm", path.display()));
+    }
 }

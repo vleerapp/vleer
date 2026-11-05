@@ -768,6 +768,12 @@ impl Scanner {
         if result.is_ok() && !self.is_cancelled() {
             self.spawn_image_warm_pass(db);
             self.spawn_metadata_warm_pass(db, false);
+            spawn_genre_cover_pass(
+                &self.executor,
+                db.clone(),
+                self.warm_flag().clone(),
+                self.background_ui.clone(),
+            );
         }
         result
     }
@@ -802,13 +808,22 @@ impl Scanner {
         let cancel = self.fresh_warm_flag();
         let background_ui = self.background_ui.clone();
         let progress = self.covers_notifier();
+        let executor = self.executor.clone();
 
         priority::set_file_busy(true);
         self.executor
             .spawn(async move {
                 debug!("image warm pass started");
+                let genre_db = db.clone();
+                let genre_cancel = cancel.clone();
                 crate::data::images::warm_images(db, cancel, progress, move |resolved| {
                     info!("Resolved {resolved} cover/artist image(s)");
+                    spawn_genre_cover_pass(
+                        &executor,
+                        genre_db.clone(),
+                        genre_cancel.clone(),
+                        background_ui.clone(),
+                    );
                     if let Some(ui) = &background_ui {
                         ui.notify(BackgroundUiEvent::LibraryDataChanged);
                         ui.notify(BackgroundUiEvent::HomeDataChanged);
@@ -830,17 +845,25 @@ impl Scanner {
         let cancel = self.warm_flag().clone();
         let background_ui = self.background_ui.clone();
         let progress = self.covers_notifier();
+        let executor = self.executor.clone();
 
         self.executor
             .spawn(async move {
                 debug!("metadata warm pass started");
                 let index_db = db.clone();
+                let genre_cancel = cancel.clone();
                 crate::data::omm::warm_metadata(db, cancel, progress, reset, move |counts| {
                     info!(
                         "Resolved metadata for {} artist(s), {} song(s) and {} album(s)",
                         counts.artists, counts.songs, counts.albums
                     );
                     index_db.rebuild_search_index();
+                    spawn_genre_cover_pass(
+                        &executor,
+                        index_db.clone(),
+                        genre_cancel.clone(),
+                        background_ui.clone(),
+                    );
                     if let Some(ui) = &background_ui {
                         ui.notify(BackgroundUiEvent::LibraryDataChanged);
                         ui.notify(BackgroundUiEvent::HomeDataChanged);
@@ -1087,6 +1110,25 @@ impl Scanner {
         let added = db.upsert_tracks_batch(&batch, cache)?;
         Ok((added, tracks.len() - added))
     }
+}
+
+fn spawn_genre_cover_pass(
+    executor: &BackgroundExecutor,
+    db: Database,
+    cancel: Arc<AtomicBool>,
+    background_ui: Option<BackgroundUiNotifier>,
+) {
+    executor
+        .spawn(async move {
+            let built = crate::data::images::warm_genre_covers(db, cancel).await;
+            if built > 0 {
+                info!("Composed {built} genre cover(s)");
+                if let Some(ui) = &background_ui {
+                    ui.notify(BackgroundUiEvent::CoversChanged);
+                }
+            }
+        })
+        .detach();
 }
 
 fn walk_dir_fast(root: &Path, cancel_flag: &AtomicBool) -> Vec<PathBuf> {

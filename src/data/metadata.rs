@@ -474,7 +474,7 @@ pub(crate) fn encode_cover(bytes: &[u8]) -> Result<Vec<u8>> {
     convert_to_jpeg(load_from_memory(bytes)?)
 }
 
-fn convert_to_jpeg(img: DynamicImage) -> Result<Vec<u8>> {
+pub(crate) fn convert_to_jpeg(img: DynamicImage) -> Result<Vec<u8>> {
     let (w, h) = img.dimensions();
     let resized = if w > COVER_SIZE || h > COVER_SIZE {
         img.resize(COVER_SIZE, COVER_SIZE, FilterType::CatmullRom)

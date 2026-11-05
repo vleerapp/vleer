@@ -89,7 +89,9 @@ CREATE TABLE IF NOT EXISTS images (
 );
 CREATE TABLE IF NOT EXISTS genres (
     id TEXT PRIMARY KEY,
-    name TEXT UNIQUE NOT NULL
+    name TEXT UNIQUE NOT NULL,
+    image_id TEXT,
+    FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE SET NULL
 );
 CREATE TABLE IF NOT EXISTS songs_genres (
     song_id TEXT NOT NULL,

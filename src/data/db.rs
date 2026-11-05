@@ -2082,6 +2082,63 @@ impl Database {
         Ok(ids)
     }
 
+    pub fn genre_image_id(&self, genre_id: &Cuid) -> Result<Option<String>> {
+        let conn = self.conn.lock();
+        let id = conn
+            .prepare_cached("SELECT image_id FROM genres WHERE id = ?1")?
+            .query_row(params![genre_id], |row| row.get(0))
+            .optional()?
+            .flatten();
+        Ok(id)
+    }
+
+    pub fn genre_cover_ids(&self) -> Result<Vec<(Cuid, Option<String>)>> {
+        let conn = self.conn.lock();
+        collect_mapped(
+            &conn,
+            "SELECT g.id, g.image_id
+             FROM genres g
+             WHERE EXISTS (SELECT 1 FROM songs_genres sg WHERE sg.genre_id = g.id)",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+    }
+
+    pub fn image_blobs(&self, image_ids: &[String]) -> Result<Vec<Vec<u8>>> {
+        let conn = self.image_conn.lock();
+        let mut stmt = conn.prepare_cached("SELECT data FROM images WHERE id = ?1")?;
+        let mut blobs = Vec::with_capacity(image_ids.len());
+        for id in image_ids {
+            if let Some(data) = stmt.query_row(params![id], |row| row.get(0)).optional()? {
+                blobs.push(data);
+            }
+        }
+        Ok(blobs)
+    }
+
+    pub fn store_genre_cover(&self, genre_id: &Cuid, image_id: &str, data: &[u8]) -> Result<()> {
+        let mut conn = self.image_write_conn.lock();
+        let tx = conn.transaction()?;
+        let previous: Option<String> = tx
+            .prepare_cached("SELECT image_id FROM genres WHERE id = ?1")?
+            .query_row(params![genre_id], |row| row.get(0))
+            .optional()?
+            .flatten();
+        tx.prepare_cached(
+            "INSERT INTO images (id, data) VALUES (?1, ?2)
+             ON CONFLICT(id) DO NOTHING",
+        )?
+        .execute(params![image_id, data])?;
+        tx.prepare_cached("UPDATE genres SET image_id = ?2 WHERE id = ?1")?
+            .execute(params![genre_id, image_id])?;
+        if let Some(previous) = previous.filter(|previous| previous != image_id) {
+            tx.prepare_cached("DELETE FROM images WHERE id = ?1")?
+                .execute(params![previous])?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn delete_album(&self, id: &Cuid) -> Result<()> {
         {
             let conn = self.conn.lock();
