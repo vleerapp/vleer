@@ -1312,6 +1312,19 @@ impl Database {
             })
             .optional()?;
 
+        if let Some((image_id, Some(data))) = metadata.image {
+            tx.prepare_cached(
+                "INSERT INTO images (id, data) VALUES (?1, ?2)
+                 ON CONFLICT(id) DO NOTHING",
+            )?
+            .execute(params![image_id, data])?;
+        }
+        let image_owner = keeper.as_ref().map_or(artist_id, |(id, _)| id);
+        if let Some((image_id, _)) = metadata.image {
+            tx.prepare_cached("UPDATE artists SET image_id = ?2 WHERE id = ?1")?
+                .execute(params![image_owner, image_id])?;
+        }
+
         let target = match keeper {
             Some((keeper_id, keeper_name)) => {
                 for sql in ARTIST_MERGE_SQL {
@@ -1324,14 +1337,6 @@ impl Database {
             None => artist_id.clone(),
         };
         insert_artist_alias(&tx, &current_name, &target, metadata.name)?;
-
-        if let Some((image_id, Some(data))) = metadata.image {
-            tx.prepare_cached(
-                "INSERT INTO images (id, data) VALUES (?1, ?2)
-                 ON CONFLICT(id) DO NOTHING",
-            )?
-            .execute(params![image_id, data])?;
-        }
 
         tx.prepare_cached(
             "UPDATE artists SET
@@ -3445,6 +3450,54 @@ mod tests {
             Cuid::for_album("Greatest Hits", "Queen")
         );
         assert_eq!(count(&db, "SELECT COUNT(*) FROM albums"), 2);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn merging_an_artist_keeps_its_already_stored_image() {
+        let (db, path) = named_db("artist_merge_image");
+        db.upsert_tracks_batch(
+            &[BatchTrack {
+                artists: &["Fish", "Fish & Chips"],
+                ..track("/music/1.flac", false)
+            }],
+            &mut ScanCache::default(),
+        )
+        .unwrap();
+        let fish = db.get_artist_by_name("Fish").unwrap().unwrap().id;
+        let combined = db.get_artist_by_name("Fish & Chips").unwrap().unwrap().id;
+        db.store_artist_metadata(
+            &fish,
+            &ArtistMetadata {
+                omm_id: "1003132717",
+                name: "Fish",
+                image: Some(("old", Some(b"old"))),
+            },
+        )
+        .unwrap();
+        db.write_image_row("shared", b"shared").unwrap();
+        db.image_write_conn
+            .lock()
+            .execute(
+                "UPDATE artists SET image_id = 'shared' WHERE id = ?1",
+                params![combined],
+            )
+            .unwrap();
+
+        let merged = db
+            .store_artist_metadata(
+                &combined,
+                &ArtistMetadata {
+                    omm_id: "1003132717",
+                    name: "Fish",
+                    image: Some(("shared", None)),
+                },
+            )
+            .unwrap();
+        assert_eq!(merged, Some(fish.clone()));
+        let artist = db.get_artist(&fish).unwrap().unwrap();
+        assert_eq!(artist.image_id.as_deref(), Some("shared"));
+        assert!(db.image_exists("shared").unwrap());
         cleanup(&path);
     }
 
