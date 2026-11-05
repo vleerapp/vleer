@@ -10,8 +10,8 @@ license = "AGPL-3.0"
 categories = ["multimedia::audio"]
 
 [dependencies]
-gpui-ce = { git = "https://github.com/gpui-ce/gpui-ce", rev = "5cac1478fea0a5f6f28ae4bc7df4b552dff8854b", features = ["font-kit", "x11", "wayland", "hot-patching"] }
-gpui_ce_platform = { git = "https://github.com/gpui-ce/gpui-ce", rev = "5cac1478fea0a5f6f28ae4bc7df4b552dff8854b", features = ["font-kit", "x11", "wayland"] }
+gpui-ce = { git = "https://github.com/gpui-ce/gpui-ce", rev = "bc577476a0eb55173ef985585cfb487f75ab1cab", features = ["font-kit", "x11", "wayland", "hot-patching"] }
+gpui_ce_platform = { git = "https://github.com/gpui-ce/gpui-ce", rev = "bc577476a0eb55173ef985585cfb487f75ab1cab", features = ["font-kit", "x11", "wayland"] }
 anyhow = "1.0.104"
 dirs = "7.0.0"
 tracing = "0.1.44"
@@ -21,7 +21,7 @@ futures = "0.3.34"
 rusqlite = { version = "0.41.1", features = ["bundled", "chrono"] }
 parking_lot = "0.13.0"
 serde = { version = "1.0.229", features = ["derive"] }
-toml = "1.1.8"
+toml = "1.2.0"
 rodio = { git = "https://github.com/vleerapp/rodio", rev = "8e5961ca2cc88cbff5f1a5686d8253b6e655ad8d", features = [
   "symphonia",
   "symphonia-all",
@@ -40,7 +40,7 @@ xxhash-rust = { version = "0.8.19", features = ["xxh3"] }
 rustc-hash = "2.1.3"
 nucleo-matcher = "0.3.1"
 unicode-segmentation = "1.13.3"
-ureq = { version = "3.5.0", features = ["json"] }
+ureq = { version = "3.5.1", features = ["json"] }
 uuid = { version = "1.29.0", features = ["serde", "v4"] }
 semver = "1.0.28"
 minisign-verify = "0.3.0"
@@ -58,7 +58,7 @@ serde_json = "1.0.154"
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = { version = "0.3.7", default-features = false, features = ["async-io", "blocking"] }
 mpris-server = "0.11.0"
-zbus = "6.1.0"
+zbus = "6.2.1"
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 tray-icon = "0.26.1"
