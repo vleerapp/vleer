@@ -1,10 +1,14 @@
 use anyhow::{Context, Result};
 use image::{DynamicImage, GenericImageView, imageops::FilterType, load_from_memory};
+use lofty::ape::ApeTag;
 use lofty::config::ParseOptions;
 use lofty::file::{AudioFile, TaggedFileExt};
+use lofty::id3::v2::{Frame, Id3v2Tag};
+use lofty::mp4::{AtomData, AtomIdent, Ilst};
+use lofty::ogg::tag::VorbisComments;
 use lofty::picture::PictureType;
 use lofty::probe::Probe;
-use lofty::tag::{Accessor, ItemKey, Tag};
+use lofty::tag::{Accessor, ItemKey, Tag, TagType};
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::{self, BufReader, Cursor, Read, Seek, SeekFrom};
@@ -130,6 +134,59 @@ pub struct AudioMetadata {
     pub lufs: Option<f32>,
     pub isrc: Option<String>,
     pub upc: Option<String>,
+    pub omm_song_id: Option<String>,
+    pub omm_album_id: Option<String>,
+    pub omm_artist_id: Option<String>,
+}
+
+pub fn normalize_omm_id(raw: &str) -> Option<String> {
+    let digits = raw.trim();
+    ((1..=18).contains(&digits.len())
+        && !digits.starts_with('0')
+        && digits.bytes().all(|b| b.is_ascii_digit()))
+    .then(|| digits.to_string())
+}
+
+fn custom_fields<const N: usize>(tag: &Tag, names: [&str; N]) -> [Option<String>; N] {
+    if !tag.has_format_specific_items() {
+        return [const { None }; N];
+    }
+    let lookup = |find: &dyn Fn(&str) -> Option<String>| names.map(find);
+    match tag.tag_type() {
+        TagType::VorbisComments => {
+            let comments = VorbisComments::from(tag.clone());
+            lookup(&|name| comments.get(name).map(str::to_string))
+        }
+        TagType::Id3v2 => {
+            let id3 = Id3v2Tag::from(tag.clone());
+            lookup(&|name| {
+                (&id3).into_iter().find_map(|frame| match frame {
+                    Frame::UserText(text) if text.description.eq_ignore_ascii_case(name) => {
+                        Some(text.content.to_string())
+                    }
+                    _ => None,
+                })
+            })
+        }
+        TagType::Mp4Ilst => {
+            let ilst = Ilst::from(tag.clone());
+            lookup(&|name| {
+                let ident = AtomIdent::Freeform {
+                    mean: "com.apple.iTunes".into(),
+                    name: name.into(),
+                };
+                ilst.get(&ident)?.data().find_map(|data| match data {
+                    AtomData::UTF8(text) | AtomData::UTF16(text) => Some(text.clone()),
+                    _ => None,
+                })
+            })
+        }
+        TagType::Ape => {
+            let ape = ApeTag::from(tag.clone());
+            lookup(&|name| ape.get(name)?.text_values()?.next().map(str::to_string))
+        }
+        _ => [const { None }; N],
+    }
 }
 
 pub fn normalize_isrc(raw: &str) -> Option<String> {
@@ -253,7 +310,7 @@ fn extract_artists(tag: &Tag) -> Vec<String> {
 }
 
 fn extract_metadata_from_tag(tag: Option<&Tag>, duration: Duration) -> AudioMetadata {
-    let (title, artists, album, album_artist, genres, year, track_number, lufs, isrc, upc) =
+    let (title, artists, album, album_artist, genres, year, track_number, lufs, isrc, upc, omm_ids) =
         if let Some(tag) = tag {
             let title = tag.title().map(|s| s.to_string());
             let artists = extract_artists(tag);
@@ -280,6 +337,13 @@ fn extract_metadata_from_tag(tag: Option<&Tag>, duration: Duration) -> AudioMeta
 
             let isrc = tag.get_string(ItemKey::Isrc).and_then(normalize_isrc);
             let upc = tag.get_string(ItemKey::Barcode).and_then(normalize_upc);
+            let [song, album_id, artist] =
+                custom_fields(tag, ["OMM_SONG_ID", "OMM_ALBUM_ID", "OMM_ARTIST_ID"]);
+            let omm_ids = (
+                song.and_then(|raw| normalize_omm_id(&raw)),
+                album_id.and_then(|raw| normalize_omm_id(&raw)),
+                artist.and_then(|raw| normalize_omm_id(&raw)),
+            );
 
             (
                 title,
@@ -292,6 +356,7 @@ fn extract_metadata_from_tag(tag: Option<&Tag>, duration: Duration) -> AudioMeta
                 lufs,
                 isrc,
                 upc,
+                omm_ids,
             )
         } else {
             (
@@ -305,6 +370,7 @@ fn extract_metadata_from_tag(tag: Option<&Tag>, duration: Duration) -> AudioMeta
                 None,
                 None,
                 None,
+                (None, None, None),
             )
         };
 
@@ -320,6 +386,9 @@ fn extract_metadata_from_tag(tag: Option<&Tag>, duration: Duration) -> AudioMeta
         lufs,
         isrc,
         upc,
+        omm_song_id: omm_ids.0,
+        omm_album_id: omm_ids.1,
+        omm_artist_id: omm_ids.2,
     }
 }
 
@@ -426,6 +495,53 @@ fn convert_to_jpeg(img: DynamicImage) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lofty::TextEncoding;
+    use lofty::id3::v2::ExtendedTextFrame;
+
+    #[test]
+    fn normalizes_omm_ids() {
+        assert_eq!(
+            normalize_omm_id(" 1024303286 ").as_deref(),
+            Some("1024303286")
+        );
+        assert_eq!(normalize_omm_id("omm:song:1024303286"), None);
+        assert_eq!(normalize_omm_id("0123"), None);
+        assert_eq!(normalize_omm_id("12a"), None);
+        assert_eq!(normalize_omm_id(""), None);
+    }
+
+    #[test]
+    fn reads_omm_ids_from_id3_user_text() {
+        let mut id3 = Id3v2Tag::new();
+        for (name, value) in [
+            ("OMM_SONG_ID", "1024303286"),
+            ("OMM_ALBUM_ID", "1028859113"),
+            ("OMM_ARTIST_ID", "1005090652"),
+        ] {
+            id3.insert(Frame::UserText(ExtendedTextFrame::new(
+                TextEncoding::UTF8,
+                name,
+                value,
+            )));
+        }
+        let tag = Tag::from(id3);
+        let meta = extract_metadata_from_tag(Some(&tag), Duration::ZERO);
+        assert_eq!(meta.omm_song_id.as_deref(), Some("1024303286"));
+        assert_eq!(meta.omm_album_id.as_deref(), Some("1028859113"));
+        assert_eq!(meta.omm_artist_id.as_deref(), Some("1005090652"));
+    }
+
+    #[test]
+    fn reads_omm_ids_from_vorbis_comments() {
+        let mut comments = VorbisComments::new();
+        comments.push("omm_song_id".into(), "1024303286".into());
+        comments.push("OMM_ARTIST_ID".into(), "1005090652".into());
+        let tag = Tag::from(comments);
+        let meta = extract_metadata_from_tag(Some(&tag), Duration::ZERO);
+        assert_eq!(meta.omm_song_id.as_deref(), Some("1024303286"));
+        assert_eq!(meta.omm_album_id, None);
+        assert_eq!(meta.omm_artist_id.as_deref(), Some("1005090652"));
+    }
 
     #[test]
     fn normalizes_isrc_and_upc() {

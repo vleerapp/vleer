@@ -324,19 +324,18 @@ fn similar(a: &str, b: &str) -> bool {
     union > 0.0 && inter / union >= 0.75
 }
 
-fn valid_id(id: &str, kind: &str) -> bool {
-    id.strip_prefix("omm:")
-        .and_then(|rest| rest.strip_prefix(kind))
-        .and_then(|rest| rest.strip_prefix(':'))
-        .is_some_and(|tail| {
-            (1..=18).contains(&tail.len())
-                && !tail.starts_with('0')
-                && tail.bytes().all(|b| b.is_ascii_digit())
-        })
+fn valid_id(id: &str) -> bool {
+    (1..=18).contains(&id.len()) && !id.starts_with('0') && id.bytes().all(|b| b.is_ascii_digit())
 }
 
-fn known_id<'a>(id: &'a Option<String>, kind: &str) -> Option<&'a str> {
-    id.as_deref().filter(|id| valid_id(id, kind))
+fn bare_id(id: &str) -> &str {
+    id.rsplit(':').next().unwrap_or(id)
+}
+
+fn known_id(id: &Option<String>, kind: &str) -> Option<String> {
+    id.as_deref()
+        .filter(|id| valid_id(id))
+        .map(|id| format!("omm:{kind}:{id}"))
 }
 
 #[derive(Clone, Copy, Default)]
@@ -430,12 +429,14 @@ fn identify_song(
 }
 
 fn identify_song_scoped(song: &SongLookup, cancel: &AtomicBool) -> Result<Option<SongResource>> {
+    let album = known_id(&song.album_omm, "album");
+    let artist = known_id(&song.artist_omm, "artist");
     let scopes = [
-        known_id(&song.album_omm, "album").map(|id| Scope {
+        album.as_deref().map(|id| Scope {
             album_id: Some(id),
             artist_id: None,
         }),
-        known_id(&song.artist_omm, "artist").map(|id| Scope {
+        artist.as_deref().map(|id| Scope {
             artist_id: Some(id),
             album_id: None,
         }),
@@ -469,7 +470,7 @@ fn identify_album_scoped(
 ) -> Result<Option<AlbumResource>> {
     if let Some(id) = known_id(&album.artist_omm, "artist") {
         let scope = Scope {
-            artist_id: Some(id),
+            artist_id: Some(&id),
             album_id: None,
         };
         let found = identify_album(album, scope, cancel)?
@@ -917,10 +918,8 @@ async fn resolve_artist_metadata(pass: &Pass, artist_id: Cuid, name: String) -> 
     };
 
     let has_artwork = image.is_some();
-    let ArtistResource {
-        id: omm_id,
-        attributes,
-    } = artist;
+    let ArtistResource { id, attributes } = artist;
+    let omm_id = bare_id(&id).to_string();
     let stored = write_with_retry(move || {
         db.store_artist_metadata(
             &artist_id,
@@ -964,7 +963,7 @@ async fn resolve_song_metadata(
         .is_ok();
 
     let local_album = song.album.clone();
-    let scoped_album = known_id(&song.album_omm, "album").map(str::to_string);
+    let scoped_album = known_id(&song.album_omm, "album");
     let identified = blocking(move || {
         if let Some(matched) = pick_song(candidates, &song) {
             return Ok(Some(matched));
@@ -996,7 +995,7 @@ async fn resolve_song_metadata(
     let upc = related
         .and_then(|album| album.attributes.upc.as_deref())
         .and_then(normalize_upc);
-    let album_omm_id = related.map(|album| album.id.clone());
+    let album_omm_id = related.map(|album| bare_id(&album.id).to_string());
     let album_artwork = related
         .and_then(|album| album.attributes.artwork_url.clone())
         .filter(|url| !url.is_empty());
@@ -1012,7 +1011,7 @@ async fn resolve_song_metadata(
 
     let has_artwork = song_image.is_some() || album_image.is_some();
     let isrc = matched.attributes.isrc.as_deref().and_then(normalize_isrc);
-    let omm_id = matched.id;
+    let omm_id = bare_id(&matched.id).to_string();
     let attributes = matched.attributes;
     let stored = write_with_retry(move || {
         let year = attributes
@@ -1087,7 +1086,7 @@ async fn resolve_album_metadata(
 
     let has_artwork = image.is_some();
     let upc = matched.attributes.upc.as_deref().and_then(normalize_upc);
-    let omm_id = matched.id;
+    let omm_id = bare_id(&matched.id).to_string();
     let stored = write_with_retry(move || {
         db.store_album_metadata(
             &album_id,
@@ -1490,6 +1489,9 @@ mod tests {
                 lufs: None,
                 isrc: None,
                 upc: None,
+                omm_song_id: None,
+                omm_album_id: None,
+                omm_artist_id: None,
             })
             .collect();
         db.upsert_tracks_batch(&tracks, &mut ScanCache::default())
@@ -1529,11 +1531,16 @@ mod tests {
 
     #[test]
     fn validates_ids_and_names() {
-        assert!(valid_id("omm:artist:1005712044", "artist"));
-        assert!(!valid_id("omm:artist:1005712044", "album"));
-        assert!(!valid_id("omm:artist:0123", "artist"));
-        assert!(!valid_id("", "artist"));
+        assert!(valid_id("1005712044"));
+        assert!(!valid_id("omm:artist:1005712044"));
+        assert!(!valid_id("0123"));
+        assert!(!valid_id(""));
+        assert_eq!(
+            known_id(&Some("1005712044".into()), "artist").as_deref(),
+            Some("omm:artist:1005712044")
+        );
         assert!(known_id(&Some(String::new()), "album").is_none());
+        assert_eq!(bare_id("omm:artist:1005712044"), "1005712044");
         assert!(similar("Hello (Remastered)", "hello remastered"));
         assert!(!similar("Hello", "Goodbye"));
     }

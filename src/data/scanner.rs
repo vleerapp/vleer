@@ -1077,6 +1077,9 @@ impl Scanner {
                     lufs: meta.lufs,
                     isrc: meta.isrc.as_deref(),
                     upc: meta.upc.as_deref(),
+                    omm_song_id: meta.omm_song_id.as_deref(),
+                    omm_album_id: meta.omm_album_id.as_deref(),
+                    omm_artist_id: meta.omm_artist_id.as_deref(),
                 }
             })
             .collect();
@@ -1490,6 +1493,9 @@ mod tests {
                 lufs: t.metadata.lufs,
                 isrc: t.metadata.isrc.as_deref(),
                 upc: t.metadata.upc.as_deref(),
+                omm_song_id: None,
+                omm_album_id: None,
+                omm_artist_id: None,
             })
             .collect();
 

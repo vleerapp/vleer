@@ -98,6 +98,9 @@ pub struct BatchTrack<'a> {
     pub lufs: Option<f32>,
     pub isrc: Option<&'a str>,
     pub upc: Option<&'a str>,
+    pub omm_song_id: Option<&'a str>,
+    pub omm_album_id: Option<&'a str>,
+    pub omm_artist_id: Option<&'a str>,
 }
 
 struct AlbumCacheEntry {
@@ -652,8 +655,8 @@ impl Database {
         let conn = self.conn.lock();
         let ids = conn
             .prepare_cached(
-                "SELECT NULLIF(s.omm_id, ''),
-                        (SELECT NULLIF(ar.omm_id, '') FROM songs_artists sa
+                "SELECT 'omm:song:' || NULLIF(s.omm_id, ''),
+                        (SELECT 'omm:artist:' || NULLIF(ar.omm_id, '') FROM songs_artists sa
                          JOIN artists ar ON ar.id = sa.artist_id
                          WHERE sa.song_id = s.id AND NULLIF(ar.omm_id, '') IS NOT NULL
                          ORDER BY sa.position LIMIT 1)
@@ -1245,22 +1248,20 @@ impl Database {
 
     pub fn has_stale_omm_ids(&self) -> Result<bool> {
         let conn = self.image_write_conn.lock();
-        let stale = |table: &str, kind: &str| {
-            let skip = kind.len() + 6;
+        let stale = |table: &str| {
             format!(
                 "SELECT 1 FROM {table}
                  WHERE NULLIF(omm_id, '') IS NOT NULL
-                   AND NOT (omm_id GLOB 'omm:{kind}:[1-9]*'
-                            AND substr(omm_id, {skip}) NOT GLOB '*[^0-9]*'
-                            AND length(omm_id) <= {})",
-                skip + 17
+                   AND NOT (omm_id GLOB '[1-9]*'
+                            AND omm_id NOT GLOB '*[^0-9]*'
+                            AND length(omm_id) <= 18)"
             )
         };
         let sql = format!(
             "SELECT EXISTS({}) OR EXISTS({}) OR EXISTS({})",
-            stale("songs", "song"),
-            stale("albums", "album"),
-            stale("artists", "artist")
+            stale("songs"),
+            stale("albums"),
+            stale("artists")
         );
         Ok(conn.query_row(&sql, [], |row| row.get(0))?)
     }
@@ -1394,6 +1395,12 @@ impl Database {
                 tx.prepare_cached("UPDATE albums SET upc = ?2 WHERE id = ?1 AND upc IS NOT ?2")?
                     .execute(params![id, upc])?;
             }
+            if let (Some(id), Some(omm_id)) = (&album_id, track.omm_album_id) {
+                tx.prepare_cached(
+                    "UPDATE albums SET omm_id = ?2 WHERE id = ?1 AND omm_id IS NOT ?2",
+                )?
+                .execute(params![id, omm_id])?;
+            }
             write_profile::add(&write_profile::ALBUM_NS, album_started);
             let song_started = std::time::Instant::now();
 
@@ -1487,11 +1494,11 @@ impl Database {
             }
 
             tx.prepare_cached(
-                    "INSERT INTO songs (id, title, album_id, file_path, file_size, file_modified, date, duration, track_number, lufs, image_checked, audio_hash, isrc)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?12, ?13)
+                    "INSERT INTO songs (id, title, album_id, file_path, file_size, file_modified, date, duration, track_number, lufs, image_checked, audio_hash, isrc, omm_id)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, ?12, ?13, ?14)
                      ON CONFLICT(id) DO UPDATE SET
                         audio_hash = excluded.audio_hash,
-                        omm_id = NULL,
+                        omm_id = excluded.omm_id,
                         isrc = COALESCE(excluded.isrc, songs.isrc),
                         title = excluded.title,
                         album_id = excluded.album_id,
@@ -1517,7 +1524,8 @@ impl Database {
                         track.lufs,
                         track.recheck_image,
                         track.audio_hash,
-                        track.isrc
+                        track.isrc,
+                        track.omm_song_id
                     ],
                 )?;
 
@@ -1532,6 +1540,14 @@ impl Database {
                 if credited.insert(artist_id.clone()) {
                     vote(&mut cache.artist_votes, &artist_id, artist_name);
                     touched_artists.insert(artist_id.clone());
+                }
+                if position == 0
+                    && let Some(omm_id) = track.omm_artist_id
+                {
+                    tx.prepare_cached(
+                        "UPDATE artists SET omm_id = ?2 WHERE id = ?1 AND omm_id IS NOT ?2",
+                    )?
+                    .execute(params![artist_id, omm_id])?;
                 }
                 tx.prepare_cached(
                     "INSERT INTO songs_artists (song_id, artist_id, position) VALUES (?1, ?2, ?3)
@@ -2640,7 +2656,7 @@ mod tests {
         db.store_song_metadata(
             &song.id,
             &SongBackfill {
-                omm_id: "omm:song:x",
+                omm_id: "1234567890",
                 track_number: None,
                 year: None,
                 genres: &[],
@@ -2648,7 +2664,7 @@ mod tests {
                 isrc: Some("USRC17607839"),
                 upc: Some("0602577812345"),
                 album_image: Some(("cover", Some(&[1, 2, 3]))),
-                album_omm_id: Some("omm:album:y"),
+                album_omm_id: Some("2345678901"),
             },
         )
         .unwrap();
@@ -2681,6 +2697,9 @@ mod tests {
             lufs: None,
             isrc: None,
             upc: None,
+            omm_song_id: None,
+            omm_album_id: None,
+            omm_artist_id: None,
         }
     }
 
@@ -2708,6 +2727,49 @@ mod tests {
             .unwrap()
             .collect::<rusqlite::Result<_>>()
             .unwrap()
+    }
+
+    #[test]
+    fn tagged_omm_ids_are_stored_on_scan() {
+        let (db, path) = named_db("tagged_omm_ids");
+        let mut cache = ScanCache::default();
+        let artists = ["Ellis", "Other"];
+        let tagged = BatchTrack {
+            artists: &artists,
+            album: Some("Night"),
+            omm_song_id: Some("1024303286"),
+            omm_album_id: Some("1028859113"),
+            omm_artist_id: Some("1005090652"),
+            ..track("/music/1.flac", true)
+        };
+        db.upsert_tracks_batch(&[tagged], &mut cache).unwrap();
+
+        let ids = |sql: &str| -> Vec<Option<String>> {
+            let conn = db.conn.lock();
+            let mut stmt = conn.prepare(sql).unwrap();
+            stmt.query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap()
+        };
+        assert_eq!(ids("SELECT omm_id FROM songs"), [Some("1024303286".into())]);
+        assert_eq!(
+            ids("SELECT omm_id FROM albums"),
+            [Some("1028859113".into())]
+        );
+        assert_eq!(
+            ids("SELECT omm_id FROM artists ORDER BY name"),
+            [Some("1005090652".into()), None]
+        );
+
+        let untagged = BatchTrack {
+            artists: &artists,
+            album: Some("Night"),
+            ..track("/music/1.flac", true)
+        };
+        db.upsert_tracks_batch(&[untagged], &mut cache).unwrap();
+        assert_eq!(ids("SELECT omm_id FROM songs"), [None]);
+        cleanup(&path);
     }
 
     #[test]
@@ -3540,13 +3602,12 @@ mod tests {
         };
         assert!(!check(None));
         assert!(!check(Some("")));
-        assert!(!check(Some("omm:song:1234567890")));
-        assert!(!check(Some("omm:song:123456789012345678")));
-        assert!(check(Some("omm:song:0a1b2c3d4e5f6g7h")));
-        assert!(check(Some("omm:song:1234567890123456789")));
-        assert!(check(Some("omm:song:0123456789")));
+        assert!(!check(Some("1234567890")));
+        assert!(!check(Some("123456789012345678")));
+        assert!(check(Some("1234567890123456789")));
+        assert!(check(Some("0123456789")));
         assert!(check(Some("0a1b2c3d4e5f6g7h")));
-        assert!(check(Some("omm:album:1234567890")));
+        assert!(check(Some("omm:song:1234567890")));
 
         db.reset_omm_ids().unwrap();
         assert!(!db.has_stale_omm_ids().unwrap());
@@ -3584,7 +3645,7 @@ mod tests {
         let plain = by_name("Beyonce");
         let accented = by_name("Beyoncé");
         let metadata = ArtistMetadata {
-            omm_id: "omm:artist:3456789012",
+            omm_id: "3456789012",
             name: "Beyoncé",
             image: Some(("img", Some(b"jpeg"))),
         };
@@ -3658,7 +3719,7 @@ mod tests {
         db.store_artist_metadata(
             &lead,
             &ArtistMetadata {
-                omm_id: "omm:artist:3456789012",
+                omm_id: "3456789012",
                 name: "Lead",
                 image: Some(("omm", Some(b"omm"))),
             },
@@ -3857,6 +3918,9 @@ mod tests {
                         lufs: None,
                         isrc: None,
                         upc: None,
+                        omm_song_id: None,
+                        omm_album_id: None,
+                        omm_artist_id: None,
                     })
                     .collect();
                 db.upsert_tracks_batch(&batch, &mut cache).unwrap();
@@ -4060,6 +4124,9 @@ genres {g:?}, commit {c:?}, wal {}MB",
                     lufs: None,
                     isrc: None,
                     upc: None,
+                    omm_song_id: None,
+                    omm_album_id: None,
+                    omm_artist_id: None,
                 })
                 .collect();
             db.upsert_tracks_batch(&batch, &mut cache).unwrap();
