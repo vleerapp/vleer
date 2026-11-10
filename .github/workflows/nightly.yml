@@ -11,6 +11,7 @@ on:
 
 env:
   S3_REGION: us-east-1
+  NIGHTLY_KEEP: 30
 
 jobs:
   check:
@@ -133,6 +134,31 @@ jobs:
             "${S3_ENDPOINT}/nightly/.preflight" >/dev/null || true
 
           echo "S3 preflight ok"
+
+  changelog:
+    needs: version
+    runs-on: ubuntu-latest
+    outputs:
+      markdown: ${{ steps.changelog.outputs.markdown }}
+    steps:
+      - name: Find previous nightly commit
+        id: base
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          LAST=$(gh api "repos/${{ github.repository }}/actions/workflows/nightly.yml/runs?status=success&per_page=1" \
+            --jq '.workflow_runs[0].head_sha // ""')
+          echo "sha=$LAST" >> $GITHUB_OUTPUT
+
+      - name: Changelog
+        id: changelog
+        uses: 0PandaDEV/changelog@main
+        with:
+          head: ${{ github.sha }}
+          base: ${{ steps.base.outputs.sha }}
+          step-summary: "true"
 
   build:
     needs: version
@@ -537,7 +563,7 @@ jobs:
           path: ${{ runner.temp }}/brewmeta/meta.json
 
   publish:
-    needs: [version, build]
+    needs: [version, build, changelog]
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.version.outputs.full }}
@@ -551,20 +577,54 @@ jobs:
           KEYS=$(curl --silent --show-error --fail-with-body \
             --aws-sigv4 "aws:amz:${S3_REGION}:s3" \
             --user "${S3_ACCESS_KEY_ID}:${S3_SECRET_ACCESS_KEY}" \
-            "${S3_ENDPOINT}?list-type=2&prefix=nightly/" \
+            "${S3_ENDPOINT}?list-type=2&prefix=nightly/Vleer-" \
             | grep -o '<Key>[^<]*</Key>' | sed 's|</\?Key>||g')
+
+          printf '%s\n' "$KEYS" \
+            | sed -n 's#^nightly/Vleer-\(.*\)-\(aarch64\|x86_64\)\..*#\1#p' \
+            | sort -u | sort -V -r | head -n "$NIGHTLY_KEEP" > kept.txt
+          grep -qxF "$VERSION" kept.txt || echo "$VERSION" >> kept.txt
+          echo "keeping:"
+          cat kept.txt
 
           printf '%s\n' "$KEYS" | while IFS= read -r key; do
             [ -n "$key" ] || continue
-            case "$key" in
-              *"$VERSION"*) continue ;;
-            esac
+            version=$(printf '%s\n' "$key" | sed -n 's#^nightly/Vleer-\(.*\)-\(aarch64\|x86_64\)\..*#\1#p')
+            [ -n "$version" ] || continue
+            grep -qxF "$version" kept.txt && continue
             echo "pruning $key"
             curl --silent --show-error --fail-with-body -X DELETE \
               --aws-sigv4 "aws:amz:${S3_REGION}:s3" \
               --user "${S3_ACCESS_KEY_ID}:${S3_SECRET_ACCESS_KEY}" \
               "${S3_ENDPOINT}/${key}"
           done
+
+      - name: Publish nightly changelog
+        env:
+          NOTES: ${{ needs.changelog.outputs.markdown }}
+        run: |
+          set -euo pipefail
+          if ! curl --silent --fail \
+              --aws-sigv4 "aws:amz:${S3_REGION}:s3" \
+              --user "${S3_ACCESS_KEY_ID}:${S3_SECRET_ACCESS_KEY}" \
+              -o changelog.old.json \
+              "${S3_ENDPOINT}/nightly/changelog.json"; then
+            echo "[]" > changelog.old.json
+          fi
+
+          jq --arg version "$VERSION" --arg date "$(date -u +%F)" --arg markdown "$NOTES" \
+            --rawfile kept kept.txt '
+              ($kept | split("\n")) as $keep
+              | [.[] | select(.version != $version)]
+                + [{version: $version, date: $date, markdown: $markdown}]
+              | map(select(.version as $v | $keep | index($v)))
+            ' changelog.old.json > changelog.json
+
+          curl --silent --show-error --fail-with-body \
+            --aws-sigv4 "aws:amz:${S3_REGION}:s3" \
+            --user "${S3_ACCESS_KEY_ID}:${S3_SECRET_ACCESS_KEY}" \
+            --upload-file changelog.json \
+            "${S3_ENDPOINT}/nightly/changelog.json"
 
       - name: Download checksum metadata
         uses: actions/download-artifact@v6
