@@ -194,6 +194,7 @@ impl DiscordPresence {
                                 let mut act = activity::Activity::new()
                                     .status_display_type(StatusDisplayType::Details)
                                     .details(title)
+                                    .name(title)
                                     .activity_type(activity::ActivityType::Listening)
                                     .timestamps(
                                         activity::Timestamps::new().start(*start).end(*end),
