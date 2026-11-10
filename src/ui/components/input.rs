@@ -16,7 +16,7 @@ use unicode_segmentation::*;
 
 use crate::ui::{
     components::{div::flex_row, icons::icon},
-    global_actions::{PlayPause, SeekBackward, SeekForward},
+    hotkeys::{PlayPause, SeekBackward, SeekForward},
     variables::Variables,
 };
 

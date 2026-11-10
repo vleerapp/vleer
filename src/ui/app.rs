@@ -10,10 +10,11 @@ use crate::{
     data::{config::Config, db::Database, scanner::Scanner, telemetry::Telemetry},
     media::{controller::MediaController, playback::Playback, queue::Queue},
     services::{
+        discord_rpc::DiscordPresence,
         lastfm::{LastfmClient, LastfmScrobbler},
         lrclib::LrclibClient,
     },
-    system_tray,
+    tray,
     ui::{
         assets::{
             VleerAssetSource,
@@ -32,8 +33,7 @@ use crate::{
             scroller::modifier_wheel_horizontal,
             titlebar::{Titlebar, content_top_padding, titlebar_visible},
         },
-        discord_presence::DiscordPresence,
-        global_actions::register_actions,
+        hotkeys::register_actions,
         layout::{
             SidePanel,
             library::{Library, Search},
@@ -410,7 +410,7 @@ pub async fn run() -> Result<()> {
             Updater::init(cx, navbar::status());
             MediaController::init(cx);
             Playback::start_monitor(cx);
-            system_tray::init(cx);
+            tray::init(cx);
 
             if let Some(warning) = cx.global::<Config>().parse_warning.clone() {
                 navbar::status().set(
@@ -508,7 +508,7 @@ pub fn open_main_window(cx: &mut App) {
         |window, cx| {
             window.set_window_title("Vleer");
             window.on_window_should_close(cx, |_window, cx| {
-                system_tray::prepare_close(cx);
+                tray::prepare_close(cx);
                 true
             });
 
