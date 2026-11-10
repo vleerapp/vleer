@@ -583,10 +583,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 - "$VERSION" "$S3_ENDPOINT" <<'PY'
+          python3 - "$VERSION" "https://cdn.vleer.app" <<'PY'
           import json, glob, sys
 
-          version, s3_endpoint = sys.argv[1], sys.argv[2]
+          version, cdn = sys.argv[1], sys.argv[2]
           meta = {}
           for f in glob.glob("brewmeta/brewmeta-*/meta.json"):
               d = json.load(open(f))
@@ -600,7 +600,7 @@ jobs:
           formula = f'''class VleerNightly < Formula
             desc "Music, but without the subscription (nightly build)"
             homepage "https://vleer.app"
-            url "{s3_endpoint}/nightly/Vleer-{version}-#{{Hardware::CPU.arm? ? "aarch64" : "x86_64"}}.tar.gz"
+            url "{cdn}/nightly/Vleer-{version}-#{{Hardware::CPU.arm? ? "aarch64" : "x86_64"}}.tar.gz"
             version "{version}"
             sha256 Hardware::CPU.arm? ? "{linux_arm}" : "{linux_x64}"
 
@@ -628,7 +628,7 @@ jobs:
             sha256 arm:    "{mac_arm}",
                    x86_64: "{mac_x64}"
 
-            url "{s3_endpoint}/nightly/Vleer-{version}-#{{arch}}.dmg"
+            url "{cdn}/nightly/Vleer-{version}-#{{arch}}.dmg"
             name "Vleer"
             desc "Music, but without the subscription (nightly build)"
             homepage "https://vleer.app/"
