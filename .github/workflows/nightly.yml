@@ -305,6 +305,7 @@ jobs:
           mkdir -p "$TREE/bin" "$TREE/share/applications" "$TREE/share/vleer"
 
           install -m 0755 target/dist/vleer "$TREE/bin/vleer"
+          install -m 0644 LICENSE "$TREE/share/vleer/LICENSE"
 
           for size in 128 256 512; do
             dir="$TREE/share/icons/hicolor/${size}x${size}/apps"
