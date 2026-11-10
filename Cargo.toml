@@ -21,7 +21,7 @@ futures = "0.3.34"
 rusqlite = { version = "0.41.1", features = ["bundled", "chrono"] }
 parking_lot = "0.13.0"
 serde = { version = "1.0.229", features = ["derive"] }
-toml = "1.2.0"
+toml = "1.2.1"
 rodio = { git = "https://github.com/vleerapp/rodio", rev = "8e5961ca2cc88cbff5f1a5686d8253b6e655ad8d", features = [
   "symphonia",
   "symphonia-all",
@@ -33,7 +33,7 @@ rust-embed = { version = "8.13.0", features = ["include-exclude"] }
 lofty = "0.25.5"
 rayon = "1.12.0"
 walkdir = "2.5.0"
-notify = "8.2.1"
+notify = "8.2.2"
 notify-debouncer-full = "0.7.0"
 image = "0.25.10"
 xxhash-rust = { version = "0.8.19", features = ["xxh3"] }
@@ -41,14 +41,14 @@ rustc-hash = "2.1.3"
 nucleo-matcher = "0.3.1"
 unicode-segmentation = "1.13.3"
 ureq = { version = "3.5.1", features = ["json"] }
-uuid = { version = "1.29.0", features = ["serde", "v4"] }
+uuid = { version = "1.29.2", features = ["serde", "v4"] }
 semver = "1.0.28"
 minisign-verify = "0.3.0"
 spectrum-analyzer = "2.0.0"
 discord-rich-presence = "1.1.0"
 rand = "0.10.3"
 raw-window-handle = "0.6.2"
-interprocess = "2.4.7"
+interprocess = "2.4.8"
 libc = "0.2.191"
 md5 = "0.8.1"
 
@@ -101,7 +101,7 @@ windows = { version = "0.62.2", features = [
   "Win32_System_Com",
   "Win32_System_WinRT",
 ] }
-windows-future = "0.3.2"
+windows-future = "0.100.0"
 
 [profile.dev]
 debug = "line-tables-only"
