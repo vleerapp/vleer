@@ -7,7 +7,7 @@ use crate::data::config::Config;
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
 use crate::ui::app::open_main_window;
-use crate::ui::global_actions::{Quit, quit};
+use crate::ui::hotkeys::{Quit, quit};
 
 pub type Snapshot = (bool, Option<String>);
 

@@ -12,7 +12,7 @@ mod media;
 mod services;
 mod single_instance;
 mod status;
-mod system_tray;
+mod tray;
 mod ui;
 mod updater;
 

@@ -81,7 +81,7 @@ impl RenderOnce for WindowControls {
             WindowControlArea::Close,
             use_window_control_area,
             |window, cx| {
-                crate::system_tray::prepare_close(cx);
+                crate::tray::prepare_close(cx);
                 window.remove_window();
             },
         ))
