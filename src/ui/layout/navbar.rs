@@ -5,6 +5,7 @@ use std::time::Duration;
 pub use crate::status::status;
 
 use crate::ui::{
+    app::MainWindow,
     components::{
         div::flex_row,
         icons::{HOME, SETTINGS},
@@ -13,6 +14,7 @@ use crate::ui::{
     variables::Variables,
     views::AppView,
 };
+use crate::updater::Updater;
 
 pub struct Navbar {
     _refresh_task: Task<()>,
@@ -62,6 +64,7 @@ impl Render for Navbar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
         let entries = status().entries();
+        let update = cx.try_global::<Updater>().and_then(|u| u.available());
 
         flex_row()
             .h_full()
@@ -74,6 +77,26 @@ impl Render for Navbar {
             )))
             .child({
                 let mut row = flex_row().items_center().gap(px(variables.padding_16));
+                if let Some(info) = update {
+                    row = row.child(
+                        div()
+                            .id("update-notice")
+                            .cursor_pointer()
+                            .text_color(variables.accent)
+                            .font_weight(FontWeight(500.0))
+                            .child(format!(
+                                "v{} is available →",
+                                info.version.trim_start_matches('v')
+                            ))
+                            .on_mouse_down(MouseButton::Left, |_event, window, cx| {
+                                if let Some(Some(root)) = window.root::<MainWindow>() {
+                                    root.update(cx, |view, cx| {
+                                        view.set_current_view(AppView::Settings, window, cx);
+                                    });
+                                }
+                            }),
+                    );
+                }
                 for entry in entries {
                     let color = match entry.color {
                         crate::status::StatusColor::Accent => variables.accent,

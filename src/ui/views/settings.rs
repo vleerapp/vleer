@@ -708,6 +708,11 @@ impl SettingsView {
 }
 
 impl SettingsView {
+    pub fn show_about(&mut self, cx: &mut Context<Self>) {
+        self.tab = SettingsTab::About;
+        cx.notify();
+    }
+
     fn general(&self, variables: &Variables, cx: &App) -> Div {
         let general = cx.global::<Config>().get().general.clone();
 
@@ -1157,7 +1162,7 @@ impl SettingsView {
                     .child(setting(
                         variables,
                         "Check automatically",
-                        "Look for new versions when Vleer starts",
+                        "Look for new versions on start and every hour",
                         Switch::new("auto-check-switch", updates.auto_check).on_change(
                             move |value, _window, cx| {
                                 cx.update_global::<Config, _>(|config, _cx| {
@@ -1194,54 +1199,57 @@ impl SettingsView {
                         variables,
                         "Check for updates",
                         status_text,
-                        flex_row()
-                            .gap(px(variables.padding_8))
-                            .child(
-                                Button::new("check-updates-btn")
-                                    .variant(ButtonVariant::Default)
-                                    .child("Check now")
-                                    .on_click({
-                                        let updater = updater.clone();
-                                        move |_event, _window, cx| {
-                                            let channel =
-                                                cx.global::<Config>().get().updates.channel;
-                                            run_check_in_background(
-                                                updater.clone(),
-                                                channel,
-                                                cx.background_executor(),
-                                            );
-                                        }
-                                    }),
-                            )
-                            .when_some(available_info, |row, info| {
+                        Button::new("check-updates-btn")
+                            .variant(ButtonVariant::Default)
+                            .child("Check now")
+                            .on_click({
                                 let updater = updater.clone();
-                                row.child(
-                                    Button::new("install-update-btn")
-                                        .variant(ButtonVariant::Accent)
-                                        .child("Install & restart")
-                                        .on_click(move |_event, _window, _cx| {
-                                            let info = info.clone();
-                                            let updater = updater.clone();
-                                            std::thread::spawn(move || {
-                                                let path = match updater.download(&info) {
-                                                    Ok(p) => p,
-                                                    Err(e) => {
-                                                        tracing::error!("download failed: {e:#}");
-                                                        return;
-                                                    }
-                                                };
-                                                if let Err(e) = updater.install_and_exit(&path) {
-                                                    tracing::error!("install failed: {e}");
-                                                }
-                                            });
-                                        }),
-                                )
+                                move |_event, _window, cx| {
+                                    let channel = cx.global::<Config>().get().updates.channel;
+                                    run_check_in_background(
+                                        updater.clone(),
+                                        channel,
+                                        cx.background_executor(),
+                                    );
+                                }
                             }),
                     ))
             });
 
+        let available_group = available_info.map(|info| {
+            let version = format!("v{}", info.version.trim_start_matches('v'));
+            group(variables, "Update available").child(setting(
+                variables,
+                format!("{version} is ready to install"),
+                "Vleer will download the update and restart",
+                Button::new("install-update-btn")
+                    .variant(ButtonVariant::Accent)
+                    .child("Install & restart")
+                    .on_click({
+                        let updater = updater.clone();
+                        move |_event, _window, _cx| {
+                            let info = info.clone();
+                            let updater = updater.clone();
+                            std::thread::spawn(move || {
+                                let path = match updater.download(&info) {
+                                    Ok(p) => p,
+                                    Err(e) => {
+                                        tracing::error!("download failed: {e:#}");
+                                        return;
+                                    }
+                                };
+                                if let Err(e) = updater.install_and_exit(&path) {
+                                    tracing::error!("install failed: {e}");
+                                }
+                            });
+                        }
+                    }),
+            ))
+        });
+
         page(variables)
             .child(header)
+            .children(available_group)
             .child(app)
             .child(updates_group)
     }

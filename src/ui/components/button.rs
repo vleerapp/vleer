@@ -147,9 +147,13 @@ impl RenderOnce for Button {
                     .gap(px(8.0))
                     .bg(bg)
                     .hover_style(move |s| s.bg(hover_bg))
-                    .when(self.variant == Some(ButtonVariant::Active), |this| {
-                        this.font_weight(FontWeight::MEDIUM)
-                    }),
+                    .when(
+                        matches!(
+                            self.variant,
+                            Some(ButtonVariant::Active | ButtonVariant::Accent)
+                        ),
+                        |this| this.font_weight(FontWeight::MEDIUM),
+                    ),
                 None => this
                     .p(px(8.0))
                     .when_some(self.bg_color, |this, bg| this.bg(bg)),

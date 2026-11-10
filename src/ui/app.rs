@@ -3,7 +3,7 @@ use futures::StreamExt;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_ce_platform::application;
-use std::{collections::HashMap, rc::Rc};
+use std::{collections::HashMap, rc::Rc, time::Duration};
 use tracing::{debug, error};
 
 use crate::{
@@ -45,11 +45,13 @@ use crate::{
         variables::Variables,
         views::{
             ActiveView, AppView, NavEntry, NavHistory, SelectedAlbum, SelectedArtist,
-            SelectedPlaylist, ViewRegistry,
+            SelectedPlaylist, SettingsView, ViewRegistry,
         },
     },
-    updater::Updater,
+    updater::{UpdateStatus, Updater},
 };
+
+const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 pub(crate) struct MainWindow {
     library: Entity<Library>,
@@ -74,6 +76,15 @@ impl MainWindow {
         let entry = NavEntry::capture(view, cx);
         if self.history.push(entry.clone()) {
             self.apply_entry(entry, window, cx);
+        }
+        if view == AppView::Settings
+            && cx
+                .try_global::<Updater>()
+                .is_some_and(|updater| updater.available().is_some())
+            && let Some(settings) = self.views.get(&AppView::Settings)
+            && let Result::Ok(settings) = settings.clone().downcast::<SettingsView>()
+        {
+            settings.update(cx, |settings, cx| settings.show_about(cx));
         }
     }
 
@@ -429,17 +440,27 @@ pub async fn run() -> Result<()> {
                 );
             }
 
-            {
-                let config = cx.global::<Config>().get().updates.clone();
-                if config.auto_check && !crate::updater::is_managed_externally() {
-                    let updater = cx.global::<Updater>().clone();
-                    crate::updater::run_check_in_background(
-                        updater,
-                        config.channel,
-                        cx.background_executor(),
-                    );
+            cx.spawn(async move |cx: &mut AsyncApp| {
+                loop {
+                    cx.update(|cx| {
+                        let config = cx.global::<Config>().get().updates.clone();
+                        let updater = cx.global::<Updater>().clone();
+                        let idle = matches!(
+                            updater.status(),
+                            UpdateStatus::Idle | UpdateStatus::UpToDate | UpdateStatus::Failed(_)
+                        );
+                        if config.auto_check && idle && !crate::updater::is_managed_externally() {
+                            crate::updater::run_check_in_background(
+                                updater,
+                                config.channel,
+                                cx.background_executor(),
+                            );
+                        }
+                    });
+                    cx.background_executor().timer(UPDATE_CHECK_INTERVAL).await;
                 }
-            }
+            })
+            .detach();
 
             find_fonts(cx)
                 .inspect_err(|e| error!(?e, "Failed to load fonts"))

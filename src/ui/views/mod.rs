@@ -9,6 +9,8 @@ mod playlists;
 mod settings;
 mod songs;
 
+pub use settings::SettingsView;
+
 use gpui::*;
 use std::collections::HashMap;
 
@@ -16,7 +18,7 @@ use crate::data::models::Cuid;
 use crate::ui::views::{
     album::AlbumView, albums::AlbumsView, artist::ArtistView, artists::ArtistsView,
     genres::GenresView, home::HomeView, playlist::PlaylistView, playlists::PlaylistsView,
-    settings::SettingsView, songs::SongsView,
+    songs::SongsView,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]

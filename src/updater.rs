@@ -124,6 +124,13 @@ impl Updater {
         self.inner.read().status.clone()
     }
 
+    pub fn available(&self) -> Option<UpdateInfo> {
+        match &self.inner.read().status {
+            UpdateStatus::Available(info) => Some(info.clone()),
+            _ => None,
+        }
+    }
+
     fn set_status(&self, s: UpdateStatus) {
         self.inner.write().status = s;
     }
