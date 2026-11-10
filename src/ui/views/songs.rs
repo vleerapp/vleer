@@ -212,7 +212,7 @@ fn spawn_count_fetch(
     let bg = cx.background_executor().clone();
     cx.spawn(async move |cx: &mut AsyncApp| {
         let q = query.clone();
-        let count = match bg.spawn(async move { db.get_songs_count(Some(&q)) }).await {
+        let count = match bg.spawn(async move { db.count_songs(Some(&q)) }).await {
             Ok(count) if count >= 0 => count as usize,
             Ok(count) => {
                 error!("songs count query returned a negative count: {}", count);
@@ -389,9 +389,9 @@ impl SongsView {
 
             cx.spawn(async move |cx: &mut AsyncApp| {
                 let song_ids = match bg
-                    .spawn(async move {
-                        db.get_song_ids_from_offset(&query, sort, ascending, (index + 1) as i64)
-                    })
+                    .spawn(
+                        async move { db.get_song_ids(&query, sort, ascending, (index + 1) as i64) },
+                    )
                     .await
                 {
                     Ok(ids) => ids,

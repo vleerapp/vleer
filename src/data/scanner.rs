@@ -175,7 +175,7 @@ impl Scanner {
     pub async fn delete_path_exclusive(&self, db: &Database, dir: &str) -> Result<usize> {
         self.request_cancel();
         let _scan_guard = self.scan_lock.lock().await;
-        db.delete_songs_under_path(dir)
+        db.delete_songs_in_dir(dir)
     }
 
     fn is_cancelled(&self) -> bool {
@@ -1107,7 +1107,7 @@ impl Scanner {
             })
             .collect();
 
-        let added = db.upsert_tracks_batch(&batch, cache)?;
+        let added = db.upsert_tracks(&batch, cache)?;
         Ok((added, tracks.len() - added))
     }
 }
@@ -1541,10 +1541,8 @@ mod tests {
             })
             .collect();
 
-        let added = db
-            .upsert_tracks_batch(&batch, &mut ScanCache::default())
-            .unwrap();
-        let real_count = db.get_songs_count(None).unwrap();
+        let added = db.upsert_tracks(&batch, &mut ScanCache::default()).unwrap();
+        let real_count = db.count_songs(None).unwrap();
         println!(
             "files: {}, tracks read: {}, added: {}, rows in db: {}",
             files.len(),

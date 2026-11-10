@@ -53,7 +53,7 @@ impl ArtistsView {
             let query_for_spawn = query.clone();
             let (count, first_page) = bg
                 .spawn(async move {
-                    let count = db.get_artists_count(&query_for_spawn).unwrap_or(0);
+                    let count = db.count_artists(&query_for_spawn).unwrap_or(0);
                     let first_page = if count > 0 {
                         db.get_artists(&query_for_spawn, 0, page_size)
                             .unwrap_or_default()

@@ -53,7 +53,7 @@ fn reload_pinned_items(cx: &mut Context<Library>) {
     let db = cx.global::<Database>().clone();
     let bg = cx.background_executor().clone();
     cx.spawn(async move |this, cx: &mut AsyncApp| {
-        let items = bg.spawn(async move { db.get_pinned_items() }).await;
+        let items = bg.spawn(async move { db.get_pinned() }).await;
         cx.update(|cx| {
             this.update(cx, |lib, cx| {
                 lib.pinned_items = items;
@@ -74,7 +74,7 @@ impl Library {
         let bg = cx.background_executor().clone();
 
         cx.spawn(async move |this, cx: &mut AsyncApp| {
-            let items = bg.spawn(async move { db.get_pinned_items() }).await;
+            let items = bg.spawn(async move { db.get_pinned() }).await;
 
             cx.update(|cx| {
                 this.update(cx, |lib, cx| {
@@ -156,8 +156,8 @@ impl Library {
         self._search_task = Some(cx.spawn(async move |this, cx: &mut AsyncApp| {
             let (results, counts) = bg
                 .spawn(async move {
-                    let r = db.search_library(&query, SEARCH_RESULT_LIMIT);
-                    let counts = db.get_search_match_counts(&query);
+                    let r = db.search(&query, SEARCH_RESULT_LIMIT);
+                    let counts = db.count_search_matches(&query);
                     (r, counts)
                 })
                 .await;

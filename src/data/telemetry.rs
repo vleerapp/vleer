@@ -106,7 +106,7 @@ impl Telemetry {
             user_id,
             app_version: env!("CARGO_PKG_VERSION").to_string(),
             os: self.current_os(),
-            song_count: db.get_songs_count(None).unwrap_or(0),
+            song_count: db.count_songs(None).unwrap_or(0),
         };
 
         let agent = self.agent.clone();

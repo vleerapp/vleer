@@ -291,7 +291,7 @@ pub async fn resolve_song_file_image(db: Database, song_id: Cuid) -> Result<Stri
 
 pub async fn resolve_song_image(db: Database, song_id: Cuid) -> Result<String> {
     match resolve_song_file_image(db.clone(), song_id.clone()).await {
-        Err(e) if is_missing_image(&e.to_string()) => match db.song_album_image(&song_id) {
+        Err(e) if is_missing_image(&e.to_string()) => match db.get_song_album_image(&song_id) {
             Ok(Some(image_id)) => Ok(image_id),
             _ => Err(e),
         },
@@ -300,7 +300,7 @@ pub async fn resolve_song_image(db: Database, song_id: Cuid) -> Result<String> {
 }
 
 async fn resolve_song_and_artist_image(db: Database, song_id: Cuid) -> (Result<String>, bool) {
-    let target = match db.song_image_target(&song_id) {
+    let target = match db.get_song_image_target(&song_id) {
         Ok(Some(target)) => target,
         Ok(None) => return (Err(anyhow!("song {song_id} not found")), false),
         Err(e) => return (Err(e), false),
@@ -370,7 +370,7 @@ pub(crate) async fn prepare_image(
     raw: Vec<u8>,
 ) -> Result<(String, Option<Vec<u8>>)> {
     let image_id = image_id_for(&raw);
-    if db.image_exists(&image_id)? {
+    if db.has_image(&image_id)? {
         return Ok((image_id, None));
     }
 
@@ -385,7 +385,7 @@ pub(crate) async fn prepare_image(
 }
 
 async fn store_song_artist_image(db: Database, song_id: Cuid, raw: Vec<u8>) -> Result<bool> {
-    if !db.song_lead_artist_needs_image(&song_id)? {
+    if !db.song_artist_needs_image(&song_id)? {
         return Ok(false);
     }
 
@@ -402,21 +402,23 @@ fn priority_image_job(db: &Database, skipped: &HashSet<Cuid>) -> Option<(Tier, C
     let snapshot = priority::snapshot();
 
     if let Some(playing) = snapshot.playing {
-        let needing = db.songs_needing_image_among(&[playing]).unwrap_or_default();
+        let needing = db
+            .get_songs_without_image_in(&[playing])
+            .unwrap_or_default();
         if let Some(id) = first_unskipped(needing, skipped) {
             return Some((Tier::Playing, id));
         }
     }
 
     let needing = db
-        .songs_needing_image_among(&snapshot.songs)
+        .get_songs_without_image_in(&snapshot.songs)
         .unwrap_or_default();
     if let Some(id) = first_unskipped(needing, skipped) {
         return Some((Tier::Visible, id));
     }
 
     let needing = db
-        .album_songs_needing_image(&snapshot.albums)
+        .get_album_songs_without_image(&snapshot.albums)
         .unwrap_or_default();
     first_unskipped(needing, skipped).map(|id| (Tier::Visible, id))
 }
@@ -440,7 +442,7 @@ pub async fn warm_images(
             Some(job) => Some(job),
             None => {
                 if bulk.is_empty() {
-                    match db.songs_needing_image(WARM_BATCH + skipped.len() as i64) {
+                    match db.get_songs_without_image(WARM_BATCH + skipped.len() as i64) {
                         Ok(batch) => {
                             bulk.extend(batch.into_iter().filter(|id| !skipped.contains(id)))
                         }
@@ -497,7 +499,7 @@ pub async fn warm_images(
 }
 
 pub async fn resolve_album_image(db: Database, album_id: Cuid) -> Result<String> {
-    let candidates = match db.album_image_target(&album_id)? {
+    let candidates = match db.get_album_image_target(&album_id)? {
         Some(AlbumImageTarget::Resolved(image_id)) => return Ok(image_id),
         Some(AlbumImageTarget::Candidates(candidates)) => candidates,
         None => return Err(anyhow!(NO_IMAGE)),
@@ -535,7 +537,7 @@ struct GenreCoverPlan {
 }
 
 fn plan_genre_cover(db: &Database, genre_id: &Cuid) -> Result<Option<GenreCoverPlan>> {
-    let mut image_ids = db.genre_cover_image_ids(genre_id)?;
+    let mut image_ids = db.get_genre_image_ids(genre_id)?;
     if image_ids.is_empty() {
         return Ok(None);
     }
@@ -593,7 +595,7 @@ fn compose_tinted_grid(blobs: &[Vec<u8>], size: u32, tint: [f32; 3]) -> Result<V
 }
 
 async fn build_genre_cover(db: &Database, genre_id: &Cuid, plan: GenreCoverPlan) -> Result<String> {
-    let blobs = db.image_blobs(&plan.image_ids)?;
+    let blobs = db.get_image_blobs(&plan.image_ids)?;
     if blobs.is_empty() {
         return Err(anyhow!(NO_IMAGE));
     }
@@ -609,7 +611,7 @@ async fn build_genre_cover(db: &Database, genre_id: &Cuid, plan: GenreCoverPlan)
 }
 
 pub async fn resolve_genre_cover(db: Database, genre_id: Cuid) -> Result<String> {
-    if let Some(image_id) = db.genre_image_id(&genre_id)? {
+    if let Some(image_id) = db.get_genre_image_id(&genre_id)? {
         return Ok(image_id);
     }
     match plan_genre_cover(&db, &genre_id)? {
@@ -625,7 +627,7 @@ fn genre_pass_lock() -> &'static tokio::sync::Mutex<()> {
 
 pub async fn warm_genre_covers(db: Database, cancel: Arc<AtomicBool>) -> usize {
     let _pass = genre_pass_lock().lock().await;
-    let genres = match db.genre_cover_ids() {
+    let genres = match db.get_genre_covers() {
         Ok(genres) => genres,
         Err(e) => {
             warn!("genre cover pass could not list genres: {e}");
@@ -676,7 +678,7 @@ mod tests {
         let cancel = Arc::new(AtomicBool::new(false));
         let warm = || futures::executor::block_on(warm_genre_covers(db.clone(), cancel.clone()));
         let add = |file: &str, shade: u8| {
-            db.upsert_tracks_batch(
+            db.upsert_tracks(
                 &[BatchTrack {
                     title: "Title",
                     artists: &[],
@@ -710,16 +712,19 @@ mod tests {
         let genre = Cuid::for_genre("Pop");
 
         assert_eq!(warm(), 0);
-        assert_eq!(db.genre_image_id(&genre).unwrap(), None);
+        assert_eq!(db.get_genre_image_id(&genre).unwrap(), None);
 
         add("/music/1.flac", 40);
         assert_eq!(warm(), 1);
-        let first = db.genre_image_id(&genre).unwrap().expect("cover stored");
+        let first = db
+            .get_genre_image_id(&genre)
+            .unwrap()
+            .expect("cover stored");
         assert_eq!(warm(), 0);
 
         add("/music/2.flac", 200);
         assert_eq!(warm(), 1);
-        assert_ne!(db.genre_image_id(&genre).unwrap().unwrap(), first);
+        assert_ne!(db.get_genre_image_id(&genre).unwrap().unwrap(), first);
 
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(format!("{}-wal", path.display()));

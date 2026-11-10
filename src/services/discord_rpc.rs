@@ -26,7 +26,7 @@ struct Artwork {
 }
 
 async fn artwork_for(db: &Database, id: &Cuid) -> Artwork {
-    let omm = db.song_omm_ids(id).unwrap_or_default();
+    let omm = db.get_song_omm_ids(id).unwrap_or_default();
     let ids: Vec<String> = omm.0.iter().chain(omm.1.iter()).cloned().collect();
     let urls = crate::data::omm::fetch_artwork_urls(ids).await;
     let large = omm.0.as_ref().and_then(|id| urls.get(id).cloned());
@@ -138,7 +138,7 @@ impl DiscordPresence {
                     }
                 } else if let (Some(id), Some(info)) = (&cached_song_id, cached_song_info.as_mut())
                 {
-                    let current = db.song_omm_ids(id).unwrap_or_default();
+                    let current = db.get_song_omm_ids(id).unwrap_or_default();
                     let changed = current != cached_omm;
                     let due = retries < ARTWORK_RETRIES && Instant::now() >= retry_at;
                     if changed || due {

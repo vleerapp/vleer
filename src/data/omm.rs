@@ -842,20 +842,20 @@ fn priority_work(db: &Database, skip: &Skip) -> Option<(Tier, Work)> {
     let playing: Vec<Cuid> = snapshot.playing.into_iter().collect();
 
     let song = |ids: &[Cuid]| {
-        db.songs_needing_metadata_among(ids)
+        db.get_pending_songs_in(ids)
             .unwrap_or_default()
             .into_iter()
             .find(|song| !skip.contains(&song.id))
     };
     let artist = |ids: &[Cuid]| {
-        db.lead_artists_needing_metadata(ids)
+        db.get_pending_song_artists(ids)
             .unwrap_or_default()
             .into_iter()
             .find(|(id, _)| !skip.contains(id))
     };
 
     let song_album = |ids: &[Cuid]| {
-        db.song_albums_needing_metadata(ids)
+        db.get_pending_song_albums(ids)
             .unwrap_or_default()
             .into_iter()
             .find(|album| !skip.contains(&album.id))
@@ -879,7 +879,7 @@ fn priority_work(db: &Database, skip: &Skip) -> Option<(Tier, Work)> {
     if let Some(found) = song(&snapshot.songs) {
         return Some((Tier::Visible, Work::Song(found, Vec::new())));
     }
-    db.albums_needing_metadata_among(&snapshot.albums)
+    db.get_pending_albums_in(&snapshot.albums)
         .unwrap_or_default()
         .into_iter()
         .find(|album| !skip.contains(&album.id))
@@ -891,7 +891,7 @@ async fn resolve_artist_metadata(pass: &Pass, artist_id: Cuid, name: String) -> 
     let cancel = pass.cancel.clone();
     let trimmed = name.trim().to_string();
     if trimmed.is_empty() || trimmed.chars().count() > MAX_NAME_CHARS {
-        write_with_retry(move || db.mark_artist_metadata_missing(&artist_id)).await?;
+        write_with_retry(move || db.mark_artist_unmatched(&artist_id)).await?;
         return Ok(Outcome::Unresolved);
     }
 
@@ -903,7 +903,7 @@ async fn resolve_artist_metadata(pass: &Pass, artist_id: Cuid, name: String) -> 
     .map_err(|_| anyhow!("artist lookup cancelled"))??;
 
     let Some(artist) = identified else {
-        write_with_retry(move || db.mark_artist_metadata_missing(&artist_id)).await?;
+        write_with_retry(move || db.mark_artist_unmatched(&artist_id)).await?;
         return Ok(Outcome::Unresolved);
     };
 
@@ -954,7 +954,7 @@ async fn resolve_song_metadata(
     let title_for_log = song.title.clone();
     let title = song.title.trim();
     if title.is_empty() || title.chars().count() > MAX_NAME_CHARS {
-        write_with_retry(move || db.mark_song_metadata_missing(&song_id)).await?;
+        write_with_retry(move || db.mark_song_unmatched(&song_id)).await?;
         return Ok(Outcome::Unresolved);
     }
 
@@ -974,7 +974,7 @@ async fn resolve_song_metadata(
     .map_err(|_| anyhow!("song lookup cancelled"))??;
 
     let Some(matched) = identified else {
-        write_with_retry(move || db.mark_song_metadata_missing(&song_id)).await?;
+        write_with_retry(move || db.mark_song_unmatched(&song_id)).await?;
         return Ok(Outcome::Unresolved);
     };
 
@@ -1049,7 +1049,7 @@ async fn resolve_album_metadata(
     let album_id = album.id.clone();
     let title = album.title.trim();
     if title.is_empty() || title.chars().count() > MAX_NAME_CHARS {
-        write_with_retry(move || db.mark_album_metadata_missing(&album_id)).await?;
+        write_with_retry(move || db.mark_album_unmatched(&album_id)).await?;
         return Ok(Outcome::Unresolved);
     }
 
@@ -1065,7 +1065,7 @@ async fn resolve_album_metadata(
     .map_err(|_| anyhow!("album lookup cancelled"))??;
 
     let Some(matched) = identified else {
-        write_with_retry(move || db.mark_album_metadata_missing(&album_id)).await?;
+        write_with_retry(move || db.mark_album_unmatched(&album_id)).await?;
         return Ok(Outcome::Unresolved);
     };
 
@@ -1240,7 +1240,7 @@ async fn next_bulk(pass: &Pass) -> Bulk {
     let limit = WARM_BATCH + pass.skip.lock().active() as i64;
     let file_busy = priority::file_busy();
 
-    match pass.db.artists_needing_metadata(limit) {
+    match pass.db.get_pending_artists(limit) {
         Ok(batch) => {
             let batch = unskipped(batch, pass, |(id, _)| id);
             if !batch.is_empty() {
@@ -1258,7 +1258,7 @@ async fn next_bulk(pass: &Pass) -> Bulk {
         }
     }
 
-    match pass.db.albums_needing_metadata(limit) {
+    match pass.db.get_pending_albums(limit) {
         Ok(batch) => {
             let batch = unskipped(batch, pass, |album| &album.id);
             if !batch.is_empty() {
@@ -1271,7 +1271,7 @@ async fn next_bulk(pass: &Pass) -> Bulk {
         }
     }
 
-    match pass.db.songs_needing_metadata(limit, file_busy) {
+    match pass.db.get_pending_songs(limit, file_busy) {
         Ok(batch) => {
             let batch = unskipped(batch, pass, |song| &song.id);
             if !batch.is_empty() {
@@ -1494,7 +1494,7 @@ mod tests {
                 omm_artist_id: None,
             })
             .collect();
-        db.upsert_tracks_batch(&tracks, &mut ScanCache::default())
+        db.upsert_tracks(&tracks, &mut ScanCache::default())
             .unwrap();
         let id = |path: &str| db.get_song_by_path(path).unwrap().unwrap().id;
         let (a, b, c) = (id("/a.flac"), id("/b.flac"), id("/c.flac"));
