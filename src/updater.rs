@@ -564,7 +564,30 @@ fn update_cache_dir() -> Result<PathBuf> {
     Ok(dir)
 }
 
+#[cfg(not(test))]
+fn is_dev_build() -> bool {
+    if std::env::var_os("CARGO_MANIFEST_DIR").is_some() {
+        return true;
+    }
+    let Ok(exe) = std::env::current_exe() else {
+        return false;
+    };
+    let parts: Vec<_> = exe.components().collect();
+    parts.windows(2).any(|w| {
+        w[0].as_os_str() == "target"
+            && (w[1].as_os_str() == "release" || w[1].as_os_str() == "debug")
+    })
+}
+
+#[cfg(test)]
+fn is_dev_build() -> bool {
+    false
+}
+
 pub fn is_managed_externally() -> bool {
+    if is_dev_build() {
+        return false;
+    }
     #[cfg(target_os = "linux")]
     {
         install_prefix().is_none()
