@@ -661,3 +661,23 @@ jobs:
           fi
           git commit -m "nightly: $VERSION"
           git push
+
+      - name: Checkout packaging templates
+        uses: actions/checkout@v5
+        with:
+          sparse-checkout: |
+            packaging
+            scripts
+          path: src
+
+      - name: Publish AUR package
+        shell: bash
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+          COMMIT_MESSAGE: "nightly: ${{ needs.version.outputs.full }}"
+        run: |
+          set -euo pipefail
+          export SHA_X86_64=$(jq -r .sha256 brewmeta/brewmeta-x86_64-unknown-linux-gnu/meta.json)
+          export SHA_AARCH64=$(jq -r .sha256 brewmeta/brewmeta-aarch64-unknown-linux-gnu/meta.json)
+          export PKGVER="${VERSION//-/_}"
+          src/scripts/publish-aur.sh vleer-nightly-bin

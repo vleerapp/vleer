@@ -451,3 +451,39 @@ jobs:
             gh release create "$TAG" --verify-tag --title "$TAG" --notes "$NOTES" "${flags[@]}"
           fi
           gh release upload "$TAG" release/* --clobber
+
+  aur:
+    needs: [version, build, release]
+    if: ${{ !contains(needs.version.outputs.full, '-') }}
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.full }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ env.TAG }}
+          sparse-checkout: |
+            packaging
+            scripts
+
+      - name: Download release files
+        uses: actions/download-artifact@v6
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+
+      - name: Publish AUR packages
+        shell: bash
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+          COMMIT_MESSAGE: "release: ${{ needs.version.outputs.full }}"
+        run: |
+          set -euo pipefail
+          export PKGVER="$VERSION"
+          export SHA_X86_64=$(sha256sum "release/Vleer-${VERSION}-x86_64.tar.gz" | cut -d' ' -f1)
+          export SHA_AARCH64=$(sha256sum "release/Vleer-${VERSION}-aarch64.tar.gz" | cut -d' ' -f1)
+          export SHA_SOURCE=$(curl --silent --show-error --fail --location \
+            "https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${TAG}.tar.gz" | sha256sum | cut -d' ' -f1)
+          scripts/publish-aur.sh vleer-bin
+          scripts/publish-aur.sh vleer
