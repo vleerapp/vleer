@@ -4,7 +4,7 @@ set -eu
 API="https://api.vleer.app/update/v1/check"
 PUBLIC_KEY="RWRh5nLZjKooTcjP0/fbHq6xIgU9c+QhLjaVPg6gqWv1MuNRV1RWgu28"
 
-CHANNEL="nightly"
+CHANNEL="stable"
 PREFIX="${HOME}/.local"
 VERSION=""
 
@@ -28,7 +28,7 @@ Install Vleer.
 Usage: install.sh [options]
 
 Options:
-  --channel <stable|nightly>  Release channel (default: nightly)
+  --channel <stable|nightly>  Release channel (default: stable)
   --version <version>         Install a specific version instead of the latest
   --prefix <dir>              Install prefix (default: ~/.local)
   --system                    Shorthand for --prefix /usr/local
