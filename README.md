@@ -64,6 +64,7 @@ Pass `--system` to install to `/usr/local` instead.
 #### Or using the AUR:
 
 ```sh
+yay -S vleer-nightly-bin
 yay -S vleer-git
 ```
 
