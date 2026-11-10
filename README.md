@@ -41,68 +41,7 @@ Not final, and nothing here is shipped yet.
 
 ## Installation
 
-<h3>
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./assets/readme/linux_dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="./assets/readme/linux_light.svg">
-    <img src="./assets/readme/linux_light.svg" width="24px" align="top" alt="">
-  </picture>
-  <span>Linux</span>
-</h3>
-
-Install using the shell script:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/vleerapp/vleer/main/scripts/install.sh | sh
-```
-
-Pass `--system` to install to `/usr/local` instead.
-
-#### Or using AppImage:
- [ARM64](https://api.vleer.app/download/v1?os=linux&arch=aarch64&format=appimage&nightly=true) or [x64](https://api.vleer.app/download/v1?os=linux&arch=x86_64&format=appimage&nightly=true). AppImages do not self-update.
-
-#### Or using the AUR:
-
-```sh
-yay -S vleer-nightly-bin
-yay -S vleer-git
-```
-
-#### Or using Homebrew:
-
-```sh
-brew install vleerapp/vleer/vleer # stable versions
-brew install vleerapp/vleer/vleer-nightly # nightly builds
-```
-
-<h3>
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./assets/readme/apple_dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="./assets/readme/apple_light.svg">
-    <img src="./assets/readme/apple_light.svg" width="24px" align="top" alt="">
-  </picture>
-  <span>macOS</span>
-</h3>
-
-Download the DMG for [Apple silicon](https://api.vleer.app/download/v1?os=macos&arch=aarch64&nightly=true) or [Intel](https://api.vleer.app/download/v1?os=macos&arch=x86_64&nightly=true).
-
-> [!IMPORTANT]
-> 
-> After copying Vleer to Applications, open Terminal and run:
->
-> ```sh
-> xattr -dr com.apple.quarantine /Applications/Vleer.app
-> ```
->
-> This is required because Vleer isn't signed yet. Otherwise, macOS will refuse to open the app.
-
-
-#### Or using Homebrew:
-
-```sh
-brew install --cask vleerapp/vleer/vleer # stable versions
-brew install --cask vleerapp/vleer/vleer-nightly # nightly builds
-```
+Stable is what you want for everyday use. Nightly builds are made automatically from the latest changes and may be less polished. Every version is listed with its release notes on the [stable](https://vleer.app/releases/stable) and [nightly](https://vleer.app/releases/nightly) release pages, and you can also grab builds from [vleer.app/download](https://vleer.app/download).
 
 <h3>
   <picture>
@@ -113,16 +52,91 @@ brew install --cask vleerapp/vleer/vleer-nightly # nightly builds
   <span>Windows</span>
 </h3>
 
-Download the installer for [ARM64](https://api.vleer.app/download/v1?os=windows&arch=aarch64&nightly=true) or [x64](https://api.vleer.app/download/v1?os=windows&arch=x86_64&nightly=true).
+|       | Stable                                                                | Nightly                                                                            |
+| ----- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| x64   | [Download](https://api.vleer.app/download/v1?os=windows&arch=x86_64)  | [Download](https://api.vleer.app/download/v1?os=windows&arch=x86_64&nightly=true)  |
+| ARM64 | [Download](https://api.vleer.app/download/v1?os=windows&arch=aarch64) | [Download](https://api.vleer.app/download/v1?os=windows&arch=aarch64&nightly=true) |
 
-> [!IMPORTANT]
->
+> [!NOTE]
 > If Microsoft Defender SmartScreen appears, select **More info**, then **Run anyway**.
 
-### Verifying downloads
+<h3>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/readme/apple_dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="./assets/readme/apple_light.svg">
+    <img src="./assets/readme/apple_light.svg" width="24px" align="top" alt="">
+  </picture>
+  <span>macOS</span>
+</h3>
 
-Optional. Verify with [minisign](https://jedisct1.github.io/minisign/):
+|               | Stable                                                              | Nightly                                                                          |
+| ------------- | ------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Apple silicon | [Download](https://api.vleer.app/download/v1?os=macos&arch=aarch64) | [Download](https://api.vleer.app/download/v1?os=macos&arch=aarch64&nightly=true) |
+| Intel         | [Download](https://api.vleer.app/download/v1?os=macos&arch=x86_64)  | [Download](https://api.vleer.app/download/v1?os=macos&arch=x86_64&nightly=true)  |
+
+> [!IMPORTANT]
+> After copying Vleer to Applications, open Terminal and run:
+>
+> ```sh
+> xattr -dr com.apple.quarantine /Applications/Vleer.app
+> ```
+>
+> This is required because Vleer isn't signed yet. Otherwise, macOS will refuse to open the app.
+
+**Homebrew**
 
 ```sh
-minisign -Vm <downloaded_file_name> -P RWRh5nLZjKooTcjP0/fbHq6xIgU9c+QhLjaVPg6gqWv1MuNRV1RWgu28
+brew install --cask vleerapp/vleer/vleer          # stable
+brew install --cask vleerapp/vleer/vleer-nightly  # nightly
 ```
+
+<h3>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/readme/linux_dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="./assets/readme/linux_light.svg">
+    <img src="./assets/readme/linux_light.svg" width="24px" align="top" alt="">
+  </picture>
+  <span>Linux</span>
+</h3>
+
+**Install script**
+
+```sh
+curl -fsS https://vleer.app/install.sh | sh                          # stable
+curl -fsS https://vleer.app/install.sh | sh -s -- --channel nightly  # nightly
+```
+
+It installs to `~/.local`. Pass `--system` to install to `/usr/local` instead.
+
+**AUR**
+
+|                   | Stable             | Nightly                    |
+| ----------------- | ------------------ | -------------------------- |
+| Prebuilt binary   | `yay -S vleer-bin` | `yay -S vleer-nightly-bin` |
+| Built from source | `yay -S vleer`     | `yay -S vleer-git`         |
+
+**Homebrew**
+
+```sh
+brew install vleerapp/vleer/vleer          # stable
+brew install vleerapp/vleer/vleer-nightly  # nightly
+```
+
+**AppImage**
+
+|       | Stable                                                              | Nightly                                                                          |
+| ----- | ------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| x64   | [Download](https://api.vleer.app/download/v1?os=linux&arch=x86_64)  | [Download](https://api.vleer.app/download/v1?os=linux&arch=x86_64&nightly=true)  |
+| ARM64 | [Download](https://api.vleer.app/download/v1?os=linux&arch=aarch64) | [Download](https://api.vleer.app/download/v1?os=linux&arch=aarch64&nightly=true) |
+
+AppImages do not self-update.
+
+## Verifying downloads
+
+Optional. Every release is signed with [minisign](https://jedisct1.github.io/minisign/). Download the `.minisig` file that sits next to your download on the GitHub release, keep it in the same folder, and run:
+
+```sh
+minisign -Vm <file> -P RWRh5nLZjKooTcjP0/fbHq6xIgU9c+QhLjaVPg6gqWv1MuNRV1RWgu28
+```
+
+The public key is also available at [vleer.app/minisign.pub](https://vleer.app/minisign.pub). The Linux install script runs this check for you when minisign is installed.
