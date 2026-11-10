@@ -11,7 +11,6 @@ use windows::Storage::Streams::RandomAccessStreamReference;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::WinRT::ISystemMediaTransportControlsInterop;
 use windows::core::HSTRING;
-use windows_future::AsyncStatus;
 
 pub struct WindowsController {
     playback_tx: mpsc::UnboundedSender<PlaybackCommand>,
@@ -383,18 +382,6 @@ fn write_artwork_to_cache(id: &str, data: &[u8]) -> Result<String> {
 
 fn thumbnail_from_path(path: &str) -> Result<RandomAccessStreamReference> {
     let op = StorageFile::GetFileFromPathAsync(&HSTRING::from(path))?;
-    let start = std::time::Instant::now();
-    loop {
-        match op.Status()? {
-            AsyncStatus::Started => {
-                if start.elapsed() > std::time::Duration::from_secs(2) {
-                    return Err(anyhow!("timeout waiting for artwork file to load"));
-                }
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            _ => break,
-        }
-    }
-    let file = op.GetResults()?;
+    let file = op.join()?;
     Ok(RandomAccessStreamReference::CreateFromFile(&file)?)
 }
