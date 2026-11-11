@@ -7,6 +7,16 @@ use std::time::Duration;
 
 const RAMP_SECS: f32 = 0.012;
 const SEEK_BLEND_SECS: f32 = 0.006;
+const LIMIT_KNEE: f32 = 0.9;
+
+fn soft_limit(x: f32) -> f32 {
+    let a = x.abs();
+    if a <= LIMIT_KNEE {
+        return x;
+    }
+    let room = 1.0 - LIMIT_KNEE;
+    (LIMIT_KNEE + room * ((a - LIMIT_KNEE) / room).tanh()).copysign(x)
+}
 
 pub struct GainControl {
     volume: AtomicU32,
@@ -108,7 +118,7 @@ impl<I: Source<Item = f32>> Iterator for GainSource<I> {
             self.channel = 0;
             self.blend_left = self.blend_left.saturating_sub(1);
         }
-        Some(out)
+        Some(soft_limit(out))
     }
 }
 
