@@ -3,7 +3,7 @@
 <img width="128px" src="assets/images/icon-512.png" />
 <h1><b>Vleer</b></h1>
 
-A free, open-source music app powered by the OpenMusic API Spec the open standard of music streaming. Connect all the music from different sources in one unified app.
+A fast, native, open-source music player that keeps your music library clean.
 
 <a href="https://docs.vleer.app">Docs</a> · <a href="https://discord.gg/invites/PEX37vvWyU">Discord</a>
 
