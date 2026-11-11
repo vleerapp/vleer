@@ -417,12 +417,17 @@ impl Database {
         Ok(())
     }
 
-    pub fn reset_omm_ids(&self) -> Result<()> {
+    pub fn reset_omm_ids(&self, keep_matched: bool) -> Result<()> {
         let mut conn = self.image_write_conn.lock();
         let tx = conn.transaction()?;
+        let condition = if keep_matched {
+            "omm_id = ''"
+        } else {
+            "omm_id IS NOT NULL"
+        };
         for table in ["songs", "albums", "artists"] {
             tx.execute(
-                &format!("UPDATE {table} SET omm_id = NULL WHERE omm_id IS NOT NULL"),
+                &format!("UPDATE {table} SET omm_id = NULL WHERE {condition}"),
                 [],
             )?;
         }
@@ -564,6 +569,35 @@ mod tests {
     }
 
     #[test]
+    fn reset_keeps_matched_ids_when_requested() {
+        let (db, path) = named_db("keep_matched_omm_id");
+        db.upsert_tracks(&[track("/music/1.flac", false)], &mut ScanCache::default())
+            .unwrap();
+        let set = |value: &str| {
+            db.image_write_conn
+                .lock()
+                .execute("UPDATE songs SET omm_id = ?1", params![value])
+                .unwrap();
+        };
+        let read = || -> Option<String> {
+            db.image_write_conn
+                .lock()
+                .query_row("SELECT omm_id FROM songs", [], |r| r.get(0))
+                .unwrap()
+        };
+        set("1234567890");
+        db.reset_omm_ids(true).unwrap();
+        assert_eq!(read().as_deref(), Some("1234567890"));
+        set("");
+        db.reset_omm_ids(true).unwrap();
+        assert_eq!(read(), None);
+        set("1234567890");
+        db.reset_omm_ids(false).unwrap();
+        assert_eq!(read(), None);
+        cleanup(&path);
+    }
+
+    #[test]
     fn stale_omm_ids_are_detected_and_reset() {
         let (db, path) = named_db("stale_omm_ids");
         db.upsert_tracks(&[track("/music/1.flac", false)], &mut ScanCache::default())
@@ -584,7 +618,7 @@ mod tests {
         assert!(check(Some("0a1b2c3d4e5f6g7h")));
         assert!(check(Some("omm:song:1234567890")));
 
-        db.reset_omm_ids().unwrap();
+        db.reset_omm_ids(false).unwrap();
         assert!(!db.has_stale_omm_ids().unwrap());
         let nulls: i64 = db
             .image_write_conn

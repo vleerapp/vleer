@@ -1369,13 +1369,12 @@ pub async fn warm_metadata(
     if cancel.load(Ordering::Acquire) {
         return;
     }
-    let stale = reset
-        || db.has_stale_omm_ids().unwrap_or_else(|e| {
-            warn!("could not check omm id format: {e}");
-            false
-        });
-    if stale {
-        match db.reset_omm_ids() {
+    let stale_format = db.has_stale_omm_ids().unwrap_or_else(|e| {
+        warn!("could not check omm id format: {e}");
+        false
+    });
+    if reset || stale_format {
+        match db.reset_omm_ids(!stale_format) {
             Ok(()) => debug!("omm ids reset, refetching all metadata"),
             Err(e) => warn!("could not reset omm ids: {e}"),
         }
