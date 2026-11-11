@@ -5,7 +5,7 @@ use crate::data::config::{Config, EqualizerSettings};
 use crate::data::db::Database;
 use crate::data::models::{Cuid, EventType};
 use crate::media::controller::{MediaController, PlaybackState};
-use crate::media::visualizer::{F32Converter, VisualizerSource, VisualizerState};
+use crate::media::visualizer::{VisualizerSource, VisualizerState};
 use crate::ui::components::context_menu::{BackgroundUiEvent, BackgroundUiNotifier, QueueChanged};
 use anyhow::{Context, Result};
 use gpui::{App, AsyncApp, BackgroundExecutor, BorrowAppContext, Global};
@@ -16,6 +16,7 @@ use rodio::source::Source;
 use rodio::{DeviceSinkBuilder, MixerDeviceSink, Player as Sink};
 use std::fs::File;
 use std::io::BufReader;
+use std::num::NonZero;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -40,6 +41,12 @@ pub enum PlaybackCommand {
     Next,
     Previous,
     Seek(f32),
+}
+
+struct ExistingMixer {
+    mixer: Mixer,
+    sample_rate: NonZero<u32>,
+    channels: NonZero<u16>,
 }
 
 struct PreparedPlayback {
@@ -109,7 +116,7 @@ impl Playback {
         eq_settings: EqualizerSettings,
         equalizer: Arc<Mutex<Equalizer>>,
         visualizer_state: VisualizerState,
-        existing_mixer: Option<Mixer>,
+        existing_mixer: Option<ExistingMixer>,
     ) -> Result<PreparedPlayback> {
         let file =
             File::open(&path).with_context(|| format!("Failed to open audio file: {:?}", path))?;
@@ -122,13 +129,17 @@ impl Playback {
             .build()
             .context("Failed to decode audio file")?;
 
-        let source = F32Converter { input: decoder };
+        let source = decoder;
         let sample_rate = source.sample_rate();
         let channels = source.channels();
 
         debug!("Audio file: {:?}Hz, {:?} channels", sample_rate, channels);
 
-        let (new_device, mixer, lost) = if let Some(m) = existing_mixer {
+        let reusable = existing_mixer
+            .filter(|m| m.sample_rate == sample_rate && m.channels == channels)
+            .map(|m| m.mixer);
+
+        let (new_device, mixer, lost) = if let Some(m) = reusable {
             (None, m, None)
         } else {
             let lost = Arc::new(AtomicBool::new(false));
@@ -193,7 +204,11 @@ impl Playback {
         let existing_mixer = if self.device_lost() {
             None
         } else {
-            self.mixer.clone()
+            self._device.as_ref().map(|d| ExistingMixer {
+                mixer: d.mixer().clone(),
+                sample_rate: d.config().sample_rate(),
+                channels: d.config().channel_count(),
+            })
         };
 
         cx.spawn(async move |cx| {
@@ -255,7 +270,11 @@ impl Playback {
                     }
 
                     if let Some(device) = prepared._device {
-                        playback._device = Some(device);
+                        if let Some(old) = playback._device.replace(device) {
+                            cx.background_executor()
+                                .spawn(async move { drop(old) })
+                                .detach();
+                        }
                         playback.mixer = Some(prepared.mixer);
                         if let Some(lost) = prepared.device_lost {
                             playback.device_lost = lost;

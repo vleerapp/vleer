@@ -5,28 +5,6 @@ use spectrum_analyzer::{FrequencyLimit, samples_fft_to_spectrum};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-pub trait ToF32 {
-    fn to_f32_sample(&self) -> f32;
-}
-
-impl ToF32 for f32 {
-    fn to_f32_sample(&self) -> f32 {
-        *self
-    }
-}
-
-impl ToF32 for i16 {
-    fn to_f32_sample(&self) -> f32 {
-        *self as f32 / 32768.0
-    }
-}
-
-impl ToF32 for u16 {
-    fn to_f32_sample(&self) -> f32 {
-        (*self as f32 - 32768.0) / 32768.0
-    }
-}
-
 pub const TAP_SIZE: usize = 16384;
 
 pub struct SampleTap {
@@ -280,47 +258,5 @@ where
         self.input.try_seek(pos)?;
         self.buffer.clear();
         Ok(())
-    }
-}
-
-pub struct F32Converter<I> {
-    pub input: I,
-}
-
-impl<I> Iterator for F32Converter<I>
-where
-    I: Iterator,
-    I::Item: ToF32,
-{
-    type Item = f32;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.input.next().map(|s| s.to_f32_sample())
-    }
-}
-
-impl<I> Source for F32Converter<I>
-where
-    I: Source,
-    I::Item: ToF32,
-{
-    fn current_span_len(&self) -> Option<usize> {
-        self.input.current_span_len()
-    }
-
-    fn channels(&self) -> std::num::NonZero<u16> {
-        self.input.channels()
-    }
-
-    fn sample_rate(&self) -> std::num::NonZero<u32> {
-        self.input.sample_rate()
-    }
-
-    fn total_duration(&self) -> Option<std::time::Duration> {
-        self.input.total_duration()
-    }
-
-    fn try_seek(&mut self, pos: std::time::Duration) -> Result<(), rodio::source::SeekError> {
-        self.input.try_seek(pos)
     }
 }
