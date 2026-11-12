@@ -1247,7 +1247,23 @@ impl Render for SongTable {
                                         get_row(cx, idx, sort_method).map(|entry| entry.id.clone())
                                     })
                                     .collect();
-                                priority::set_visible_songs(visible);
+                                let forward = priority::scroll_forward(range.start);
+                                let mut row_id = |idx: usize| {
+                                    get_row(cx, idx, sort_method).map(|entry| entry.id.clone())
+                                };
+                                let before: Vec<Cuid> = (0..range.start)
+                                    .rev()
+                                    .take(64)
+                                    .filter_map(&mut row_id)
+                                    .collect();
+                                let after: Vec<Cuid> = (range.end..row_count)
+                                    .take(64)
+                                    .filter_map(&mut row_id)
+                                    .collect();
+                                priority::set_visible_songs(
+                                    visible,
+                                    priority::outward(before, after, forward),
+                                );
 
                                 let items = range
                                     .map(|display_idx| {

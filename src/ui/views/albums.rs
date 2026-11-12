@@ -270,7 +270,14 @@ impl AlbumsView {
         let ids = (start..end)
             .filter_map(|index| self.get_album_at(index).map(|album| album.id))
             .collect();
-        priority::set_visible_albums(ids);
+        let forward = priority::scroll_forward(start);
+        let album_id = |index: usize| self.get_album_at(index).map(|album| album.id);
+        let before = (0..start).rev().take(64).filter_map(album_id).collect();
+        let after = (end..self.total_count)
+            .take(64)
+            .filter_map(album_id)
+            .collect();
+        priority::set_visible_albums(ids, priority::outward(before, after, forward));
     }
 
     fn get_album_at(&self, index: usize) -> Option<AlbumListItem> {
