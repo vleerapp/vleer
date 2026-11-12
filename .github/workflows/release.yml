@@ -26,7 +26,7 @@ env:
 
 jobs:
   version:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       full: ${{ steps.version.outputs.full }}
       pkg: ${{ steps.version.outputs.pkg }}
@@ -88,7 +88,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             os_name: Linux
             arch: x86_64
@@ -413,7 +413,7 @@ jobs:
 
   release:
     needs: [version, build]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
@@ -426,7 +426,7 @@ jobs:
           step-summary: "true"
 
       - name: Download release files
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           pattern: release-*
           path: release
@@ -455,7 +455,7 @@ jobs:
   aur:
     needs: [version, build, release]
     if: ${{ !contains(needs.version.outputs.full, '-') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       VERSION: ${{ needs.version.outputs.full }}
     steps:
@@ -467,7 +467,7 @@ jobs:
             scripts
 
       - name: Download release files
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           pattern: release-*
           path: release

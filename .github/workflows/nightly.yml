@@ -15,7 +15,7 @@ env:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       changed: ${{ steps.check.outputs.changed }}
     steps:
@@ -76,7 +76,7 @@ jobs:
   version:
     needs: check
     if: needs.check.outputs.changed == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       base: ${{ steps.version.outputs.base }}
       full: ${{ steps.version.outputs.full }}
@@ -137,20 +137,41 @@ jobs:
 
   changelog:
     needs: version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       markdown: ${{ steps.changelog.outputs.markdown }}
     steps:
-      - name: Find previous nightly commit
+      - name: Find changelog base commit
         id: base
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          LAST=$(gh api "repos/${{ github.repository }}/actions/workflows/nightly.yml/runs?status=success&per_page=1" \
+          BASE=$(gh api "repos/${{ github.repository }}/actions/workflows/nightly.yml/runs?status=success&per_page=1" \
             --jq '.workflow_runs[0].head_sha // ""')
-          echo "sha=$LAST" >> $GITHUB_OUTPUT
+
+          RELEASE=""
+          if TAG=$(gh api "repos/${{ github.repository }}/releases/latest" --jq .tag_name 2>/dev/null) && [ -n "$TAG" ]; then
+            RELEASE=$(gh api "repos/${{ github.repository }}/commits/${TAG}" --jq .sha 2>/dev/null || true)
+          fi
+
+          if [ -n "$RELEASE" ]; then
+            if [ -z "$BASE" ]; then
+              BASE="$RELEASE"
+              echo "no previous nightly, using release $TAG"
+            else
+              STATUS=$(gh api "repos/${{ github.repository }}/compare/${RELEASE}...${BASE}" --jq .status 2>/dev/null || true)
+              case "$STATUS" in
+                behind|diverged)
+                  BASE="$RELEASE"
+                  echo "release $TAG is newer than the last nightly, using it as base"
+                  ;;
+              esac
+            fi
+          fi
+
+          echo "sha=$BASE" >> $GITHUB_OUTPUT
 
       - name: Changelog
         id: changelog
@@ -167,7 +188,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             os_name: Linux
             arch: x86_64
@@ -564,7 +585,7 @@ jobs:
 
   publish:
     needs: [version, build, changelog]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       VERSION: ${{ needs.version.outputs.full }}
       S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
@@ -627,7 +648,7 @@ jobs:
             "${S3_ENDPOINT}/nightly/changelog.json"
 
       - name: Download checksum metadata
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           pattern: brewmeta-*
           path: brewmeta
