@@ -7,6 +7,7 @@ use std::time::Duration;
 
 const RAMP_SECS: f32 = 0.012;
 const SEEK_BLEND_SECS: f32 = 0.006;
+const NORM_RAMP_SECS: f32 = 0.5;
 const LIMIT_KNEE: f32 = 0.9;
 
 fn soft_limit(x: f32) -> f32 {
@@ -20,6 +21,7 @@ fn soft_limit(x: f32) -> f32 {
 
 pub struct GainControl {
     volume: AtomicU32,
+    norm: AtomicU32,
     muted: AtomicBool,
     silent: AtomicBool,
 }
@@ -28,6 +30,7 @@ impl GainControl {
     pub fn new(volume: f32, muted: bool) -> Arc<Self> {
         Arc::new(Self {
             volume: AtomicU32::new(volume.to_bits()),
+            norm: AtomicU32::new(1.0f32.to_bits()),
             muted: AtomicBool::new(muted),
             silent: AtomicBool::new(muted),
         })
@@ -35,6 +38,14 @@ impl GainControl {
 
     pub fn set_volume(&self, volume: f32) {
         self.volume.store(volume.to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn set_norm(&self, norm: f32) {
+        self.norm.store(norm.to_bits(), Ordering::Relaxed);
+    }
+
+    fn norm(&self) -> f32 {
+        f32::from_bits(self.norm.load(Ordering::Relaxed))
     }
 
     pub fn set_muted(&self, muted: bool) {
@@ -62,6 +73,8 @@ pub struct GainSource<I> {
     control: Arc<GainControl>,
     current: f32,
     step: f32,
+    norm_current: f32,
+    norm_step: f32,
     channels: usize,
     channel: usize,
     held: Vec<f32>,
@@ -73,11 +86,14 @@ impl<I: Source<Item = f32>> GainSource<I> {
     pub fn new(input: I, control: Arc<GainControl>) -> Self {
         let rate = input.sample_rate().get() as f32;
         let channels = input.channels().get() as usize;
+        let norm = control.norm();
         Self {
             input,
             control,
             current: 0.0,
             step: 1.0 / (rate * RAMP_SECS).max(1.0),
+            norm_current: norm,
+            norm_step: 1.0 / (rate * NORM_RAMP_SECS).max(1.0),
             channels,
             channel: 0,
             held: vec![0.0; channels],
@@ -99,13 +115,20 @@ impl<I: Source<Item = f32>> Iterator for GainSource<I> {
             } else {
                 self.current += self.step * delta.signum();
             }
+            let norm_target = self.control.norm();
+            let norm_delta = norm_target - self.norm_current;
+            if norm_delta.abs() <= self.norm_step {
+                self.norm_current = norm_target;
+            } else {
+                self.norm_current += self.norm_step * norm_delta.signum();
+            }
             self.control
                 .silent
                 .store(self.current == 0.0 && target == 0.0, Ordering::Relaxed);
         }
 
         let sample = self.input.next()?;
-        let mut out = sample * self.current;
+        let mut out = sample * self.current * self.norm_current;
 
         if self.blend_left > 0 {
             let t = 1.0 - self.blend_left as f32 / self.blend_total as f32;

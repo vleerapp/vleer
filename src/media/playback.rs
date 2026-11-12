@@ -156,10 +156,10 @@ impl Playback {
         *equalizer.lock() = Equalizer::from_settings(sample_rate_u32, &eq_settings);
 
         let eq_source = EqualizerSource::new(source, equalizer.clone());
-        let gain = Self::compute_normalization_gain_for(lufs);
-        let normalized = VisualizerSource::new(eq_source.amplify(gain), visualizer_state);
+        let visualized = VisualizerSource::new(eq_source, visualizer_state);
         let gain_control = GainControl::new(Self::compute_log_volume(volume), true);
-        let smoothed = GainSource::new(normalized, gain_control.clone());
+        gain_control.set_norm(Self::compute_normalization_gain_for(lufs));
+        let smoothed = GainSource::new(visualized, gain_control.clone());
 
         sink.append(smoothed);
         sink.pause();
@@ -173,6 +173,28 @@ impl Playback {
             lufs,
             device_lost: lost,
         })
+    }
+
+    pub fn refresh_normalization(&mut self, cx: &App) {
+        if self.current_lufs.is_some() {
+            return;
+        }
+        let (Some(gain), Some(id)) = (
+            self.gain.clone(),
+            cx.global::<Queue>().get_current_song_id(),
+        ) else {
+            return;
+        };
+        let lufs = cx
+            .global::<Database>()
+            .get_song(&id)
+            .ok()
+            .flatten()
+            .and_then(|song| song.lufs);
+        if let Some(lufs) = lufs {
+            self.current_lufs = Some(lufs);
+            gain.set_norm(Self::compute_normalization_gain_for(Some(lufs)));
+        }
     }
 
     fn load_song_by_id(&mut self, cx: &mut App, song_id: Cuid) {

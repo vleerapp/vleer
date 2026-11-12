@@ -44,6 +44,7 @@ pub enum BackgroundUiEvent {
     HomeDataChanged,
     LibraryDataChanged,
     CoversChanged,
+    LoudnessChanged,
 }
 
 #[derive(Clone)]

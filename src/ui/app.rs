@@ -481,6 +481,13 @@ pub async fn run() -> Result<()> {
                         BackgroundUiEvent::CoversChanged => {
                             cx.set_global(CoversChanged);
                         }
+                        BackgroundUiEvent::LoudnessChanged => {
+                            if cx.has_global::<crate::media::playback::Playback>() {
+                                cx.update_global::<crate::media::playback::Playback, _>(
+                                    |playback, cx| playback.refresh_normalization(cx),
+                                );
+                            }
+                        }
                     });
                 }
             })
