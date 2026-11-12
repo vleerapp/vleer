@@ -9,12 +9,15 @@ use lofty::ogg::tag::VorbisComments;
 use lofty::picture::PictureType;
 use lofty::probe::Probe;
 use lofty::tag::{Accessor, ItemKey, Tag, TagType};
+use rodio::Decoder;
+use rodio::decoder::DecoderBuilder;
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::{self, BufReader, Cursor, Read, Seek, SeekFrom};
 use std::path::Path;
 use std::rc::Rc;
 use std::time::Duration;
+use symphonia_adapter_libopus::OpusDecoder;
 
 use crate::data::fingerprint::audio_fingerprint;
 use crate::data::models::Cuid;
@@ -492,6 +495,73 @@ pub(crate) fn convert_to_jpeg(img: DynamicImage) -> Result<Vec<u8>> {
     Ok(buffer.into_inner())
 }
 
+pub struct Offset<R> {
+    inner: R,
+    start: u64,
+    len: u64,
+}
+
+impl<R: Seek> Offset<R> {
+    fn new(mut inner: R, start: u64, len: u64) -> std::io::Result<Self> {
+        inner.seek(SeekFrom::Start(start))?;
+        Ok(Self { inner, start, len })
+    }
+}
+
+impl<R: Read> Read for Offset<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.inner.read(buf)
+    }
+}
+
+impl<R: Seek> Seek for Offset<R> {
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        let absolute = match pos {
+            SeekFrom::Start(offset) => SeekFrom::Start(self.start.saturating_add(offset)),
+            SeekFrom::End(offset) => {
+                let end = (self.start + self.len) as i64;
+                SeekFrom::Start(end.saturating_add(offset).max(self.start as i64) as u64)
+            }
+            current @ SeekFrom::Current(_) => current,
+        };
+        Ok(self.inner.seek(absolute)?.saturating_sub(self.start))
+    }
+}
+
+fn id3v2_len(file: &mut File, file_len: u64) -> std::io::Result<u64> {
+    let mut start = 0u64;
+    loop {
+        let mut header = [0u8; 10];
+        file.seek(SeekFrom::Start(start))?;
+        if file.read_exact(&mut header).is_err() || &header[..3] != b"ID3" {
+            return Ok(start);
+        }
+        let size = header[6..10]
+            .iter()
+            .fold(0u64, |acc, byte| (acc << 7) | u64::from(byte & 0x7f));
+        let footer = if header[5] & 0x10 != 0 { 10 } else { 0 };
+        let next = start + 10 + size + footer;
+        if next >= file_len {
+            return Ok(start);
+        }
+        start = next;
+    }
+}
+
+pub fn open_decoder(path: &str) -> Result<Decoder<Offset<BufReader<File>>>> {
+    let mut file = File::open(path).with_context(|| format!("open {path}"))?;
+    let file_len = file.metadata()?.len();
+    let start = id3v2_len(&mut file, file_len)?;
+    let len = file_len - start;
+    let reader = Offset::new(BufReader::new(file), start, len)?;
+    DecoderBuilder::new()
+        .with_decoder::<OpusDecoder>()
+        .with_data(reader)
+        .with_byte_len(len)
+        .build()
+        .context("decode")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -556,5 +626,18 @@ mod tests {
         );
         assert_eq!(normalize_upc("0000000000000"), None);
         assert_eq!(normalize_upc("12"), None);
+    }
+
+    #[test]
+    fn offset_reads_and_seeks_relative_to_the_start() {
+        let mut view = Offset::new(Cursor::new(b"0123456789".to_vec()), 4, 6).unwrap();
+        let mut buf = [0u8; 2];
+        view.read_exact(&mut buf).unwrap();
+        assert_eq!(&buf, b"45");
+        assert_eq!(view.seek(SeekFrom::Start(3)).unwrap(), 3);
+        view.read_exact(&mut buf).unwrap();
+        assert_eq!(&buf, b"78");
+        assert_eq!(view.seek(SeekFrom::End(0)).unwrap(), 6);
+        assert_eq!(view.seek(SeekFrom::Current(-1)).unwrap(), 5);
     }
 }

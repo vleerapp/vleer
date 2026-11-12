@@ -10,17 +10,13 @@ use crate::ui::components::context_menu::{BackgroundUiEvent, BackgroundUiNotifie
 use anyhow::{Context, Result};
 use gpui::{App, AsyncApp, BackgroundExecutor, BorrowAppContext, Global};
 use parking_lot::Mutex;
-use rodio::decoder::DecoderBuilder;
 use rodio::mixer::Mixer;
 use rodio::source::Source;
 use rodio::{DeviceSinkBuilder, MixerDeviceSink, Player as Sink};
-use std::fs::File;
-use std::io::BufReader;
 use std::num::NonZero;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use symphonia_adapter_libopus::OpusDecoder;
 
 use tokio::sync::mpsc;
 use tracing::{debug, error};
@@ -118,17 +114,8 @@ impl Playback {
         visualizer_state: VisualizerState,
         existing_mixer: Option<ExistingMixer>,
     ) -> Result<PreparedPlayback> {
-        let file =
-            File::open(&path).with_context(|| format!("Failed to open audio file: {:?}", path))?;
-        let file_len = file.metadata()?.len();
-
-        let decoder = DecoderBuilder::new()
-            .with_decoder::<OpusDecoder>()
-            .with_data(BufReader::new(file))
-            .with_byte_len(file_len)
-            .build()
-            .context("Failed to decode audio file")?;
-
+        let decoder = crate::data::metadata::open_decoder(&path)
+            .with_context(|| format!("Failed to decode audio file: {:?}", path))?;
         let source = decoder;
         let sample_rate = source.sample_rate();
         let channels = source.channels();
