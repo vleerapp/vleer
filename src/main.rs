@@ -50,7 +50,7 @@ fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
             EnvFilter::new(
-                "info,lofty=error,symphonia=error,pulseaudio=warn,pulseaudio::client::reactor=off",
+                "info,lofty=error,symphonia=error,pulseaudio=warn,pulseaudio::client::reactor=off,symphonia_core::formats::probe=off",
             )
         }))
         .with(tracing_subscriber::fmt::layer())
