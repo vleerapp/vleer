@@ -10,15 +10,15 @@ license = "AGPL-3.0"
 categories = ["multimedia::audio"]
 
 [dependencies]
-gpui-ce = { git = "https://github.com/gpui-ce/gpui-ce", rev = "bc577476a0eb55173ef985585cfb487f75ab1cab", features = ["font-kit", "x11", "wayland", "hot-patching"] }
-gpui_ce_platform = { git = "https://github.com/gpui-ce/gpui-ce", rev = "bc577476a0eb55173ef985585cfb487f75ab1cab", features = ["font-kit", "x11", "wayland"] }
+gpui-ce = { git = "https://github.com/gpui-ce/gpui-ce", rev = "029ae65c5208a59566c4b841cc0f5c187bef515b", features = ["font-kit", "x11", "wayland", "hot-patching"] }
+gpui_ce_platform = { git = "https://github.com/gpui-ce/gpui-ce", rev = "029ae65c5208a59566c4b841cc0f5c187bef515b", features = ["font-kit", "x11", "wayland"] }
 anyhow = "1.0.104"
 dirs = "7.0.0"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tokio = { version = "1.54.1", features = ["sync"] }
 futures = "0.3.34"
-rusqlite = { version = "0.41.1", features = ["bundled", "chrono"] }
+rusqlite = { version = "0.42.0", features = ["bundled", "chrono"] }
 parking_lot = "0.13.0"
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.2.1"
@@ -29,7 +29,7 @@ rodio = { git = "https://github.com/vleerapp/rodio", rev = "8e5961ca2cc88cbff5f1
 symphonia-adapter-libopus = "0.3.0"
 cuid2 = "0.1.6"
 url = "2.5.8"
-rust-embed = { version = "8.13.0", features = ["include-exclude"] }
+rust-embed = { version = "8.14.0", features = ["include-exclude"] }
 lofty = "0.25.5"
 rayon = "1.12.0"
 walkdir = "2.5.0"
@@ -51,6 +51,7 @@ raw-window-handle = "0.6.2"
 interprocess = "2.4.8"
 libc = "0.2.191"
 md5 = "0.8.1"
+ebur128 = "0.1.11"
 
 [dev-dependencies]
 serde_json = "1.0.154"
@@ -101,6 +102,9 @@ windows = { version = "0.62.2", features = [
   "Win32_System_Com",
   "Win32_System_WinRT",
 ] }
+
+[target."cfg(unix)".dependencies]
+libc = "0.2"
 
 [profile.dev]
 debug = "line-tables-only"
