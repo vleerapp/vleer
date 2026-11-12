@@ -3,179 +3,20 @@ use image::imageops::FilterType;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
-use std::collections::{HashSet, VecDeque};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use tokio::sync::Semaphore;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::data::db::{AlbumImageTarget, Database};
+pub use crate::data::jobs::priority;
+use crate::data::jobs::{Bulk, Claims, Job, JobContext, Stop};
 use crate::data::metadata::{convert_to_jpeg, encode_cover, image_id_for, read_tag_images};
 use crate::data::models::Cuid;
+use parking_lot::Mutex as PlMutex;
 use priority::{Progress, Tier};
-
-pub mod priority {
-    use parking_lot::Mutex;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-    use std::time::{Duration, Instant};
-    use tokio::sync::Notify;
-
-    use crate::data::models::Cuid;
-
-    const MAX_VISIBLE: usize = 64;
-    const PROGRESS_INTERVAL: Duration = Duration::from_millis(750);
-
-    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-    pub enum Tier {
-        Playing,
-        Visible,
-        Bulk,
-    }
-
-    #[derive(Clone, Default)]
-    pub struct Snapshot {
-        pub playing: Option<Cuid>,
-        pub songs: Vec<Cuid>,
-        pub albums: Vec<Cuid>,
-    }
-
-    pub struct Signal {
-        epoch: AtomicU64,
-        notify: Notify,
-    }
-
-    impl Signal {
-        pub(crate) const fn new() -> Self {
-            Self {
-                epoch: AtomicU64::new(0),
-                notify: Notify::const_new(),
-            }
-        }
-
-        pub fn fire(&self) {
-            self.epoch.fetch_add(1, Ordering::AcqRel);
-            self.notify.notify_waiters();
-        }
-
-        pub fn seen(&self) -> u64 {
-            self.epoch.load(Ordering::Acquire)
-        }
-
-        pub async fn changed(&self, seen: u64) {
-            loop {
-                let notified = self.notify.notified();
-                let mut notified = std::pin::pin!(notified);
-                notified.as_mut().enable();
-                if self.seen() != seen {
-                    return;
-                }
-                notified.await;
-                if self.seen() != seen {
-                    return;
-                }
-            }
-        }
-    }
-
-    pub static WAKE: Signal = Signal::new();
-    pub static FILE_PROGRESS: Signal = Signal::new();
-    static FILE_BUSY: AtomicBool = AtomicBool::new(false);
-
-    static STATE: Mutex<Snapshot> = Mutex::new(Snapshot {
-        playing: None,
-        songs: Vec::new(),
-        albums: Vec::new(),
-    });
-
-    pub fn wake() {
-        WAKE.fire();
-    }
-
-    pub fn set_file_busy(busy: bool) {
-        FILE_BUSY.store(busy, Ordering::Release);
-        FILE_PROGRESS.fire();
-    }
-
-    pub fn file_busy() -> bool {
-        FILE_BUSY.load(Ordering::Acquire)
-    }
-
-    pub fn snapshot() -> Snapshot {
-        STATE.lock().clone()
-    }
-
-    pub fn set_playing(id: Option<Cuid>) {
-        let mut state = STATE.lock();
-        if state.playing != id {
-            state.playing = id;
-            drop(state);
-            wake();
-        }
-    }
-
-    pub fn set_visible_songs(mut ids: Vec<Cuid>) {
-        ids.truncate(MAX_VISIBLE);
-        let mut state = STATE.lock();
-        let changed = !state.albums.is_empty() || state.songs != ids;
-        state.albums.clear();
-        if changed {
-            state.songs = ids;
-            drop(state);
-            wake();
-        }
-    }
-
-    pub fn set_visible_albums(mut ids: Vec<Cuid>) {
-        ids.truncate(MAX_VISIBLE);
-        let mut state = STATE.lock();
-        let changed = !state.songs.is_empty() || state.albums != ids;
-        state.songs.clear();
-        if changed {
-            state.albums = ids;
-            drop(state);
-            wake();
-        }
-    }
-
-    pub fn clear_visible() {
-        let mut state = STATE.lock();
-        state.songs.clear();
-        state.albums.clear();
-    }
-
-    pub struct Progress {
-        notify: Arc<dyn Fn() + Send + Sync>,
-        last: Instant,
-        dirty: bool,
-    }
-
-    impl Progress {
-        pub fn new(notify: Arc<dyn Fn() + Send + Sync>) -> Self {
-            Self {
-                notify,
-                last: Instant::now(),
-                dirty: false,
-            }
-        }
-
-        pub fn changed(&mut self, tier: Tier) {
-            self.dirty = true;
-            if tier == Tier::Playing || self.last.elapsed() >= PROGRESS_INTERVAL {
-                self.flush();
-            }
-        }
-
-        pub fn flush(&mut self) {
-            if self.dirty {
-                self.dirty = false;
-                self.last = Instant::now();
-                (self.notify)();
-            }
-        }
-    }
-}
+use std::sync::atomic::AtomicUsize;
 
 const IMAGE_IO_CONCURRENCY: usize = 4;
 
@@ -202,6 +43,7 @@ fn image_pool() -> &'static std::sync::mpsc::Sender<IoJob> {
             std::thread::Builder::new()
                 .name(format!("vleer-image-io-{i}"))
                 .spawn(move || {
+                    crate::data::jobs::lower_thread_priority();
                     loop {
                         let job = {
                             let guard = match rx.lock() {
@@ -394,18 +236,18 @@ async fn store_song_artist_image(db: Database, song_id: Cuid, raw: Vec<u8>) -> R
         .await
 }
 
-fn first_unskipped(ids: Vec<Cuid>, skipped: &HashSet<Cuid>) -> Option<Cuid> {
-    ids.into_iter().find(|id| !skipped.contains(id))
+fn first_unblocked(ids: Vec<Cuid>, claims: &Claims) -> Option<Cuid> {
+    ids.into_iter().find(|id| !claims.blocked(id))
 }
 
-fn priority_image_job(db: &Database, skipped: &HashSet<Cuid>) -> Option<(Tier, Cuid)> {
+fn priority_image_job(db: &Database, claims: &Claims) -> Option<(Tier, Cuid)> {
     let snapshot = priority::snapshot();
 
     if let Some(playing) = snapshot.playing {
         let needing = db
             .get_songs_without_image_in(&[playing])
             .unwrap_or_default();
-        if let Some(id) = first_unskipped(needing, skipped) {
+        if let Some(id) = first_unblocked(needing, claims) {
             return Some((Tier::Playing, id));
         }
     }
@@ -413,89 +255,120 @@ fn priority_image_job(db: &Database, skipped: &HashSet<Cuid>) -> Option<(Tier, C
     let needing = db
         .get_songs_without_image_in(&snapshot.songs)
         .unwrap_or_default();
-    if let Some(id) = first_unskipped(needing, skipped) {
+    if let Some(id) = first_unblocked(needing, claims) {
         return Some((Tier::Visible, id));
     }
 
     let needing = db
         .get_album_songs_without_image(&snapshot.albums)
         .unwrap_or_default();
-    first_unskipped(needing, skipped).map(|id| (Tier::Visible, id))
+    if let Some(id) = first_unblocked(needing, claims) {
+        return Some((Tier::Visible, id));
+    }
+
+    let mut needing = db
+        .get_songs_without_image_in(&snapshot.near_songs)
+        .unwrap_or_default();
+    needing.sort_by_key(|id| snapshot.near_songs.iter().position(|near| near == id));
+    if let Some(id) = first_unblocked(needing, claims) {
+        return Some((Tier::Near, id));
+    }
+
+    let needing = db
+        .get_album_songs_without_image(&snapshot.near_albums)
+        .unwrap_or_default();
+    first_unblocked(needing, claims).map(|id| (Tier::Near, id))
 }
 
-pub async fn warm_images(
-    db: Database,
-    cancel: Arc<AtomicBool>,
-    mut progress: Progress,
-    on_idle: impl Fn(usize),
-) {
-    let mut bulk_resolved = 0usize;
-    let mut skipped: HashSet<Cuid> = HashSet::new();
-    let mut bulk: VecDeque<Cuid> = VecDeque::new();
+pub struct ImageJob {
+    ctx: JobContext,
+    claims: Claims,
+    resolved: AtomicUsize,
+    progress: PlMutex<Progress>,
+}
 
-    'work: loop {
-        if cancel.load(Ordering::Acquire) {
-            break;
+impl ImageJob {
+    pub fn new(ctx: &JobContext) -> Self {
+        Self {
+            ctx: ctx.clone(),
+            claims: Claims::default(),
+            resolved: AtomicUsize::new(0),
+            progress: PlMutex::new(ctx.progress()),
         }
+    }
+}
 
-        let job = match priority_image_job(&db, &skipped) {
-            Some(job) => Some(job),
-            None => {
-                if bulk.is_empty() {
-                    match db.get_songs_without_image(WARM_BATCH + skipped.len() as i64) {
-                        Ok(batch) => {
-                            bulk.extend(batch.into_iter().filter(|id| !skipped.contains(id)))
-                        }
-                        Err(e) => {
-                            warn!("warm pass could not list songs: {e}");
-                            break;
-                        }
-                    }
+impl Job for ImageJob {
+    type Work = Cuid;
+
+    fn name(&self) -> &'static str {
+        "image"
+    }
+
+    fn prepare(&self) {
+        priority::set_file_busy(true);
+    }
+
+    fn priority(&self) -> Option<(Tier, Cuid)> {
+        priority_image_job(&self.ctx.db, &self.claims)
+    }
+
+    async fn bulk(&self) -> Bulk<Cuid> {
+        match self
+            .ctx
+            .db
+            .get_songs_without_image(WARM_BATCH + self.claims.failed() as i64)
+        {
+            Ok(batch) => {
+                let batch: Vec<Cuid> = batch
+                    .into_iter()
+                    .filter(|id| !self.claims.blocked(id))
+                    .collect();
+                if batch.is_empty() {
+                    Bulk::Done
+                } else {
+                    Bulk::Works(batch)
                 }
-                bulk.pop_front().map(|id| (Tier::Bulk, id))
             }
+            Err(e) => {
+                warn!("warm pass could not list songs: {e}");
+                Bulk::Done
+            }
+        }
+    }
+
+    async fn run(&self, tier: Tier, song_id: Cuid, _stop: &Stop) {
+        let Some(_claim) = self.claims.claim(&song_id) else {
+            return;
         };
-
-        let Some((tier, song_id)) = job else {
-            progress.flush();
-            if bulk_resolved > 0 {
-                on_idle(bulk_resolved);
-                bulk_resolved = 0;
-            }
-            priority::set_file_busy(false);
-            loop {
-                let seen = priority::WAKE.seen();
-                if cancel.load(Ordering::Acquire) {
-                    break 'work;
-                }
-                if priority_image_job(&db, &skipped).is_some() {
-                    break;
-                }
-                priority::WAKE.changed(seen).await;
-            }
-            priority::set_file_busy(true);
-            continue;
-        };
-
         let (cover, artist_stored) =
-            resolve_song_and_artist_image(db.clone(), song_id.clone()).await;
+            resolve_song_and_artist_image(self.ctx.db.clone(), song_id.clone()).await;
         if cover.is_ok() || artist_stored {
             if tier == Tier::Bulk {
-                bulk_resolved += 1;
+                self.resolved.fetch_add(1, Ordering::AcqRel);
             }
-            progress.changed(tier);
+            self.progress.lock().changed(tier);
             priority::FILE_PROGRESS.fire();
         }
         if cover.is_err() {
-            skipped.insert(song_id);
+            self.claims.fail(song_id);
         }
     }
 
-    progress.flush();
-    if bulk_resolved > 0 {
-        on_idle(bulk_resolved);
+    fn report(&self) {
+        self.progress.lock().flush();
+        let resolved = self.resolved.swap(0, Ordering::AcqRel);
+        if resolved > 0 {
+            info!("Resolved {resolved} cover/artist image(s)");
+            crate::data::jobs::spawn_genre_covers(&self.ctx);
+            self.ctx.library_changed();
+        }
+        priority::set_file_busy(false);
     }
-    priority::set_file_busy(false);
+
+    fn resume(&self) {
+        priority::set_file_busy(true);
+    }
 }
 
 pub async fn resolve_album_image(db: Database, album_id: Cuid) -> Result<String> {

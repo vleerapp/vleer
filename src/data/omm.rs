@@ -1,12 +1,11 @@
 use anyhow::{Result, anyhow};
-use futures::StreamExt;
 use parking_lot::Mutex;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use ureq::Agent;
 use ureq::http::Response;
 
@@ -17,6 +16,7 @@ use crate::data::images::priority::{self, Progress, Tier};
 use crate::data::images::{
     prepare_image, resolve_album_image, resolve_song_file_image, write_with_retry,
 };
+use crate::data::jobs::{Bulk, Job, JobContext, Stop};
 use crate::data::metadata::{normalize_isrc, normalize_upc};
 use crate::data::models::Cuid;
 
@@ -89,7 +89,7 @@ impl Resource {
 }
 
 #[derive(Clone, Deserialize)]
-struct SongResource {
+pub(crate) struct SongResource {
     id: String,
     attributes: SongAttributes,
     #[serde(default)]
@@ -98,7 +98,7 @@ struct SongResource {
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SongAttributes {
+pub(crate) struct SongAttributes {
     name: String,
     album_name: Option<String>,
     artwork_url: Option<String>,
@@ -111,26 +111,26 @@ struct SongAttributes {
 }
 
 #[derive(Clone, Deserialize)]
-struct SongRelationships {
+pub(crate) struct SongRelationships {
     #[serde(default)]
     albums: Option<List<AlbumResource>>,
 }
 
 #[derive(Clone, Deserialize)]
-struct List<T> {
+pub(crate) struct List<T> {
     #[serde(default = "Vec::new")]
     data: Vec<T>,
 }
 
 #[derive(Clone, Deserialize)]
-struct AlbumResource {
+pub(crate) struct AlbumResource {
     id: String,
     attributes: AlbumAttributes,
 }
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct AlbumAttributes {
+pub(crate) struct AlbumAttributes {
     name: String,
     artwork_url: Option<String>,
     upc: Option<String>,
@@ -745,7 +745,8 @@ pub struct MetadataCounts {
 }
 
 #[derive(Clone)]
-struct Pass {
+pub(crate) struct Pass {
+    ctx: JobContext,
     db: Database,
     cancel: Arc<AtomicBool>,
     skip: Arc<Mutex<Skip>>,
@@ -753,9 +754,24 @@ struct Pass {
     rounds: Arc<AtomicUsize>,
     counts: Arc<Mutex<MetadataCounts>>,
     progress: Arc<Mutex<Progress>>,
+    reset: bool,
 }
 
 impl Pass {
+    pub fn new(ctx: &JobContext, reset: bool) -> Self {
+        Self {
+            ctx: ctx.clone(),
+            db: ctx.db.clone(),
+            cancel: ctx.cancel.clone(),
+            skip: Arc::new(Mutex::new(Skip::default())),
+            failures: Arc::new(AtomicUsize::new(0)),
+            rounds: Arc::new(AtomicUsize::new(0)),
+            counts: Arc::new(Mutex::new(MetadataCounts::default())),
+            progress: Arc::new(Mutex::new(ctx.progress())),
+            reset,
+        }
+    }
+
     fn cancelled(&self) -> bool {
         self.cancel.load(Ordering::Acquire)
     }
@@ -764,7 +780,7 @@ impl Pass {
         self.failures.load(Ordering::Acquire) >= MAX_CONSECUTIVE_FAILURES
     }
 
-    async fn recover(&self) -> bool {
+    async fn reconnect(&self) -> bool {
         if self.cancelled() {
             return false;
         }
@@ -798,17 +814,73 @@ impl Pass {
             futures::future::Either::Right((slept, _)) => slept.is_ok_and(|result| result.is_ok()),
         }
     }
+}
 
-    async fn idle(&self) {
-        let seen = priority::WAKE.seen();
-        let retry = self.skip.lock().retry_in();
-        match retry {
-            Some(wait) => {
-                let cancel = self.cancel.clone();
-                let sleep = blocking(move || sleep_unless_cancelled(wait, &cancel));
-                futures::future::select(Box::pin(priority::WAKE.changed(seen)), sleep).await;
+impl Job for Pass {
+    type Work = Work;
+
+    fn name(&self) -> &'static str {
+        "metadata"
+    }
+
+    fn bulk_concurrency(&self) -> usize {
+        BULK_CONCURRENCY
+    }
+
+    fn exclusive(&self) -> Option<&'static tokio::sync::Mutex<()>> {
+        Some(pass_lock())
+    }
+
+    fn prepare(&self) {
+        let stale_format = self.db.has_stale_omm_ids().unwrap_or_else(|e| {
+            warn!("could not check omm id format: {e}");
+            false
+        });
+        if self.reset || stale_format {
+            match self.db.reset_omm_ids(!stale_format) {
+                Ok(()) => debug!("omm ids reset, refetching all metadata"),
+                Err(e) => warn!("could not reset omm ids: {e}"),
             }
-            None => priority::WAKE.changed(seen).await,
+        }
+    }
+
+    fn priority(&self) -> Option<(Tier, Work)> {
+        priority_work(&self.db, &self.skip.lock())
+    }
+
+    async fn bulk(&self) -> Bulk<Work> {
+        next_bulk(self).await
+    }
+
+    async fn run(&self, tier: Tier, work: Work, _stop: &Stop) {
+        if self.cancelled() || (tier == Tier::Bulk && self.offline()) {
+            return;
+        }
+        let _ = run_work(self, tier, work).await;
+    }
+
+    async fn recover(&self) -> bool {
+        self.reconnect().await
+    }
+
+    fn retry_in(&self) -> Option<Duration> {
+        self.skip.lock().retry_in()
+    }
+
+    fn report(&self) {
+        self.progress.lock().flush();
+        let report = {
+            let mut counts = self.counts.lock();
+            (counts.bulk > 0).then(|| std::mem::take(&mut *counts))
+        };
+        if let Some(counts) = report {
+            info!(
+                "Resolved metadata for {} artist(s), {} song(s) and {} album(s)",
+                counts.artists, counts.songs, counts.albums
+            );
+            self.db.rebuild_search_index();
+            crate::data::jobs::spawn_genre_covers(&self.ctx);
+            self.ctx.library_changed();
         }
     }
 }
@@ -821,7 +893,7 @@ enum Outcome {
     Skipped,
 }
 
-enum Work {
+pub(crate) enum Work {
     Song(SongLookup, Vec<SongResource>),
     Artist(Cuid, String),
     Album(AlbumLookup, Vec<AlbumResource>),
@@ -870,20 +942,34 @@ fn priority_work(db: &Database, skip: &Skip) -> Option<(Tier, Work)> {
     if let Some(found) = song(&playing) {
         return Some((Tier::Playing, Work::Song(found, Vec::new())));
     }
-    if let Some((id, name)) = artist(&snapshot.songs) {
-        return Some((Tier::Visible, Work::Artist(id, name)));
+    for (tier, ids) in [
+        (Tier::Visible, &snapshot.songs),
+        (Tier::Near, &snapshot.near_songs),
+    ] {
+        if let Some((id, name)) = artist(ids) {
+            return Some((tier, Work::Artist(id, name)));
+        }
+        if let Some(found) = song_album(ids) {
+            return Some((tier, Work::Album(found, Vec::new())));
+        }
+        if let Some(found) = song(ids) {
+            return Some((tier, Work::Song(found, Vec::new())));
+        }
     }
-    if let Some(found) = song_album(&snapshot.songs) {
-        return Some((Tier::Visible, Work::Album(found, Vec::new())));
+    for (tier, ids) in [
+        (Tier::Visible, &snapshot.albums),
+        (Tier::Near, &snapshot.near_albums),
+    ] {
+        let found = db
+            .get_pending_albums_in(ids)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|album| !skip.contains(&album.id));
+        if let Some(found) = found {
+            return Some((tier, Work::Album(found, Vec::new())));
+        }
     }
-    if let Some(found) = song(&snapshot.songs) {
-        return Some((Tier::Visible, Work::Song(found, Vec::new())));
-    }
-    db.get_pending_albums_in(&snapshot.albums)
-        .unwrap_or_default()
-        .into_iter()
-        .find(|album| !skip.contains(&album.id))
-        .map(|found| (Tier::Visible, Work::Album(found, Vec::new())))
+    None
 }
 
 async fn resolve_artist_metadata(pass: &Pass, artist_id: Cuid, name: String) -> Result<Outcome> {
@@ -1230,13 +1316,7 @@ fn unskipped<T>(batch: Vec<T>, pass: &Pass, id: impl Fn(&T) -> &Cuid) -> Vec<T> 
         .collect()
 }
 
-enum Bulk {
-    Works(Vec<Work>),
-    WaitFile,
-    Done,
-}
-
-async fn next_bulk(pass: &Pass) -> Bulk {
+async fn next_bulk(pass: &Pass) -> Bulk<Work> {
     let limit = WARM_BATCH + pass.skip.lock().active() as i64;
     let file_busy = priority::file_busy();
 
@@ -1288,113 +1368,6 @@ async fn next_bulk(pass: &Pass) -> Bulk {
         Bulk::WaitFile
     } else {
         Bulk::Done
-    }
-}
-
-async fn bulk_item(pass: &Pass, work: Work) {
-    if pass.cancelled() || pass.offline() {
-        return;
-    }
-    let _ = run_work(pass, Tier::Bulk, work).await;
-}
-
-async fn bulk_loop(pass: &Pass, on_idle: &(impl Fn(&MetadataCounts) + Send + Sync)) {
-    let mut gave_up = false;
-
-    loop {
-        if pass.cancelled() {
-            return;
-        }
-        if gave_up {
-            pass.idle().await;
-            continue;
-        }
-
-        match next_bulk(pass).await {
-            Bulk::Works(works) => {
-                futures::stream::iter(works)
-                    .for_each_concurrent(BULK_CONCURRENCY, |work| bulk_item(pass, work))
-                    .await;
-                if !pass.recover().await {
-                    gave_up = !pass.cancelled();
-                }
-            }
-            Bulk::WaitFile => {
-                let seen = priority::FILE_PROGRESS.seen();
-                futures::future::select(
-                    Box::pin(priority::FILE_PROGRESS.changed(seen)),
-                    Box::pin(priority::WAKE.changed(priority::WAKE.seen())),
-                )
-                .await;
-            }
-            Bulk::Done => {
-                pass.progress.lock().flush();
-                let report = {
-                    let mut counts = pass.counts.lock();
-                    (counts.bulk > 0).then(|| std::mem::take(&mut *counts))
-                };
-                if let Some(counts) = report {
-                    on_idle(&counts);
-                }
-                pass.idle().await;
-            }
-        }
-    }
-}
-
-async fn priority_loop(pass: &Pass) {
-    loop {
-        if pass.cancelled() {
-            return;
-        }
-
-        let next = priority_work(&pass.db, &pass.skip.lock());
-        match next {
-            Some((tier, work)) => {
-                let _ = run_work(pass, tier, work).await;
-            }
-            None => pass.idle().await,
-        }
-    }
-}
-
-pub async fn warm_metadata(
-    db: Database,
-    cancel: Arc<AtomicBool>,
-    progress: Progress,
-    reset: bool,
-    on_idle: impl Fn(&MetadataCounts) + Send + Sync,
-) {
-    let _pass = pass_lock().lock().await;
-    if cancel.load(Ordering::Acquire) {
-        return;
-    }
-    let stale_format = db.has_stale_omm_ids().unwrap_or_else(|e| {
-        warn!("could not check omm id format: {e}");
-        false
-    });
-    if reset || stale_format {
-        match db.reset_omm_ids(!stale_format) {
-            Ok(()) => debug!("omm ids reset, refetching all metadata"),
-            Err(e) => warn!("could not reset omm ids: {e}"),
-        }
-    }
-    let pass = Pass {
-        db,
-        cancel,
-        skip: Arc::new(Mutex::new(Skip::default())),
-        failures: Arc::new(AtomicUsize::new(0)),
-        rounds: Arc::new(AtomicUsize::new(0)),
-        counts: Arc::new(Mutex::new(MetadataCounts::default())),
-        progress: Arc::new(Mutex::new(progress)),
-    };
-
-    futures::future::join(priority_loop(&pass), bulk_loop(&pass, &on_idle)).await;
-
-    pass.progress.lock().flush();
-    let counts = std::mem::take(&mut *pass.counts.lock());
-    if counts.bulk > 0 {
-        on_idle(&counts);
     }
 }
 
@@ -1499,7 +1472,7 @@ mod tests {
         let (a, b, c) = (id("/a.flac"), id("/b.flac"), id("/c.flac"));
 
         priority::set_playing(Some(c.clone()));
-        priority::set_visible_songs(vec![b.clone(), a.clone()]);
+        priority::set_visible_songs(vec![b.clone(), a.clone()], Vec::new());
 
         let mut skip = Skip::default();
         let (tier, work) = priority_work(&db, &skip).unwrap();

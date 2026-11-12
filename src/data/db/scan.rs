@@ -262,7 +262,11 @@ impl Database {
                         date = excluded.date,
                         duration = excluded.duration,
                         track_number = excluded.track_number,
-                        lufs = excluded.lufs,
+                        lufs = CASE
+                            WHEN excluded.lufs IS NOT NULL THEN excluded.lufs
+                            WHEN songs.audio_hash IS excluded.audio_hash THEN songs.lufs
+                            ELSE NULL
+                        END,
                         image_checked = CASE WHEN ?11 THEN 0 ELSE songs.image_checked END",
                 )?
                 .execute(

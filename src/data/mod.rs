@@ -3,6 +3,8 @@ pub mod db;
 pub mod fingerprint;
 pub mod ids;
 pub mod images;
+pub mod jobs;
+pub mod loudness;
 pub mod lyrics;
 pub mod metadata;
 pub mod models;

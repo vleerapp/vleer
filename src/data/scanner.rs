@@ -17,7 +17,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::data::config::Config;
 use crate::data::db::{BatchTrack, Database, ScanCache};
-use crate::data::images::priority::{self, Progress};
+use crate::data::jobs::Jobs;
 use crate::data::metadata::{AudioMetadata, read_track};
 use crate::data::telemetry::Telemetry;
 use crate::ui::components::context_menu::{BackgroundUiEvent, BackgroundUiNotifier};
@@ -86,7 +86,7 @@ pub struct Scanner {
     pending_changed_paths: Arc<AsyncMutex<HashSet<PathBuf>>>,
     incremental_worker_running: Arc<AtomicBool>,
 
-    warm_cancel: Arc<std::sync::Mutex<Arc<AtomicBool>>>,
+    jobs: Jobs,
     executor: BackgroundExecutor,
     background_ui: Option<BackgroundUiNotifier>,
 }
@@ -108,7 +108,7 @@ impl Scanner {
             force_pending: Arc::new(AtomicBool::new(false)),
             pending_changed_paths: Arc::new(AsyncMutex::new(HashSet::new())),
             incremental_worker_running: Arc::new(AtomicBool::new(false)),
-            warm_cancel: Arc::new(std::sync::Mutex::new(Arc::new(AtomicBool::new(false)))),
+            jobs: Jobs::new(executor.clone(), background_ui.clone()),
             executor,
             background_ui,
         }
@@ -752,7 +752,7 @@ impl Scanner {
             });
         }
 
-        self.cancel_warm_passes();
+        self.jobs.cancel();
 
         self.cancel_flag.store(false, Ordering::Release);
         let options = ScanOptions {
@@ -766,112 +766,13 @@ impl Scanner {
             self.clear_scan_progress();
         }
         if result.is_ok() && !self.is_cancelled() {
-            self.spawn_image_warm_pass(db);
-            self.spawn_metadata_warm_pass(db, false);
-            spawn_genre_cover_pass(
-                &self.executor,
-                db.clone(),
-                self.warm_flag().clone(),
-                self.background_ui.clone(),
-            );
+            self.jobs.start(db, false);
         }
         result
     }
 
-    fn covers_notifier(&self) -> Progress {
-        let notify: Arc<dyn Fn() + Send + Sync> = match self.background_ui.clone() {
-            Some(ui) => Arc::new(move || ui.notify(BackgroundUiEvent::CoversChanged)),
-            None => Arc::new(|| {}),
-        };
-        Progress::new(notify)
-    }
-
-    fn warm_flag(&self) -> std::sync::MutexGuard<'_, Arc<AtomicBool>> {
-        self.warm_cancel
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    fn cancel_warm_passes(&self) {
-        self.warm_flag().store(true, Ordering::Release);
-        priority::wake();
-    }
-
-    fn fresh_warm_flag(&self) -> Arc<AtomicBool> {
-        let flag = Arc::new(AtomicBool::new(false));
-        *self.warm_flag() = flag.clone();
-        flag
-    }
-
-    fn spawn_image_warm_pass(&self, db: &Database) {
-        let db = db.clone();
-        let cancel = self.fresh_warm_flag();
-        let background_ui = self.background_ui.clone();
-        let progress = self.covers_notifier();
-        let executor = self.executor.clone();
-
-        priority::set_file_busy(true);
-        self.executor
-            .spawn(async move {
-                debug!("image warm pass started");
-                let genre_db = db.clone();
-                let genre_cancel = cancel.clone();
-                crate::data::images::warm_images(db, cancel, progress, move |resolved| {
-                    info!("Resolved {resolved} cover/artist image(s)");
-                    spawn_genre_cover_pass(
-                        &executor,
-                        genre_db.clone(),
-                        genre_cancel.clone(),
-                        background_ui.clone(),
-                    );
-                    if let Some(ui) = &background_ui {
-                        ui.notify(BackgroundUiEvent::LibraryDataChanged);
-                        ui.notify(BackgroundUiEvent::HomeDataChanged);
-                    }
-                })
-                .await;
-            })
-            .detach();
-    }
-
     pub fn refetch_metadata(&self, db: &Database) {
-        self.cancel_warm_passes();
-        self.spawn_image_warm_pass(db);
-        self.spawn_metadata_warm_pass(db, true);
-    }
-
-    fn spawn_metadata_warm_pass(&self, db: &Database, reset: bool) {
-        let db = db.clone();
-        let cancel = self.warm_flag().clone();
-        let background_ui = self.background_ui.clone();
-        let progress = self.covers_notifier();
-        let executor = self.executor.clone();
-
-        self.executor
-            .spawn(async move {
-                debug!("metadata warm pass started");
-                let index_db = db.clone();
-                let genre_cancel = cancel.clone();
-                crate::data::omm::warm_metadata(db, cancel, progress, reset, move |counts| {
-                    info!(
-                        "Resolved metadata for {} artist(s), {} song(s) and {} album(s)",
-                        counts.artists, counts.songs, counts.albums
-                    );
-                    index_db.rebuild_search_index();
-                    spawn_genre_cover_pass(
-                        &executor,
-                        index_db.clone(),
-                        genre_cancel.clone(),
-                        background_ui.clone(),
-                    );
-                    if let Some(ui) = &background_ui {
-                        ui.notify(BackgroundUiEvent::LibraryDataChanged);
-                        ui.notify(BackgroundUiEvent::HomeDataChanged);
-                    }
-                })
-                .await;
-            })
-            .detach();
+        self.jobs.start(db, true);
     }
 
     pub async fn scan(&self, db: &Database) -> Result<ScanStats> {
@@ -1110,25 +1011,6 @@ impl Scanner {
         let added = db.upsert_tracks(&batch, cache)?;
         Ok((added, tracks.len() - added))
     }
-}
-
-fn spawn_genre_cover_pass(
-    executor: &BackgroundExecutor,
-    db: Database,
-    cancel: Arc<AtomicBool>,
-    background_ui: Option<BackgroundUiNotifier>,
-) {
-    executor
-        .spawn(async move {
-            let built = crate::data::images::warm_genre_covers(db, cancel).await;
-            if built > 0 {
-                info!("Composed {built} genre cover(s)");
-                if let Some(ui) = &background_ui {
-                    ui.notify(BackgroundUiEvent::CoversChanged);
-                }
-            }
-        })
-        .detach();
 }
 
 fn walk_dir_fast(root: &Path, cancel_flag: &AtomicBool) -> Vec<PathBuf> {

@@ -101,6 +101,70 @@ impl Database {
         Ok(rows)
     }
 
+    pub fn get_songs_missing_lufs(&self, limit: i64) -> Result<Vec<(Cuid, String)>> {
+        let conn = self.image_write_conn.lock();
+        let rows = conn
+            .prepare_cached("SELECT id, file_path FROM songs WHERE lufs IS NULL LIMIT ?1")?
+            .query_map(params![limit], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    pub fn get_songs_missing_lufs_in(&self, ids: &[Cuid]) -> Result<Vec<(Cuid, String)>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.image_write_conn.lock();
+        let sql = format!(
+            "SELECT id, file_path FROM songs WHERE lufs IS NULL AND id IN ({})",
+            placeholders(ids.len())
+        );
+        let rows = conn
+            .prepare(&sql)?
+            .query_map(params_from_iter(ids), |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    pub fn get_album_songs_missing_lufs(
+        &self,
+        album_ids: &[Cuid],
+    ) -> Result<Vec<(Cuid, Cuid, String)>> {
+        if album_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.image_write_conn.lock();
+        let sql = format!(
+            "SELECT album_id, id, file_path FROM songs
+             WHERE lufs IS NULL AND album_id IN ({})
+             ORDER BY track_number, id",
+            placeholders(album_ids.len())
+        );
+        let rows = conn
+            .prepare(&sql)?
+            .query_map(params_from_iter(album_ids), |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(rows)
+    }
+
+    pub fn store_songs_lufs(&self, values: &[(Cuid, f32)]) -> Result<()> {
+        if values.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.image_write_conn.lock();
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare_cached("UPDATE songs SET lufs = ?2 WHERE id = ?1")?;
+            for (id, lufs) in values {
+                stmt.execute(params![id, lufs])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn get_pending_albums(&self, limit: i64) -> Result<Vec<AlbumLookup>> {
         let conn = self.image_write_conn.lock();
         let rows = conn
