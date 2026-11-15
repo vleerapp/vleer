@@ -14,6 +14,7 @@ pub struct StatusEntry {
     pub text: String,
     pub ratio: Option<f32>,
     pub color: StatusColor,
+    pub opens_settings: bool,
 }
 
 #[derive(Default)]
@@ -23,12 +24,28 @@ pub struct StatusReporter {
 
 impl StatusReporter {
     pub fn set(&self, key: &str, text: impl Into<String>, ratio: Option<f32>, color: StatusColor) {
+        self.insert(key, text, ratio, color, false);
+    }
+
+    pub fn set_settings_link(&self, key: &str, text: impl Into<String>, color: StatusColor) {
+        self.insert(key, text, None, color, true);
+    }
+
+    fn insert(
+        &self,
+        key: &str,
+        text: impl Into<String>,
+        ratio: Option<f32>,
+        color: StatusColor,
+        opens_settings: bool,
+    ) {
         self.entries.write().insert(
             key.to_string(),
             StatusEntry {
                 text: text.into(),
                 ratio,
                 color,
+                opens_settings,
             },
         );
     }

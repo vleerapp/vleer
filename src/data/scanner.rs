@@ -19,6 +19,7 @@ use crate::data::config::Config;
 use crate::data::db::{BatchTrack, Database, ScanCache};
 use crate::data::jobs::Jobs;
 use crate::data::metadata::{AudioMetadata, read_track};
+use crate::data::models::Cuid;
 use crate::data::telemetry::Telemetry;
 use crate::ui::components::context_menu::{BackgroundUiEvent, BackgroundUiNotifier};
 use crate::ui::layout::navbar;
@@ -170,6 +171,24 @@ impl Scanner {
 
     fn request_cancel(&self) {
         self.cancel_flag.store(true, Ordering::Release);
+    }
+
+    pub async fn relocate_path_exclusive(
+        &self,
+        db: &Database,
+        old: &str,
+        new: &str,
+    ) -> Result<usize> {
+        self.request_cancel();
+        let _scan_guard = self.scan_lock.lock().await;
+        let moved = db.rebase_songs_dir(old, new)?;
+        rebase_missing(old, new);
+        Ok(moved)
+    }
+
+    pub async fn delete_songs_exclusive(&self, db: &Database, ids: &[Cuid]) -> Result<usize> {
+        let _scan_guard = self.scan_lock.lock().await;
+        db.delete_songs(ids)
     }
 
     pub async fn delete_path_exclusive(&self, db: &Database, dir: &str) -> Result<usize> {
@@ -457,6 +476,11 @@ impl Scanner {
         }
 
         let stale_paths = self.find_missing_songs(db, scanned_files)?;
+        if set_missing(stale_paths.clone())
+            && let Some(ui) = &self.background_ui
+        {
+            ui.notify(BackgroundUiEvent::LibraryDataChanged);
+        }
 
         if !stale_paths.is_empty() {
             warn!(
@@ -701,19 +725,6 @@ impl Scanner {
         });
         self.clear_scan_progress();
 
-        if missing > 0 {
-            navbar::status().set(
-                "scanner.missing",
-                format!(
-                    "{missing} song{} missing from disk",
-                    if missing == 1 { "" } else { "s" }
-                ),
-                None,
-                crate::status::StatusColor::Warning,
-            );
-        } else {
-            navbar::status().clear("scanner.missing");
-        }
         if (added > 0 || updated > 0 || merged > 0)
             && let Some(ui) = &self.background_ui
         {
@@ -783,6 +794,28 @@ impl Scanner {
         self.run_scan(db, ScanOptions { force: true }).await
     }
 
+    fn reconcile_missing(&self, db: &Database, touched: &[PathBuf]) -> bool {
+        let mut back = HashSet::new();
+        let mut gone = Vec::new();
+        for path in touched {
+            let key = path.to_string_lossy().into_owned();
+            if path.exists() {
+                back.insert(key);
+            } else if db.get_song_by_path(&key).ok().flatten().is_some() {
+                gone.push(key);
+            } else if !Self::is_audio_file(path) {
+                gone.extend(
+                    db.get_library_files_in_dir(&key)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|f| f.file_path)
+                        .filter(|p| !Path::new(p).exists()),
+                );
+            }
+        }
+        update_missing(&back, gone)
+    }
+
     fn process_changed_files_inner(
         &self,
         db: &Database,
@@ -790,6 +823,7 @@ impl Scanner {
     ) -> Result<ScanStats> {
         let mut cache = ScanCache::default();
         let mut pending: Vec<ScannedTrack> = Vec::new();
+        let touched: Vec<PathBuf> = changed_paths.clone();
 
         for path in changed_paths {
             if !path.is_file() || !Self::is_audio_file(&path) {
@@ -845,6 +879,12 @@ impl Scanner {
         let (added, updated) = self.flush_batch(db, &pending, &mut cache)?;
         if added > 0 || updated > 0 {
             db.rebuild_search_index();
+        }
+
+        if self.reconcile_missing(db, &touched)
+            && let Some(ui) = &self.background_ui
+        {
+            ui.notify(BackgroundUiEvent::LibraryDataChanged);
         }
 
         Ok(ScanStats {
@@ -1141,6 +1181,82 @@ fn process_one_file(
     ))
 }
 
+static MISSING: parking_lot::RwLock<Vec<String>> = parking_lot::RwLock::new(Vec::new());
+
+pub fn missing_paths() -> Vec<String> {
+    MISSING.read().clone()
+}
+
+pub fn path_is_under(path: &str, root: &str) -> bool {
+    let root = root.trim_end_matches(std::path::MAIN_SEPARATOR);
+    path == root
+        || path
+            .strip_prefix(root)
+            .is_some_and(|rest| rest.starts_with(std::path::MAIN_SEPARATOR))
+}
+
+pub fn missing_count_in(root: &str) -> usize {
+    let root = expand_tilde(root).to_string_lossy().into_owned();
+    MISSING
+        .read()
+        .iter()
+        .filter(|p| path_is_under(p, &root))
+        .count()
+}
+
+fn publish_missing(count: usize) {
+    if count > 0 {
+        navbar::status().set_settings_link(
+            "scanner.missing",
+            format!(
+                "{count} song{} missing from disk",
+                if count == 1 { "" } else { "s" }
+            ),
+            crate::status::StatusColor::Warning,
+        );
+    } else {
+        navbar::status().clear("scanner.missing");
+    }
+}
+
+fn set_missing(mut paths: Vec<String>) -> bool {
+    paths.sort_unstable();
+    publish_missing(paths.len());
+    let mut missing = MISSING.write();
+    let mut previous = std::mem::replace(&mut *missing, paths);
+    previous.sort_unstable();
+    previous != *missing
+}
+
+pub fn forget_missing(removed: &HashSet<String>) {
+    let mut missing = MISSING.write();
+    missing.retain(|p| !removed.contains(p));
+    publish_missing(missing.len());
+}
+
+fn update_missing(back: &HashSet<String>, gone: Vec<String>) -> bool {
+    let mut missing = MISSING.write();
+    let before = missing.len();
+    missing.retain(|p| !back.contains(p));
+    let known: HashSet<String> = missing.iter().cloned().collect();
+    missing.extend(gone.into_iter().filter(|p| !known.contains(p)));
+    let changed = missing.len() != before;
+    if changed {
+        publish_missing(missing.len());
+    }
+    changed
+}
+
+fn rebase_missing(old: &str, new: &str) {
+    let old = old.trim_end_matches(std::path::MAIN_SEPARATOR);
+    let new = new.trim_end_matches(std::path::MAIN_SEPARATOR);
+    for path in MISSING.write().iter_mut() {
+        if path_is_under(path, old) {
+            *path = format!("{new}{}", &path[old.len()..]);
+        }
+    }
+}
+
 pub fn expand_tilde(path: &str) -> PathBuf {
     if let Some(stripped) = path.strip_prefix("~/")
         && let Some(home) = dirs::home_dir()
@@ -1203,14 +1319,17 @@ impl MusicWatcher {
                         .into_iter()
                         .collect();
 
-                    for path in removed_files {
-                        let path_str = path.to_string_lossy().to_string();
-                        warn!("File removed from disk, keeping in library: {}", path_str);
-                        let _ = tx;
+                    for path in &removed_files {
+                        warn!(
+                            "File removed from disk, keeping in library: {}",
+                            path.to_string_lossy()
+                        );
                     }
 
                     let changed_audio_files: Vec<PathBuf> = changed_audio_files
                         .into_iter()
+                        .chain(removed_files)
+                        .chain(removed_dirs.into_iter().map(PathBuf::from))
                         .collect::<HashSet<_>>()
                         .into_iter()
                         .collect();
