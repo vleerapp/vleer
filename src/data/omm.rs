@@ -1317,8 +1317,10 @@ fn unskipped<T>(batch: Vec<T>, pass: &Pass, id: impl Fn(&T) -> &Cuid) -> Vec<T> 
 }
 
 async fn next_bulk(pass: &Pass) -> Bulk<Work> {
+    if priority::file_busy() {
+        return Bulk::WaitFile;
+    }
     let limit = WARM_BATCH + pass.skip.lock().active() as i64;
-    let file_busy = priority::file_busy();
 
     match pass.db.get_pending_artists(limit) {
         Ok(batch) => {
@@ -1351,7 +1353,7 @@ async fn next_bulk(pass: &Pass) -> Bulk<Work> {
         }
     }
 
-    match pass.db.get_pending_songs(limit, file_busy) {
+    match pass.db.get_pending_songs(limit, false) {
         Ok(batch) => {
             let batch = unskipped(batch, pass, |song| &song.id);
             if !batch.is_empty() {
@@ -1364,11 +1366,7 @@ async fn next_bulk(pass: &Pass) -> Bulk<Work> {
         }
     }
 
-    if file_busy {
-        Bulk::WaitFile
-    } else {
-        Bulk::Done
-    }
+    Bulk::Done
 }
 
 #[cfg(test)]
