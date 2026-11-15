@@ -45,7 +45,7 @@ use crate::{
         variables::Variables,
         views::{
             ActiveView, AppView, NavEntry, NavHistory, NavState, SelectedAlbum, SelectedArtist,
-            SelectedPlaylist, SettingsView, ViewRegistry,
+            SelectedPlaylist, SelectedSource, SettingsView, ViewRegistry,
         },
     },
     updater::{UpdateStatus, Updater},
@@ -85,6 +85,15 @@ impl MainWindow {
             && let Result::Ok(settings) = settings.clone().downcast::<SettingsView>()
         {
             settings.update(cx, |settings, cx| settings.show_about(cx));
+        }
+    }
+
+    pub fn open_general_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_current_view(AppView::Settings, window, cx);
+        if let Some(settings) = self.views.get(&AppView::Settings)
+            && let Result::Ok(settings) = settings.clone().downcast::<SettingsView>()
+        {
+            settings.update(cx, |settings, cx| settings.show_general(cx));
         }
     }
 
@@ -411,6 +420,7 @@ pub async fn run() -> Result<()> {
             cx.set_global(SelectedAlbum::default());
             cx.set_global(SelectedArtist::default());
             cx.set_global(SelectedPlaylist::default());
+            cx.set_global(SelectedSource::default());
             cx.set_global(NavState::default());
             cx.set_global(BackgroundUiNotifier::new(background_ui_tx));
             cx.set_global(PinnedItemsChanged);

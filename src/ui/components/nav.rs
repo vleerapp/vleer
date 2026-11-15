@@ -5,7 +5,7 @@ use crate::{
     data::{db::Database, models::Cuid},
     ui::{
         app::MainWindow,
-        views::{AppView, SelectedAlbum, SelectedArtist},
+        views::{AppView, SelectedAlbum, SelectedArtist, SelectedSource},
     },
 };
 
@@ -23,6 +23,11 @@ pub fn open_album(id: Cuid, window: &mut Window, cx: &mut App) {
 pub fn open_artist(id: Cuid, window: &mut Window, cx: &mut App) {
     cx.set_global(SelectedArtist(Some(id)));
     navigate(AppView::Artist, window, cx);
+}
+
+pub fn open_missing_songs(source: String, window: &mut Window, cx: &mut App) {
+    cx.set_global(SelectedSource(Some(source)));
+    navigate(AppView::MissingSongs, window, cx);
 }
 
 pub fn open_artist_named(name: &str, window: &mut Window, cx: &mut App) {

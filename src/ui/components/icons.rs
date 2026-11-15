@@ -82,3 +82,4 @@ pub fn icon(icon: impl Into<SharedString>) -> Icon {
         svg: svg().path(icon_str.clone()).id(icon_str.clone()),
     }
 }
+pub const WARNING: &str = "!bundled:icons/warning.svg";

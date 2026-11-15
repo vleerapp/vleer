@@ -106,10 +106,24 @@ impl Render for Navbar {
                         crate::status::StatusColor::Warning => variables.warning,
                         crate::status::StatusColor::Destructive => variables.destructive,
                     };
+                    let opens_settings = entry.opens_settings;
                     row = row.child(
                         div()
+                            .id(SharedString::from(format!("status-{}", entry.text)))
                             .text_color(color)
                             .font_weight(FontWeight(500.0))
+                            .when(opens_settings, |this| {
+                                this.cursor_pointer().on_mouse_down(
+                                    MouseButton::Left,
+                                    |_event, window, cx| {
+                                        if let Some(Some(root)) = window.root::<MainWindow>() {
+                                            root.update(cx, |view, cx| {
+                                                view.open_general_settings(window, cx);
+                                            });
+                                        }
+                                    },
+                                )
+                            })
                             .child(entry.text),
                     );
                 }

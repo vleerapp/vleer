@@ -2,14 +2,15 @@ use gpui::{Context, Entity, IntoElement, Render, prelude::FluentBuilder as _, *}
 
 use crate::data::config::{Config, FftSize, UpdateChannel};
 use crate::data::db::Database;
-use crate::data::scanner::{Scanner, expand_tilde};
+use crate::data::scanner::{Scanner, expand_tilde, missing_count_in};
 use crate::media::playback::Playback;
 use crate::services::lastfm::{LastfmAuthStatus, LastfmClient};
 use crate::ui::components::button::{Button, ButtonVariant};
 use crate::ui::components::context_menu::{LibraryDataChanged, QueueChanged};
-use crate::ui::components::div::{flex_col, flex_row};
+use crate::ui::components::div::{MiddleTruncate, flex_col, flex_row};
 use crate::ui::components::icons::{self, LINK, icon};
 use crate::ui::components::input::{InputEvent, TextInput};
+use crate::ui::components::nav::open_missing_songs;
 use crate::ui::components::scrollbar::ScrollableElement;
 use crate::ui::components::slider::slider;
 use crate::ui::components::switch::Switch;
@@ -182,6 +183,75 @@ fn add_scan_path(window: &mut Window, cx: &mut App) {
     .detach();
 }
 
+fn relocate_scan_path(old: String, window: &mut Window, cx: &mut App) {
+    let options = PathPromptOptions {
+        files: false,
+        directories: true,
+        multiple: false,
+        prompt: None,
+    };
+    let receiver = cx.prompt_for_paths(options);
+    let window_handle = window.window_handle();
+    cx.spawn(async move |cx| {
+        let Ok(Ok(Some(paths))) = receiver.await else {
+            return;
+        };
+        let Some(new) = paths
+            .into_iter()
+            .next()
+            .and_then(|p| p.to_str().map(str::to_string))
+        else {
+            return;
+        };
+        let (db, scanner, taken) = cx.update(|cx| {
+            let taken = cx
+                .global::<Config>()
+                .get()
+                .library
+                .paths
+                .iter()
+                .any(|p| expand_tilde(p) == std::path::Path::new(&new));
+            (
+                cx.global::<Database>().clone(),
+                cx.global::<Scanner>().clone(),
+                taken,
+            )
+        });
+        if taken || expand_tilde(&old) == std::path::Path::new(&new) {
+            return;
+        }
+        let old_dir = expand_tilde(&old).to_string_lossy().into_owned();
+        let new_dir = new.clone();
+        let moved = cx
+            .background_executor()
+            .spawn(async move {
+                scanner
+                    .relocate_path_exclusive(&db, &old_dir, &new_dir)
+                    .await
+            })
+            .await;
+        if let Err(e) = moved {
+            error!("failed to relocate scan path: {e}");
+            return;
+        }
+        cx.update(|cx| {
+            cx.update_global::<Config, _>(|config, _cx| {
+                config.set(|s| {
+                    if let Some(slot) = s.library.paths.iter_mut().find(|p| **p == old) {
+                        *slot = new;
+                    }
+                });
+            });
+            cx.set_global(LibraryDataChanged);
+            cx.set_global(QueueChanged);
+        });
+        let _ = window_handle.update(cx, |_, window, _cx| {
+            window.refresh();
+        });
+    })
+    .detach();
+}
+
 fn remove_scan_path(path: String, cx: &mut App) {
     cx.update_global::<Config, _>(|config, _cx| {
         config.set(|s| {
@@ -223,30 +293,62 @@ impl RenderOnce for ScanPathsList {
 
         flex_col().gap(px(variables.padding_8)).w_full().children(
             paths.into_iter().enumerate().map(move |(i, path)| {
+                let missing = missing_count_in(&path);
                 flex_row()
                     .justify_between()
+                    .items_center()
+                    .gap(px(variables.padding_16))
                     .w_full()
                     .p(px(variables.padding_16))
                     .bg(variables.element)
                     .child(
                         div()
-                            .text_color(variables.text)
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .child(path.clone()),
+                            .flex_1()
+                            .min_w_0()
+                            .child(MiddleTruncate::new(path.clone(), variables.text)),
                     )
                     .child(
-                        div()
-                            .id(SharedString::from(format!("remove-path-{i}")))
-                            .cursor_pointer()
-                            .child(
-                                icon(icons::X)
+                        flex_row()
+                            .items_center()
+                            .gap(px(variables.padding_16))
+                            .flex_shrink_0()
+                            .when(missing > 0, |this| {
+                                let path = path.clone();
+                                this.child(
+                                    div()
+                                        .id(SharedString::from(format!("missing-path-{i}")))
+                                        .cursor_pointer()
+                                        .child(icon(icons::WARNING).text_color(variables.warning))
+                                        .on_click(move |_event, window, cx| {
+                                            open_missing_songs(path.clone(), window, cx);
+                                        }),
+                                )
+                            })
+                            .child({
+                                let path = path.clone();
+                                div()
+                                    .id(SharedString::from(format!("relocate-path-{i}")))
+                                    .cursor_pointer()
                                     .text_color(variables.text_secondary)
-                                    .hover_style(|s| s.text_color(variables.text)),
-                            )
-                            .on_click(move |_event, _window, cx| {
-                                remove_scan_path(path.clone(), cx);
-                            }),
+                                    .hover_style(|s| s.text_color(variables.text))
+                                    .child("Replace")
+                                    .on_click(move |_event, window, cx| {
+                                        relocate_scan_path(path.clone(), window, cx);
+                                    })
+                            })
+                            .child(
+                                div()
+                                    .id(SharedString::from(format!("remove-path-{i}")))
+                                    .cursor_pointer()
+                                    .child(
+                                        icon(icons::X)
+                                            .text_color(variables.text_secondary)
+                                            .hover_style(|s| s.text_color(variables.text)),
+                                    )
+                                    .on_click(move |_event, _window, cx| {
+                                        remove_scan_path(path.clone(), cx);
+                                    }),
+                            ),
                     )
             }),
         )
@@ -469,6 +571,8 @@ pub struct SettingsView {
 
 impl SettingsView {
     pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
+        cx.observe_global::<LibraryDataChanged>(|_, cx| cx.notify())
+            .detach();
         cx.observe_global::<Config>(|this, cx| {
             let eq = cx.global::<Config>().get().playback.equalizer.clone();
             for (i, input) in this.gain_inputs.iter().enumerate() {
@@ -708,6 +812,11 @@ impl SettingsView {
 }
 
 impl SettingsView {
+    pub fn show_general(&mut self, cx: &mut Context<Self>) {
+        self.tab = SettingsTab::General;
+        cx.notify();
+    }
+
     pub fn show_about(&mut self, cx: &mut Context<Self>) {
         self.tab = SettingsTab::About;
         cx.notify();

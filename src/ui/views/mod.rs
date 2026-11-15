@@ -4,6 +4,7 @@ mod artist;
 mod artists;
 mod genres;
 mod home;
+mod missing;
 mod playlist;
 mod playlists;
 mod settings;
@@ -17,8 +18,8 @@ use std::collections::HashMap;
 use crate::data::models::Cuid;
 use crate::ui::views::{
     album::AlbumView, albums::AlbumsView, artist::ArtistView, artists::ArtistsView,
-    genres::GenresView, home::HomeView, playlist::PlaylistView, playlists::PlaylistsView,
-    songs::SongsView,
+    genres::GenresView, home::HomeView, missing::MissingSongsView, playlist::PlaylistView,
+    playlists::PlaylistsView, songs::SongsView,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -27,6 +28,7 @@ pub enum AppView {
     Home,
     Songs,
     Settings,
+    MissingSongs,
     Albums,
     Album,
     Artist,
@@ -42,6 +44,7 @@ impl AppView {
             AppView::Home => "Home",
             AppView::Songs => "Songs",
             AppView::Settings => "Settings",
+            AppView::MissingSongs => "Missing songs",
             AppView::Albums => "Albums",
             AppView::Album => "Album",
             AppView::Artist => "Artist",
@@ -78,6 +81,11 @@ pub struct NavState {
 impl Global for NavState {}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SelectedSource(pub Option<String>);
+
+impl Global for SelectedSource {}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SelectedArtist(pub Option<Cuid>);
 
 impl Global for SelectedArtist {}
@@ -96,6 +104,7 @@ pub struct NavEntry {
     pub album: Option<Cuid>,
     pub artist: Option<Cuid>,
     pub playlist: Option<Cuid>,
+    pub source: Option<String>,
 }
 
 impl NavEntry {
@@ -111,6 +120,9 @@ impl NavEntry {
             playlist: (view == AppView::Playlist)
                 .then(|| cx.global::<SelectedPlaylist>().id.clone())
                 .flatten(),
+            source: (view == AppView::MissingSongs)
+                .then(|| cx.global::<SelectedSource>().0.clone())
+                .flatten(),
         }
     }
 
@@ -120,6 +132,9 @@ impl NavEntry {
         }
         if let Some(artist) = self.artist.clone() {
             cx.set_global(SelectedArtist(Some(artist)));
+        }
+        if let Some(source) = self.source.clone() {
+            cx.set_global(SelectedSource(Some(source)));
         }
         if let Some(playlist) = self.playlist.clone() {
             cx.update_global::<SelectedPlaylist, _>(|sel, _| {
@@ -145,6 +160,7 @@ impl NavHistory {
                 album: None,
                 artist: None,
                 playlist: None,
+                source: None,
             },
             back: Vec::new(),
             forward: Vec::new(),
@@ -198,6 +214,11 @@ impl ViewRegistry {
         views.insert(
             AppView::Settings,
             cx.new(|cx| SettingsView::new(window, cx)).into(),
+        );
+
+        views.insert(
+            AppView::MissingSongs,
+            cx.new(|cx| MissingSongsView::new(window, cx)).into(),
         );
 
         views.insert(
