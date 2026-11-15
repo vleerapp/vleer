@@ -1,5 +1,5 @@
-use super::{Database, collect_mapped};
-use crate::data::models::{Cuid, Song, SongListItem, SongSort, StoredLyrics};
+use super::{Database, collect_mapped, placeholders};
+use crate::data::models::{Cuid, LibraryFile, Song, SongListItem, SongSort, StoredLyrics};
 use anyhow::Result;
 use rusqlite::{OptionalExtension, ToSql, params};
 use std::collections::HashMap;
@@ -243,6 +243,74 @@ impl Database {
         Ok(())
     }
 
+    pub fn delete_songs(&self, ids: &[Cuid]) -> Result<usize> {
+        let mut deleted = 0;
+        {
+            let conn = self.conn.lock();
+            for chunk in ids.chunks(500) {
+                let sql = format!(
+                    "DELETE FROM songs WHERE id IN ({})",
+                    placeholders(chunk.len())
+                );
+                deleted += conn.execute(&sql, rusqlite::params_from_iter(chunk))?;
+            }
+        }
+        if deleted > 0 {
+            self.rebuild_search_index();
+        }
+        Ok(deleted)
+    }
+
+    pub fn get_library_files_in_dir(&self, dir: &str) -> Result<Vec<LibraryFile>> {
+        let (dir, prefix, len) = dir_patterns(dir);
+        let conn = self.conn.lock();
+        collect_mapped(
+            &conn,
+            "SELECT s.id, s.title,
+                    COALESCE((SELECT GROUP_CONCAT(name, ', ') FROM (SELECT ar.name FROM songs_artists sa JOIN artists ar ON sa.artist_id = ar.id WHERE sa.song_id = s.id ORDER BY sa.position)), ''),
+                    COALESCE(al.title, ''),
+                    s.album_id,
+                    s.image_id,
+                    s.file_path
+             FROM songs s LEFT JOIN albums al ON al.id = s.album_id
+             WHERE s.file_path = ?1 OR substr(s.file_path, 1, ?3) = ?2",
+            params![dir, prefix, len],
+            |row| {
+                Ok(LibraryFile {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    artist: row.get(2)?,
+                    album: row.get(3)?,
+                    album_id: row.get(4)?,
+                    image_id: row.get(5)?,
+                    file_path: row.get(6)?,
+                })
+            },
+        )
+    }
+
+    pub fn rebase_songs_dir(&self, old: &str, new: &str) -> Result<usize> {
+        let (old, prefix, len) = dir_patterns(old);
+        let new = new.trim_end_matches(std::path::MAIN_SEPARATOR);
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        let moved = tx.execute(
+            "UPDATE OR IGNORE songs SET file_path = ?3 || substr(file_path, ?4)
+             WHERE file_path = ?1 OR substr(file_path, 1, ?5) = ?2",
+            params![old, prefix, new, len, len],
+        )?;
+        let left: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM songs WHERE file_path = ?1 OR substr(file_path, 1, ?3) = ?2",
+            params![old, prefix, len],
+            |row| row.get(0),
+        )?;
+        if left > 0 {
+            anyhow::bail!("{left} song(s) collide with existing paths under {new}");
+        }
+        tx.commit()?;
+        Ok(moved)
+    }
+
     pub fn delete_songs_in_dir(&self, dir: &str) -> Result<usize> {
         let dir = dir.trim_end_matches('/');
         let escaped = dir
@@ -262,6 +330,13 @@ impl Database {
         }
         Ok(deleted)
     }
+}
+
+fn dir_patterns(dir: &str) -> (&str, String, i64) {
+    let dir = dir.trim_end_matches(std::path::MAIN_SEPARATOR);
+    let prefix = format!("{dir}{}", std::path::MAIN_SEPARATOR);
+    let len = prefix.chars().count() as i64;
+    (dir, prefix, len)
 }
 
 pub(super) fn fetch_songs_by_ids(

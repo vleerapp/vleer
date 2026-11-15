@@ -90,6 +90,17 @@ pub struct SongListItem {
     pub genres: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct LibraryFile {
+    pub id: Cuid,
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    pub album_id: Option<Cuid>,
+    pub image_id: Option<String>,
+    pub file_path: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SongSort {
     Default,

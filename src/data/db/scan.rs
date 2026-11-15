@@ -704,6 +704,41 @@ mod tests {
     }
 
     #[test]
+    fn rebasing_a_directory_keeps_ids() {
+        let (db, path) = named_db("song_rebase");
+        db.upsert_tracks(
+            &[
+                BatchTrack {
+                    audio_hash: "a",
+                    ..track("/music/old/a/1.flac", false)
+                },
+                BatchTrack {
+                    audio_hash: "b",
+                    ..track("/music/old/2.flac", false)
+                },
+                BatchTrack {
+                    audio_hash: "c",
+                    ..track("/music/older/3.flac", false)
+                },
+            ],
+            &mut ScanCache::default(),
+        )
+        .unwrap();
+        let id = song_id_for(&db, "/music/old/a/1.flac");
+
+        assert_eq!(db.rebase_songs_dir("/music/old/", "/mnt/new").unwrap(), 2);
+        assert_eq!(song_id_for(&db, "/mnt/new/a/1.flac"), id);
+        assert!(db.get_song_by_path("/mnt/new/2.flac").unwrap().is_some());
+        assert!(
+            db.get_song_by_path("/music/older/3.flac")
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(db.get_library_files_in_dir("/mnt/new").unwrap().len(), 2);
+        cleanup(&path);
+    }
+
+    #[test]
     fn a_moved_file_keeps_its_history() {
         let (db, path) = named_db("song_move");
         let playlist = Cuid::new();
