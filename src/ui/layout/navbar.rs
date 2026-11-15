@@ -10,6 +10,7 @@ use crate::ui::{
         div::flex_row,
         icons::{HOME, SETTINGS},
         nav_button::NavButton,
+        titlebar::{history_buttons, history_in_titlebar},
     },
     variables::Variables,
     views::AppView,
@@ -61,20 +62,22 @@ impl NavbarProgressBar {
 }
 
 impl Render for Navbar {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let variables = cx.global::<Variables>();
         let entries = status().entries();
+        let show_history = !history_in_titlebar(window);
         let update = cx.try_global::<Updater>().and_then(|u| u.available());
 
         flex_row()
             .h_full()
             .justify_between()
-            .child(flex_row().p(px(variables.padding_16)).child(NavButton::new(
-                HOME,
-                Some("Home"),
-                None,
-                AppView::Home,
-            )))
+            .child(
+                flex_row()
+                    .p(px(variables.padding_16))
+                    .gap(px(variables.padding_16))
+                    .child(NavButton::new(HOME, Some("Home"), None, AppView::Home))
+                    .when(show_history, |this| this.child(history_buttons(cx))),
+            )
             .child({
                 let mut row = flex_row().items_center().gap(px(variables.padding_16));
                 if let Some(info) = update {

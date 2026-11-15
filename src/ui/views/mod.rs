@@ -69,6 +69,14 @@ pub struct SelectedAlbum(pub Option<Cuid>);
 
 impl Global for SelectedAlbum {}
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NavState {
+    pub back: bool,
+    pub forward: bool,
+}
+
+impl Global for NavState {}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SelectedArtist(pub Option<Cuid>);
 
@@ -140,6 +148,13 @@ impl NavHistory {
             },
             back: Vec::new(),
             forward: Vec::new(),
+        }
+    }
+
+    pub fn state(&self) -> NavState {
+        NavState {
+            back: !self.back.is_empty(),
+            forward: !self.forward.is_empty(),
         }
     }
 

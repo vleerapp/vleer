@@ -31,7 +31,7 @@ use crate::{
             pane::pane,
             scrollbar::{Scrollbar, ScrollbarAxis, set_vertical_pin},
             scroller::modifier_wheel_horizontal,
-            titlebar::{Titlebar, content_top_padding, titlebar_visible},
+            titlebar::{Titlebar, content_top_padding, history_buttons, titlebar_visible},
         },
         hotkeys::register_actions,
         layout::{
@@ -44,7 +44,7 @@ use crate::{
         },
         variables::Variables,
         views::{
-            ActiveView, AppView, NavEntry, NavHistory, SelectedAlbum, SelectedArtist,
+            ActiveView, AppView, NavEntry, NavHistory, NavState, SelectedAlbum, SelectedArtist,
             SelectedPlaylist, SettingsView, ViewRegistry,
         },
     },
@@ -105,6 +105,7 @@ impl MainWindow {
         entry.restore(cx);
 
         self.current_view = view;
+        cx.set_global(self.history.state());
         self.view_scroll.set_offset(point(px(0.0), px(0.0)));
         if view == AppView::Settings {
             navbar::status().clear("telemetry.consent");
@@ -154,6 +155,17 @@ impl Render for MainWindow {
 
         if titlebar_visible(window) {
             element = element.child(self.titlebar.clone());
+        } else if cfg!(target_os = "macos") && !window.is_fullscreen() {
+            element = element.relative().child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left(px(84.0))
+                    .h(px(32.0))
+                    .flex()
+                    .items_center()
+                    .child(history_buttons(cx)),
+            );
         }
 
         element = element.child(
@@ -399,6 +411,7 @@ pub async fn run() -> Result<()> {
             cx.set_global(SelectedAlbum::default());
             cx.set_global(SelectedArtist::default());
             cx.set_global(SelectedPlaylist::default());
+            cx.set_global(NavState::default());
             cx.set_global(BackgroundUiNotifier::new(background_ui_tx));
             cx.set_global(PinnedItemsChanged);
             cx.set_global(LibraryDataChanged);
@@ -566,7 +579,7 @@ pub fn open_main_window(cx: &mut App) {
                     view_scroll: ScrollHandle::new(),
                     current_view: AppView::Home,
                     history: NavHistory::new(AppView::Home),
-                    titlebar: cx.new(|_| Titlebar::new()),
+                    titlebar: cx.new(Titlebar::new),
                 }
             })
         },
