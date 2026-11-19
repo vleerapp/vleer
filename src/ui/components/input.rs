@@ -46,12 +46,16 @@ fn index_for_x(line: &ShapedLine, x: Pixels) -> usize {
         .unwrap_or_else(|i| i)
 }
 
+const MASK_CHAR: char = '•';
+
 pub type Validator = Rc<RefCell<dyn Fn(&str) -> bool>>;
 
 actions!(
     input,
     [
         Backspace,
+        FocusNext,
+        FocusPrev,
         Delete,
         Left,
         Right,
@@ -75,6 +79,8 @@ actions!(
 
 pub fn bind_input_keys(cx: &mut App) {
     cx.bind_keys([
+        KeyBinding::new("tab", FocusNext, Some("TextInput")),
+        KeyBinding::new("shift-tab", FocusPrev, Some("TextInput")),
         KeyBinding::new("backspace", Backspace, None),
         KeyBinding::new("delete", Delete, None),
         KeyBinding::new("left", Left, Some("TextInput")),
@@ -139,7 +145,7 @@ pub struct TextInput {
 impl TextInput {
     pub fn new(cx: &mut Context<Self>, placeholder: impl Into<SharedString>) -> Self {
         Self {
-            focus_handle: cx.focus_handle(),
+            focus_handle: cx.focus_handle().tab_stop(true),
             content: "".into(),
             placeholder: placeholder.into(),
             selected_range: 0..0,
@@ -197,6 +203,34 @@ impl TextInput {
 
     pub fn with_validator(mut self, validator: impl Fn(&str) -> bool + 'static) -> Self {
         self.validator = Some(Rc::new(RefCell::new(validator)));
+        self
+    }
+
+    fn to_display_index(&self, index: usize) -> usize {
+        if !self.masked {
+            return index;
+        }
+        let index = index.min(self.content.len());
+        self.content[..index].chars().count() * MASK_CHAR.len_utf8()
+    }
+
+    fn from_display_index(&self, index: usize) -> usize {
+        if !self.masked {
+            return index;
+        }
+        self.content
+            .char_indices()
+            .nth(index / MASK_CHAR.len_utf8())
+            .map(|(i, _)| i)
+            .unwrap_or(self.content.len())
+    }
+
+    pub fn text(&self) -> &str {
+        &self.content
+    }
+
+    pub fn masked(mut self) -> Self {
+        self.masked = true;
         self
     }
 
@@ -402,6 +436,14 @@ impl TextInput {
         }
     }
 
+    fn focus_next(&mut self, _: &FocusNext, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus_next(cx);
+    }
+
+    fn focus_prev(&mut self, _: &FocusPrev, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus_prev(cx);
+    }
+
     fn enter(&mut self, _: &Enter, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(InputEvent::Submit(self.content.to_string()));
     }
@@ -443,10 +485,10 @@ impl TextInput {
             return self.content.len();
         }
         let x_offset = self.horizontal_text_offset(bounds.size.width, line.width);
-        index_for_x(
+        self.from_display_index(index_for_x(
             line,
             position.x - bounds.left() + self.scroll_offset - x_offset,
-        )
+        ))
     }
 
     fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -653,15 +695,11 @@ impl EntityInputHandler for TextInput {
         let x_offset = self.horizontal_text_offset(bounds.size.width, last_layout.width);
         let origin_x = bounds.left() - self.scroll_offset + x_offset;
         let range = self.range_from_utf16(&range_utf16);
+        let start = self.to_display_index(range.start);
+        let end = self.to_display_index(range.end);
         Some(Bounds::from_corners(
-            point(
-                origin_x + x_for_index(last_layout, range.start),
-                bounds.top(),
-            ),
-            point(
-                origin_x + x_for_index(last_layout, range.end),
-                bounds.bottom(),
-            ),
+            point(origin_x + x_for_index(last_layout, start), bounds.top()),
+            point(origin_x + x_for_index(last_layout, end), bounds.bottom()),
         ))
     }
 
@@ -736,6 +774,8 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::paste))
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(Self::copy))
+            .on_action(cx.listener(Self::focus_next))
+            .on_action(cx.listener(Self::focus_prev))
             .on_action(cx.listener(Self::enter))
             .on_action(|_: &Escape, window, cx| window.blur(cx))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
@@ -833,24 +873,21 @@ impl Element for TextElement {
         let variables = cx.global::<Variables>();
 
         let content = if input.masked {
-            "*".repeat(input.content.chars().count()).into()
+            MASK_CHAR
+                .to_string()
+                .repeat(input.content.chars().count())
+                .into()
         } else {
             input.content.clone()
         };
-        let selected_range = input.selected_range.clone();
-        let cursor_index = input.cursor_offset();
+        let selected_range = input.to_display_index(input.selected_range.start)
+            ..input.to_display_index(input.selected_range.end);
+        let cursor_index = input.to_display_index(input.cursor_offset());
         let style = window.text_style();
 
         let default_text_color = self.custom_text_color.unwrap_or(variables.text);
         let (display_text, text_color) = if content.is_empty() {
-            (
-                input.placeholder.clone(),
-                if self.is_focused {
-                    variables.text
-                } else {
-                    variables.border
-                },
-            )
+            (input.placeholder.clone(), variables.border)
         } else {
             (content, default_text_color)
         };
