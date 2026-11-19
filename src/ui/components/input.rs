@@ -214,7 +214,7 @@ impl TextInput {
         self.content[..index].chars().count() * MASK_CHAR.len_utf8()
     }
 
-    fn from_display_index(&self, index: usize) -> usize {
+    fn source_index_for_display(&self, index: usize) -> usize {
         if !self.masked {
             return index;
         }
@@ -485,7 +485,7 @@ impl TextInput {
             return self.content.len();
         }
         let x_offset = self.horizontal_text_offset(bounds.size.width, line.width);
-        self.from_display_index(index_for_x(
+        self.source_index_for_display(index_for_x(
             line,
             position.x - bounds.left() + self.scroll_offset - x_offset,
         ))
