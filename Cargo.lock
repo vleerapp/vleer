@@ -9,7 +9,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3b7f7f85a7e5f68090000ed7622545829afd484d210358702ae4cb97dd0c320"
 dependencies = [
  "enumn",
- "uuid 1.29.2",
+ "uuid 1.29.3",
 ]
 
 [[package]]
@@ -2741,7 +2741,7 @@ dependencies = [
  "unicode-segmentation",
  "url",
  "usvg",
- "uuid 1.29.2",
+ "uuid 1.29.3",
  "waker-fn",
  "web-time",
  "windows 0.61.3",
@@ -2831,7 +2831,7 @@ dependencies = [
  "smol",
  "strum 0.27.2",
  "url",
- "uuid 1.29.2",
+ "uuid 1.29.3",
  "wayland-backend",
  "wayland-client",
  "wayland-cursor",
@@ -2892,7 +2892,7 @@ dependencies = [
  "smallvec",
  "strum 0.27.2",
  "url",
- "uuid 1.29.2",
+ "uuid 1.29.3",
  "zed-font-kit",
 ]
 
@@ -3038,7 +3038,7 @@ dependencies = [
  "log",
  "parking_lot 0.12.5",
  "raw-window-handle",
- "uuid 1.29.2",
+ "uuid 1.29.3",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -3100,7 +3100,7 @@ dependencies = [
  "rand 0.9.5",
  "raw-window-handle",
  "smallvec",
- "uuid 1.29.2",
+ "uuid 1.29.3",
  "wgsl-rs",
  "windows 0.61.3",
  "windows 0.62.2",
@@ -3612,9 +3612,9 @@ dependencies = [
 
 [[package]]
 name = "interprocess"
-version = "2.4.8"
+version = "2.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f0ed453af5ae3bdbf68e41dde07eae0bffcc986419f63521ba9c89d82988c70"
+checksum = "2f243523bf126ddfc5cddf87a8193a941bfca29476ce3c842e24c916cf5a22ec"
 dependencies = [
  "doctest-file",
  "libc",
@@ -4157,7 +4157,7 @@ dependencies = [
  "objc2 0.6.5",
  "objc2-foundation 0.3.2",
  "time",
- "uuid 1.29.2",
+ "uuid 1.29.3",
 ]
 
 [[package]]
@@ -7941,9 +7941,9 @@ dependencies = [
 
 [[package]]
 name = "uuid"
-version = "1.29.2"
+version = "1.29.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bed99139f7dac9b5cfe5f17be4d66dc7079a34dee1d74bcc77217119240e267c"
+checksum = "3c14b15dffa2f4bd712103e857140aa04a4f2ff6e955c77d7eb8e53ee02a3b64"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
@@ -8085,7 +8085,7 @@ dependencies = [
  "unicode-segmentation",
  "ureq",
  "url",
- "uuid 1.29.2",
+ "uuid 1.29.3",
  "walkdir",
  "windows 0.62.2",
  "winresource",
@@ -9304,7 +9304,7 @@ dependencies = [
  "serde_repr",
  "tracing",
  "uds_windows",
- "uuid 1.29.2",
+ "uuid 1.29.3",
  "windows-sys 0.61.2",
  "winnow 1.0.5",
  "zbus_macros 5.19.0",
@@ -9332,7 +9332,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uds_windows",
- "uuid 1.29.2",
+ "uuid 1.29.3",
  "windows-sys 0.61.2",
  "winnow 1.0.5",
  "zbus_macros 6.3.0",

@@ -12,6 +12,7 @@ use crate::data::db::Database;
 use crate::data::models::Cuid;
 use crate::media::playback::Playback;
 use crate::media::queue::Queue;
+use crate::services::listenbrainz::ListenbrainzClient;
 
 const API_KEY: &str = match option_env!("LASTFM_API_KEY") {
     Some(v) => v,
@@ -231,18 +232,23 @@ impl LastfmScrobbler {
                     .timer(std::time::Duration::from_secs(2))
                     .await;
 
-                if !LastfmClient::is_configured() {
-                    continue;
-                }
-
-                let (session_key, threshold) = cx.update(|app| {
+                let (session_key, listenbrainz, threshold) = cx.update(|app| {
                     let cfg = app.global::<Config>().get();
+                    let session_key = cfg
+                        .integrations
+                        .lastfm
+                        .session_key
+                        .clone()
+                        .filter(|_| LastfmClient::is_configured());
+                    let lb = &cfg.integrations.listenbrainz;
+                    let listenbrainz = lb.token.clone().map(|t| (lb.url.clone(), t));
                     (
-                        cfg.integrations.lastfm.session_key.clone(),
+                        session_key,
+                        listenbrainz,
                         cfg.integrations.lastfm.scrobble_threshold,
                     )
                 });
-                let Some(session_key) = session_key else {
+                if session_key.is_none() && listenbrainz.is_none() {
                     cached_song_id = None;
                     cached_song_info = None;
                     continue;
@@ -300,24 +306,39 @@ impl LastfmScrobbler {
                 }
 
                 let client = cx.update(|app| app.global::<LastfmClient>().clone());
+                let lb_client = cx.update(|app| app.global::<ListenbrainzClient>().clone());
 
                 if !info.now_playing_sent {
                     info.now_playing_sent = true;
                     let client = client.clone();
+                    let lb_client = lb_client.clone();
                     let session_key = session_key.clone();
+                    let listenbrainz = listenbrainz.clone();
                     let title = info.title.clone();
                     let artist = info.artist.clone();
                     let album = info.album.clone();
                     let duration = info.duration;
                     cx.background_executor()
                         .spawn(async move {
-                            client.update_now_playing(
-                                &session_key,
-                                &artist,
-                                &title,
-                                album.as_deref(),
-                                duration,
-                            );
+                            if let Some(session_key) = session_key {
+                                client.update_now_playing(
+                                    &session_key,
+                                    &artist,
+                                    &title,
+                                    album.as_deref(),
+                                    duration,
+                                );
+                            }
+                            if let Some((url, token)) = listenbrainz {
+                                lb_client.update_now_playing(
+                                    &url,
+                                    &token,
+                                    &artist,
+                                    &title,
+                                    album.as_deref(),
+                                    duration,
+                                );
+                            }
                         })
                         .detach();
                 }
@@ -329,7 +350,9 @@ impl LastfmScrobbler {
                 {
                     info.scrobbled = true;
                     let client = client.clone();
+                    let lb_client = lb_client.clone();
                     let session_key = session_key.clone();
+                    let listenbrainz = listenbrainz.clone();
                     let title = info.title.clone();
                     let artist = info.artist.clone();
                     let album = info.album.clone();
@@ -337,14 +360,27 @@ impl LastfmScrobbler {
                     let started_at = info.started_at;
                     cx.background_executor()
                         .spawn(async move {
-                            client.scrobble(
-                                &session_key,
-                                &artist,
-                                &title,
-                                album.as_deref(),
-                                started_at,
-                                duration,
-                            );
+                            if let Some(session_key) = session_key {
+                                client.scrobble(
+                                    &session_key,
+                                    &artist,
+                                    &title,
+                                    album.as_deref(),
+                                    started_at,
+                                    duration,
+                                );
+                            }
+                            if let Some((url, token)) = listenbrainz {
+                                lb_client.scrobble(
+                                    &url,
+                                    &token,
+                                    &artist,
+                                    &title,
+                                    album.as_deref(),
+                                    started_at,
+                                    duration,
+                                );
+                            }
                         })
                         .detach();
                 }

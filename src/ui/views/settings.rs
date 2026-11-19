@@ -1,10 +1,11 @@
 use gpui::{Context, Entity, IntoElement, Render, prelude::FluentBuilder as _, *};
 
-use crate::data::config::{Config, FftSize, UpdateChannel};
+use crate::data::config::{Config, FftSize, ListenbrainzSettings, UpdateChannel};
 use crate::data::db::Database;
 use crate::data::scanner::{Scanner, expand_tilde, missing_count_in};
 use crate::media::playback::Playback;
 use crate::services::lastfm::{LastfmAuthStatus, LastfmClient};
+use crate::services::listenbrainz::{ListenbrainzClient, ListenbrainzStatus};
 use crate::ui::components::button::{Button, ButtonVariant};
 use crate::ui::components::context_menu::{LibraryDataChanged, QueueChanged};
 use crate::ui::components::div::{MiddleTruncate, flex_col, flex_row};
@@ -561,12 +562,49 @@ fn start_lastfm_connect(cx: &mut App) {
     .detach();
 }
 
+fn start_listenbrainz_connect(cx: &mut App, token: String) {
+    let client = cx.global::<ListenbrainzClient>().clone();
+    let url = cx
+        .global::<Config>()
+        .get()
+        .integrations
+        .listenbrainz
+        .url
+        .clone();
+    cx.set_global(ListenbrainzStatus::Checking);
+
+    cx.spawn(async move |cx| {
+        let result = {
+            let token = token.clone();
+            cx.background_executor()
+                .spawn(async move { client.validate_token(&url, &token) })
+                .await
+        };
+
+        cx.update(|app| match result {
+            Ok(username) => {
+                app.update_global::<Config, _>(|config, _cx| {
+                    config.set(|s| {
+                        s.integrations.listenbrainz.token = Some(token);
+                        s.integrations.listenbrainz.username = Some(username);
+                    });
+                });
+                app.set_global(ListenbrainzStatus::Idle);
+            }
+            Err(e) => app.set_global(ListenbrainzStatus::Error(e.to_string())),
+        });
+    })
+    .detach();
+}
+
 pub struct SettingsView {
     tab: SettingsTab,
     gain_inputs: Vec<Entity<TextInput>>,
     freq_inputs: Vec<Entity<TextInput>>,
     q_inputs: Vec<Entity<TextInput>>,
     lastfm_threshold_input: Entity<TextInput>,
+    listenbrainz_url_input: Entity<TextInput>,
+    listenbrainz_token_input: Entity<TextInput>,
 }
 
 impl SettingsView {
@@ -606,6 +644,21 @@ impl SettingsView {
             this.lastfm_threshold_input.update(cx, |inp, cx| {
                 inp.set_text(format!("{:.0}", threshold * 100.0), cx);
             });
+            let lb_url = cx
+                .global::<Config>()
+                .get()
+                .integrations
+                .listenbrainz
+                .url
+                .clone();
+            this.listenbrainz_url_input.update(cx, |inp, cx| {
+                inp.set_text(lb_url, cx);
+            });
+            cx.notify();
+        })
+        .detach();
+
+        cx.observe_global::<ListenbrainzStatus>(|_this, cx| {
             cx.notify();
         })
         .detach();
@@ -801,12 +854,60 @@ impl SettingsView {
         })
         .detach();
 
+        let listenbrainz_url = cx
+            .global::<Config>()
+            .get()
+            .integrations
+            .listenbrainz
+            .url
+            .clone();
+        let listenbrainz_url_input = cx.new(|cx| {
+            TextInput::new(cx, ListenbrainzSettings::default().url).with_text(listenbrainz_url)
+        });
+
+        cx.subscribe(&listenbrainz_url_input, move |_this, entity, event, cx| {
+            if matches!(event, InputEvent::Submit(_) | InputEvent::Blur) {
+                let text = entity.read(cx).text().trim().to_string();
+                let url = if text.is_empty() {
+                    ListenbrainzSettings::default().url
+                } else {
+                    text
+                };
+                let unchanged = cx.global::<Config>().get().integrations.listenbrainz.url == url;
+                if !unchanged {
+                    cx.update_global::<Config, _>(|config, _cx| {
+                        config.set(|s| s.integrations.listenbrainz.url = url);
+                    });
+                }
+            }
+        })
+        .detach();
+
+        let listenbrainz_token_input = cx.new(|cx| TextInput::new(cx, "User token").masked());
+
+        cx.subscribe(
+            &listenbrainz_token_input,
+            move |_this, entity, event, cx| {
+                if let InputEvent::Submit(text) = event {
+                    let token = text.trim().to_string();
+                    if token.is_empty() {
+                        return;
+                    }
+                    entity.update(cx, |inp, cx| inp.set_text("", cx));
+                    start_listenbrainz_connect(cx, token);
+                }
+            },
+        )
+        .detach();
+
         Self {
             tab: SettingsTab::General,
             gain_inputs,
             freq_inputs,
             q_inputs,
             lastfm_threshold_input,
+            listenbrainz_url_input,
+            listenbrainz_token_input,
         }
     }
 }
@@ -1077,6 +1178,20 @@ impl SettingsView {
         };
         let threshold_input = self.lastfm_threshold_input.clone();
 
+        let listenbrainz = integrations.listenbrainz;
+        let lb_status = cx.global::<ListenbrainzStatus>().clone();
+        let lb_connected = listenbrainz.token.is_some();
+        let lb_checking = matches!(lb_status, ListenbrainzStatus::Checking);
+        let lb_status_text = match &lb_status {
+            ListenbrainzStatus::Checking => "Checking token…".to_string(),
+            ListenbrainzStatus::Error(e) => format!("Error: {e}"),
+            ListenbrainzStatus::Idle => match &listenbrainz.username {
+                Some(name) if lb_connected => format!("Connected as {name}"),
+                _ if lb_connected => "Connected".to_string(),
+                _ => "Paste your token and press enter".to_string(),
+            },
+        };
+
         let discord = group(variables, "Discord").child(setting(
             variables,
             "Show rich presence",
@@ -1090,6 +1205,88 @@ impl SettingsView {
             ),
         ));
 
+        let scrobbling_group = group(variables, "Scrobbling").child(setting(
+            variables,
+            "Scrobble point",
+            "How much of a song must play before it scrobbles",
+            flex_row()
+                .gap(px(variables.padding_16))
+                .child(
+                    slider()
+                        .id("lastfm-scrobble-threshold-slider")
+                        .w(px(160.0))
+                        .h(px(16.0))
+                        .render_full(true)
+                        .value(lastfm.scrobble_threshold)
+                        .on_change({
+                            let threshold_input = threshold_input.clone();
+                            move |val, _win, cx| {
+                                let val = val.clamp(0.05, 1.0);
+                                cx.update_global::<Config, _>(|config, _cx| {
+                                    config.set(|s| s.integrations.lastfm.scrobble_threshold = val);
+                                });
+                                threshold_input.update(cx, |inp, cx| {
+                                    inp.set_text(format!("{:.0}", val * 100.0), cx);
+                                });
+                            }
+                        }),
+                )
+                .child(
+                    div()
+                        .w(px(50.0))
+                        .h(px(24.0))
+                        .flex_shrink_0()
+                        .overflow_hidden()
+                        .child(threshold_input),
+                )
+                .child(div().text_color(variables.text_secondary).child("%")),
+        ));
+
+        let listenbrainz_group = group(variables, "ListenBrainz")
+            .child(setting(
+                variables,
+                "Server",
+                "ListenBrainz, Koito or Maloja API URL",
+                div()
+                    .w(px(260.0))
+                    .h(px(variables.padding_32))
+                    .flex_shrink_0()
+                    .overflow_hidden()
+                    .child(self.listenbrainz_url_input.clone()),
+            ))
+            .child(setting(
+                variables,
+                if lb_connected {
+                    "Disconnect account"
+                } else {
+                    "Connect account"
+                },
+                lb_status_text,
+                if lb_connected {
+                    Button::new("listenbrainz-disconnect-btn")
+                        .variant(ButtonVariant::Default)
+                        .child("Log out")
+                        .on_click(move |_event, _window, cx| {
+                            cx.update_global::<Config, _>(|config, _cx| {
+                                config.set(|s| {
+                                    s.integrations.listenbrainz.token = None;
+                                    s.integrations.listenbrainz.username = None;
+                                });
+                            });
+                        })
+                        .into_any_element()
+                } else {
+                    div()
+                        .w(px(260.0))
+                        .h(px(variables.padding_32))
+                        .flex_shrink_0()
+                        .overflow_hidden()
+                        .when(lb_checking, |d| d.opacity(0.5))
+                        .child(self.listenbrainz_token_input.clone())
+                        .into_any_element()
+                },
+            ));
+
         let lastfm_group = group(variables, "Last.fm")
             .when(!LastfmClient::is_configured(), |group| {
                 group.child(setting(
@@ -1100,85 +1297,50 @@ impl SettingsView {
                 ))
             })
             .when(LastfmClient::is_configured(), |group| {
-                group
-                    .child(setting(
-                        variables,
-                        if connected {
-                            "Disconnect account"
+                group.child(setting(
+                    variables,
+                    if connected {
+                        "Disconnect account"
+                    } else {
+                        "Connect account"
+                    },
+                    status_text,
+                    Button::new("lastfm-connect-btn")
+                        .variant(if connected || busy {
+                            ButtonVariant::Default
                         } else {
-                            "Connect account"
-                        },
-                        status_text,
-                        Button::new("lastfm-connect-btn")
-                            .variant(if connected || busy {
-                                ButtonVariant::Default
-                            } else {
-                                ButtonVariant::Accent
-                            })
-                            .child(if connected {
-                                "Log out"
-                            } else if busy {
-                                "Connecting…"
-                            } else {
-                                "Connect"
-                            })
-                            .on_click(move |_event, _window, cx| {
-                                if busy {
-                                    return;
-                                }
-                                if connected {
-                                    cx.update_global::<Config, _>(|config, _cx| {
-                                        config.set(|s| {
-                                            s.integrations.lastfm.session_key = None;
-                                            s.integrations.lastfm.username = None;
-                                        });
+                            ButtonVariant::Accent
+                        })
+                        .child(if connected {
+                            "Log out"
+                        } else if busy {
+                            "Connecting…"
+                        } else {
+                            "Connect"
+                        })
+                        .on_click(move |_event, _window, cx| {
+                            if busy {
+                                return;
+                            }
+                            if connected {
+                                cx.update_global::<Config, _>(|config, _cx| {
+                                    config.set(|s| {
+                                        s.integrations.lastfm.session_key = None;
+                                        s.integrations.lastfm.username = None;
                                     });
-                                    return;
-                                }
-                                start_lastfm_connect(cx);
-                            }),
-                    ))
-                    .child(setting(
-                        variables,
-                        "Scrobble point",
-                        "How much of a song must play before it scrobbles",
-                        flex_row()
-                            .gap(px(variables.padding_16))
-                            .child(
-                                slider()
-                                    .id("lastfm-scrobble-threshold-slider")
-                                    .w(px(160.0))
-                                    .h(px(16.0))
-                                    .render_full(true)
-                                    .value(lastfm.scrobble_threshold)
-                                    .on_change({
-                                        let threshold_input = threshold_input.clone();
-                                        move |val, _win, cx| {
-                                            let val = val.clamp(0.05, 1.0);
-                                            cx.update_global::<Config, _>(|config, _cx| {
-                                                config.set(|s| {
-                                                    s.integrations.lastfm.scrobble_threshold = val
-                                                });
-                                            });
-                                            threshold_input.update(cx, |inp, cx| {
-                                                inp.set_text(format!("{:.0}", val * 100.0), cx);
-                                            });
-                                        }
-                                    }),
-                            )
-                            .child(
-                                div()
-                                    .w(px(50.0))
-                                    .h(px(24.0))
-                                    .flex_shrink_0()
-                                    .overflow_hidden()
-                                    .child(threshold_input),
-                            )
-                            .child(div().text_color(variables.text_secondary).child("%")),
-                    ))
+                                });
+                                return;
+                            }
+                            start_lastfm_connect(cx);
+                        }),
+                ))
             });
 
-        page(variables).child(discord).child(lastfm_group)
+        page(variables)
+            .child(discord)
+            .child(scrobbling_group)
+            .child(listenbrainz_group)
+            .child(lastfm_group)
     }
 
     fn about(&self, variables: &Variables, cx: &App) -> Div {

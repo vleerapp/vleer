@@ -240,12 +240,33 @@ impl Default for LastfmSettings {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ListenbrainzSettings {
+    pub url: String,
+    #[serde(default)]
+    pub token: Option<String>,
+    pub username: Option<String>,
+}
+
+impl Default for ListenbrainzSettings {
+    fn default() -> Self {
+        Self {
+            url: "https://api.listenbrainz.org".to_string(),
+            token: None,
+            username: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct IntegrationsSettings {
     #[serde(default)]
     pub discord: DiscordSettings,
     #[serde(default)]
     pub lastfm: LastfmSettings,
+    #[serde(default)]
+    pub listenbrainz: ListenbrainzSettings,
 }
 
 pub use crate::updater::UpdateChannel;
@@ -393,6 +414,7 @@ impl From<LegacyConfig> for SettingsConfig {
                     enabled: legacy.discord_rpc,
                 },
                 lastfm: legacy.lastfm,
+                listenbrainz: ListenbrainzSettings::default(),
             },
             updates: legacy.updater,
         }

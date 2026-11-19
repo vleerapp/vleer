@@ -12,6 +12,7 @@ use crate::{
     services::{
         discord_rpc::DiscordPresence,
         lastfm::{LastfmClient, LastfmScrobbler},
+        listenbrainz::ListenbrainzClient,
         lrclib::LrclibClient,
     },
     tray,
@@ -371,6 +372,11 @@ impl Render for MainWindow {
         *text_styles = TextStyleRefinement {
             color: Some(rgb_to_hsla(variables.text)),
             font_family: Some(SharedString::new("Feature Mono")),
+            font_features: Some(FontFeatures(std::sync::Arc::new(vec![
+                ("liga".into(), 0),
+                ("calt".into(), 0),
+                ("clig".into(), 0),
+            ]))),
             font_size: Some(AbsoluteLength::Pixels(px(14.0))),
             line_height: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(14.0)))),
             ..Default::default()
@@ -439,6 +445,7 @@ pub async fn run() -> Result<()> {
             Variables::init(cx);
             Telemetry::init(cx, data_dir.clone());
             LastfmClient::init(cx);
+            ListenbrainzClient::init(cx);
             LrclibClient::init(cx);
             LastfmScrobbler::init(cx);
             Updater::init(cx, navbar::status());

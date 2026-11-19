@@ -26,6 +26,7 @@ A fast, native, open-source music player that keeps your music library clean.
 - Loudness normalization using ReplayGain tags
 - Parametric equalizer
 - Last.fm scrobbling
+- ListenBrainz, Koito and Maloja scrobbling
 - Discord Rich Presence
 - Live SQLite library that watches your folders
 - Spectrum visualizer
